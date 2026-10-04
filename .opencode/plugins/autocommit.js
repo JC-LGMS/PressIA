@@ -31,7 +31,8 @@ export const AutoCommitPlugin = async ({ worktree, client }) => {
         if (!stdout.trim()) return
         const stamp = new Date().toISOString().replace("T", " ").slice(0, 19)
         await git("add -A")
-        await git(`commit -m ${JSON.stringify(`Auto-commit ${stamp}`)}`)
+        // Email fixé pour les commits OpenCode, indépendamment de la config globale.
+        await git(`-c user.email=jclgms@gmail.com commit -m ${JSON.stringify(`Auto-commit ${stamp}`)}`)
         await git("push")
         await client.app.log({
           body: {
