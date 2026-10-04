@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.PressIA" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

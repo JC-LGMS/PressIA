@@ -1,0 +1,308 @@
+package com.pressia.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.pressia.BuildConfig
+import com.pressia.data.CloudAccount
+import com.pressia.data.isLocalProvider
+import com.pressia.data.local.Prefs
+import com.pressia.data.local.SubscriptionEntity
+import com.pressia.data.remote.OAuth
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+/**
+ * Écran Comptes.
+ *
+ * Organisation retenue : **les boutons de connexion d'abord, la liste des comptes en dessous**.
+ * C'est l'ordre qui répond à la question posée le plus souvent — « j'ai bien connecté ce compte ? » —
+ * sans avoir à faire défiler l'écran.
+ *
+ * Plusieurs comptes peuvent être enregistrés, y compris plusieurs comptes du même service : chacun
+ * garde ses dossiers et ses abonnements. Un seul est « actif » : c'est lui qui sert de référence
+ * aux opérations courantes et à la première synchronisation.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Unit = {}) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var service by remember { mutableStateOf<String?>(null) }   // service en cours de connexion
+    var inoreaderId by remember { mutableStateOf(BuildConfig.INOREADER_APP_ID) }
+    var inoreaderKey by remember { mutableStateOf(BuildConfig.INOREADER_APP_KEY) }
+    var rssUrl by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
+    var removing by remember { mutableStateOf<CloudAccount?>(null) }
+
+    val accounts = vm.accounts
+    val activeId by vm.activeAccountId.collectAsState()
+    // [AccountInfo.provider] porte l'identifiant du compte actif : c'est le repli quand la
+    // préférence n'a pas encore été lue, pour que la ligne du compte actif soit cochée d'emblée.
+    val active = activeId ?: vm.account?.provider
+
+    LaunchedEffect(Unit) {
+        val d = vm.repo.prefs.data.first()
+        inoreaderId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
+        inoreaderKey = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
+        localFeeds = vm.repo.localFeeds()
+        vm.loadAccount()
+    }
+    // Les flux locaux sont affichés sous leur propre section : ils ne dépendent d'aucun compte.
+    LaunchedEffect(vm.localFeeds) { localFeeds = vm.localFeeds }
+
+    Column(
+        Modifier.padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Se connecter…", style = MaterialTheme.typography.titleMedium)
+
+        // ---- Feedly ------------------------------------------------------------------------
+        OutlinedButton(
+            {
+                service = "feedly"; msg = ""
+                onFeedlySignIn()
+            },
+            Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Se connecter avec Feedly")
+        }
+        Text(
+            "La page de connexion Feedly s'ouvre dans l'application, avec vos options habituelles " +
+                "(e-mail, Google, Apple). Dès que vous êtes connecté, PressIA récupère votre session et " +
+                "ajoute le compte. Le niveau gratuit suffit, pas besoin de Feedly Pro.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // ---- Inoreader ---------------------------------------------------------------------
+        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
+            OutlinedButton(
+                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
+                Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
+            }
+            if (service == "inoreader") {
+                OutlinedTextField(
+                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                OutlinedTextField(
+                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                Button({
+                    scope.launch {
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
+                        onOAuth("inoreader")
+                    }
+                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
+                Text(
+                    "La page Inoreader s'ouvre ensuite dans l'application.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // ---- flux RSS saisis à la main ------------------------------------------------------
+        HorizontalDivider()
+        Text("Flux RSS locaux", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Saisis à la main, sans compte : ils restent dans PressIA quoi que vous fassiez d'autre, " +
+                "et peuvent être rangés dans vos propres dossiers.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            rssUrl, { rssUrl = it }, label = { Text("URL du flux RSS/Atom") },
+            modifier = Modifier.fillMaxWidth(), singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                autoCorrect = false
+            )
+        )
+        Button(
+            {
+                val url = rssUrl.trim()
+                scope.launch {
+                    vm.addLocalFeed(url) { ok ->
+                        msg = if (ok) "Flux ajouté et synchronisé." else "Flux non ajouté"
+                        if (ok) rssUrl = ""
+                    }
+                }
+            },
+            Modifier.fillMaxWidth(),
+            enabled = rssUrl.isNotBlank()
+        ) { Text("Ajouter ce flux") }
+
+        if (localFeeds.isNotEmpty()) {
+            localFeeds.forEach { f ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FeedAvatar(f, 24)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        prettyFeedTitle(f.title), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton({ vm.deleteLocalFeed(f.id); toast(ctx, "Flux désabonné") }) {
+                        Icon(Icons.Filled.Delete, "désabonner", Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+
+        // ---- comptes connectés ----------------------------------------------------------------
+        if (accounts.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Vos comptes", style = MaterialTheme.typography.titleMedium)
+            accounts.forEach { acc ->
+                AccountRow(
+                    account = acc,
+                    feeds = vm.subs.count { it.provider == acc.id },
+                    active = acc.id == active,
+                    onSelect = { vm.useAccount(acc); toast(ctx, "Compte ${acc.label} actif") },
+                    onRemove = { removing = acc }
+                )
+            }
+            Text(
+                "Le compte actif est celui qui est synchronisé en premier. Les autres restent " +
+                    "connectés et conservent leurs propres dossiers et abonnements.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Feed RSS local seul : aucun compte connecté.
+        if (accounts.isEmpty()) {
+            HorizontalDivider()
+            vm.account?.let { info ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.RssFeed, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (isLocalProvider(info.provider)) "Flux RSS locaux uniquement" else info.label,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "${info.feeds} flux", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (vm.authMsg?.isNotBlank() == true) {
+            Text(vm.authMsg!!, color = MaterialTheme.colorScheme.primary)
+        }
+        if (msg.isNotBlank()) Text(msg, color = MaterialTheme.colorScheme.primary)
+    }
+
+    removing?.let { acc ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text("Déconnecter ${acc.label} ?") },
+            text = {
+                Text(
+                    "Ce compte ne sera plus synchronisé et ses articles resteront lisibles hors-ligne. " +
+                        "Le compte et ses dossiers sont retirés de la liste ; vos flux RSS locaux ne " +
+                        "sont pas touchés."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    removing = null
+                    vm.disconnectAccount(acc)
+                    toast(ctx, "Compte déconnecté")
+                }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ removing = null }) { Text("Annuler") } }
+        )
+    }
+}
+
+/** Ligne d'un compte connecté : coché si actif, avec son nombre de flux et sa suppression. */
+@Composable
+private fun AccountRow(
+    account: CloudAccount,
+    feeds: Int,
+    active: Boolean,
+    onSelect: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !active, onClick = onSelect)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(active, onClick = { if (!active) onSelect() })
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (account.name.isNotBlank()) "${account.label} · ${account.name}" else account.label,
+                style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "$feeds flux${if (active) " · compte actif" else ""}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onRemove) { Icon(Icons.Filled.Delete, "déconnecter", Modifier.size(18.dp)) }
+    }
+}
+
+/**
+ * Traite un retour OAuth reçu par deep link (`pressia://oauth/feedly?code=…`), c'est-à-dire quand
+ * le système relance l'application sur l'URL de redirection.
+ *
+ * Le compte est enregistré dans le registre multi-comptes — et pas seulement dans les anciennes
+ * préférences — sinon il disparaissait au lancement suivant.
+ */
+suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
+    val service = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: uri.getQueryParameter("provider")
+        ?: "feedly"
+    val redirect = if (service == "feedly") BuildConfig.FEEDLY_REDIRECT_URI else BuildConfig.INOREADER_REDIRECT_URI
+    val res = OAuth.parseRedirect(uri.toString(), "pressia://oauth")
+    if (res == null) return "Retour OAuth illisible"
+    res.error?.let { return "Connexion refusée : $it" }
+    val code = res.code?.takeIf { it.isNotBlank() } ?: return "Retour OAuth sans code d'autorisation"
+
+    val d = vm.repo.prefs.data.first()
+    val token = if (service == "feedly") {
+        val id = d[Prefs.FEEDLY_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_ID
+        val secret = d[Prefs.FEEDLY_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_SECRET
+        OAuth.feedlyToken(code, id, secret, redirect)
+    } else {
+        val id = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
+        val key = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
+        OAuth.inoreaderToken(code, id, key, redirect)
+    }
+    if (token.isNullOrBlank()) return "Échange code→jeton refusé : vérifiez l'identifiant et l'URL de redirection"
+    vm.connectAccount(service, token, "")
+    return "Compte ${if (service == "feedly") "Feedly" else "Inoreader"} connecté"
+}

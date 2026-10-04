@@ -1,0 +1,253 @@
+package com.pressia
+
+import com.pressia.data.remote.OAuth
+import com.pressia.data.remote.dedupHash
+import com.pressia.data.remote.LocalRssFetcher
+import com.pressia.data.readability.Readability
+import org.junit.Assert.*
+import org.junit.Test
+
+class PressLogicTest {
+    @Test fun `dedup hash identique pour même titre`() {
+        val h1 = dedupHash("Hello World!", "https://ex.com/a?x=1")
+        val h2 = dedupHash("hello  world ", "https://ex.com/a?y=2")
+        assertEquals(h1.substringBefore(":"), h2.substringBefore(":"))
+    }
+    @Test fun `rss parse extrait titre lien image`() {
+        val xml = """<rss><channel><item><title>T1</title><link>https://ex.com/1</link><description><![CDATA[hello <img src="https://ex.com/i.jpg"/>]]></description></item></channel></rss>"""
+        val arts = LocalRssFetcher.parse(xml, "feed1")
+        assertEquals(1, arts.size)
+        assertEquals("T1", arts[0].title)
+        assertEquals("https://ex.com/i.jpg", arts[0].imageUrl)
+    }
+    @Test fun `readability garde le contenu principal`() {
+        val html = "<html><body><nav>menu</nav><article><p>un</p><p>deux trois quatre cinq six sept huit neuf dix onze douze</p><p>encore du texte long pour scorer</p></article></body></html>"
+        val out = Readability.extract(html, "https://ex.com")
+        assertTrue(out.contains("deux"))
+    }
+    @Test fun `page anti-robot detectee comme bloquee`() {
+        val html = "<html><body><div><p>A required part of this site couldn't load. " +
+            "This may be due to a browser extension, network issues, or browser settings.</p></div></body></html>"
+        assertTrue(Readability.isBlockedPage(html))
+        // Apostrophe typographique (cas réel Le Monde)
+        val html2 = html.replace("couldn't", "couldn’t")
+        assertTrue(Readability.isBlockedPage(html2))
+        assertFalse(Readability.isUsableFull("<div><p>$html</p></div>"))
+    }
+    @Test fun `vrai article non detecte comme bloque`() {
+        val paras = (1..30).joinToString("") { "<p>Paragraphe $it avec du contenu journalistique assez long pour simuler un article réel et dépasser le seuil de détection.</p>" }
+        val html = "<html><body><article><h1>Titre</h1>$paras</article></body></html>"
+        assertFalse(Readability.isBlockedPage(html))
+    }
+    @Test fun `boilerplate paywall detecte`() {
+        val paywall = "La suite est réservée à nos abonnés. Votre carte bancaire a expiré. " +
+            "La suite est réservée à nos abonnés. Déjà abonné ? Se connecter. " +
+            "Envie de lire la suite ? Abonnez-vous pour profiter en intégralité de tous nos articles. " +
+            "Abonnez-vous pour profiter en intégralité. " +
+            "Texte de remplissage supplémentaire pour dépasser trois cents caractères sans ajouter de vrai contenu journalistique. ".repeat(3)
+        assertTrue(Readability.isPaywalledText(paywall))
+        assertFalse(Readability.isUsableFull("<div>$paywall</div>"))
+    }
+    @Test fun `vrai article utilisable comme complet`() {
+        val paras = (1..10).joinToString("") { "<p>Paragraphe $it avec du vrai contenu journalistique détaillé et informatif sur l'actualité du jour.</p>" }
+        assertTrue(Readability.isUsableFull("<div>$paras</div>"))
+        assertFalse(Readability.isPaywalledText("Court extrait RSS sans appel à l'abonnement."))
+    }
+    @Test fun `mur de consentement cookies detecte`() {
+        val consent = "Les données transmises par le biais du présent formulaire sont destinées à Humanoid " +
+            "afin de vous informer de nos actualités. Ce contenu est bloqué car vous n'avez pas accepté les cookies et autres traceurs. " +
+            "Vous gardez la possibilité de retirer votre consentement à tout moment. " +
+            "Nous utilisons des cookies pour la prospection commerciale et la gestion de la relation client. " +
+            "Pour plus d'informations, nous vous invitons à lire notre politique de protection des données. ".repeat(2)
+        assertTrue(Readability.isConsentWallText(consent))
+        assertFalse(Readability.isUsableFull("<div>$consent</div>"))
+    }
+    @Test fun `urls oauth bien formees`() {
+        val f = OAuth.feedlyAuthUrl("CID", "pressia://oauth/feedly")
+        assertTrue(f.contains("feedly.com/v3/auth/auth") && f.contains("client_id=CID"))
+        val i = OAuth.inoreaderAuthUrl("APP", "pressia://oauth/inoreader")
+        assertTrue(i.contains("inoreader.com/oauth2/auth") && i.contains("client_id=APP"))
+    }
+    @Test fun `parse redirect oauth`() {
+        val ok = OAuth.parseRedirect("pressia://oauth/feedly?code=ABC123&state=feedly", "pressia://oauth/feedly")
+        assertEquals("ABC123", ok?.code)
+        assertNull(OAuth.parseRedirect("https://feedly.com/", "pressia://oauth/feedly"))
+        val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
+        assertEquals("access_denied", denied?.error)
+    }
+    @Test fun `nom de flux lisible`() {
+        assertEquals("lemonde.fr", com.pressia.ui.prettyFeedTitle("https://www.lemonde.fr/rss/une.xml"))
+        assertEquals("Mon blog", com.pressia.ui.prettyFeedTitle("Mon blog"))
+        assertEquals("", com.pressia.ui.prettyFeedTitle(null))
+    }
+    @Test fun `favicon depuis host`() {
+        val sub = com.pressia.data.local.SubscriptionEntity(
+            id = "https://www.lemonde.fr/rss/une.xml", title = "x",
+            url = "https://www.lemonde.fr/rss/une.xml", siteUrl = "https://www.lemonde.fr")
+        assertEquals("https://www.google.com/s2/favicons?domain=lemonde.fr&sz=128",
+            com.pressia.ui.feedFaviconUrl(sub))
+        val withIcon = sub.copy(iconUrl = "https://ex.com/i.png")
+        assertEquals("https://ex.com/i.png", com.pressia.ui.feedFaviconUrl(withIcon))
+        assertNull(com.pressia.ui.feedFaviconUrl(null))
+    }
+    @Test fun `blocs article texte et images`() {
+        val html = "<p>Intro.</p><p><img src=\"https://ex.com/a.jpg\"/></p><p>Suite du texte.</p>"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        assertTrue(blocks.any { it is com.pressia.ui.ABlock.T && (it as com.pressia.ui.ABlock.T).text.contains("Intro") })
+        assertTrue(blocks.any { it is com.pressia.ui.ABlock.I && (it as com.pressia.ui.ABlock.I).url == "https://ex.com/a.jpg" })
+    }
+    @Test fun `articles regroupes par jour avec entete`() {
+        val now = 1_760_000_000_000L
+        val day = 86_400_000L
+        fun art(id: String, ts: Long) = com.pressia.data.local.ArticleEntity(
+            id = id, feedId = "f", title = id, published = ts
+        )
+        val list = listOf(
+            art("a", now - 1000L),
+            art("b", now - 2000L),
+            art("c", now - day - 1000L),
+            art("d", now - day - 2000L)
+        )
+        val grouped = com.pressia.ui.groupByDay(list, now)
+        // 2 en-têtes de jour + 4 articles
+        assertEquals(6, grouped.size)
+        val days = grouped.filterIsInstance<com.pressia.ui.StreamItem.Day>()
+        assertEquals(2, days.size)
+        assertEquals("Aujourd'hui", days[0].label)
+        assertEquals(com.pressia.ui.dayKey(now - day), days[1].key)
+        // les articles restent dans l'ordre
+        assertEquals(listOf("a", "b", "c", "d"),
+            grouped.filterIsInstance<com.pressia.ui.StreamItem.Art>().map { it.article.id })
+    }
+    @Test fun `libelle de jour relatif`() {
+        val now = 1_760_000_000_000L
+        assertEquals("Aujourd'hui", com.pressia.ui.dayLabel(com.pressia.ui.dayKey(now), now))
+        assertEquals("Hier", com.pressia.ui.dayLabel(com.pressia.ui.dayKey(now - 86_400_000L), now))
+    }
+    @Test fun `image du flux déjà presente detectee comme doublon`() {
+        assertTrue(com.pressia.ui.isSameImage("https://cdn.ex.com/photo.jpg?w=800", "https://cdn.ex.com/photo.jpg"))
+        assertTrue(com.pressia.ui.isSameImage("//cdn.ex.com/photo.jpg", "https://www.cdn.ex.com/photo.jpg"))
+        assertFalse(com.pressia.ui.isSameImage("https://cdn.ex.com/photo.jpg", "https://cdn.ex.com/autre.jpg"))
+        assertFalse(com.pressia.ui.isSameImage("", "https://cdn.ex.com/photo.jpg"))
+    }
+    @Test fun `duree de lecture lisible`() {
+        assertEquals("0 s", com.pressia.data.fmtDuration(0))
+        assertEquals("42 s", com.pressia.data.fmtDuration(42))
+        assertEquals("4 min 05 s", com.pressia.data.fmtDuration(245))
+        assertEquals("2 h 07 min", com.pressia.data.fmtDuration(7620))
+    }
+    @Test fun `periode stats`() {
+        val now = 1_760_000_000_000L
+        val day = com.pressia.data.startOfDay(now)
+        // Aujourd'hui : depuis minuit, jusqu'à maintenant
+        val d = com.pressia.data.statsRange(com.pressia.data.StatsPeriod.DAY, now = now)
+        assertEquals(day, d[0]); assertEquals(now, d[1])
+        // 7 jours : 7 jours glissants incluant aujourd'hui (minuit - 6 j)
+        assertEquals(day - 6L * 86400_000L, com.pressia.data.statsRange(com.pressia.data.StatsPeriod.WEEK, now = now)[0])
+        assertEquals(day - 29L * 86400_000L, com.pressia.data.statsRange(com.pressia.data.StatsPeriod.MONTH, now = now)[0])
+        // Depuis le début : 1re lecture, ou 0 si l'app n'a jamais enregistré de lecture
+        assertEquals(1_700_000_000_000L, com.pressia.data.statsRange(com.pressia.data.StatsPeriod.ALL, now = now, first = 1_700_000_000_000L)[0])
+        assertEquals(0L, com.pressia.data.statsRange(com.pressia.data.StatsPeriod.ALL, now = now, first = 0L)[0])
+        // L'année est prioritaire sur la période. `now` vaut octobre 2025 :
+        // sur 2025 (année en cours) la borne haute est ramenée à maintenant.
+        val c = java.util.Calendar.getInstance()
+        c.clear(); c.set(2025, 0, 1, 0, 0, 0)
+        val current = com.pressia.data.statsRange(com.pressia.data.StatsPeriod.WEEK, year = 2025, now = now)
+        assertEquals(c.timeInMillis, current[0]); assertEquals(now, current[1])
+        // Sur une année passée : borne haute = 1er janvier suivant moins 1 ms
+        c.clear(); c.set(2024, 0, 1, 0, 0, 0)
+        val past = com.pressia.data.statsRange(com.pressia.data.StatsPeriod.WEEK, year = 2024, now = now)
+        assertEquals(c.timeInMillis, past[0])
+        c.clear(); c.set(2025, 0, 1, 0, 0, 0)
+        assertEquals(c.timeInMillis - 1, past[1])
+        assertEquals("7d", com.pressia.data.StatsPeriod.of("7d").id)
+        assertEquals(com.pressia.data.StatsPeriod.WEEK, com.pressia.data.StatsPeriod.of("inconnu"))
+    }
+    @Test fun `tri des flux par temps ou ouvertures`() {
+        val f = listOf("a" to (10 to 1), "b" to (30 to 5), "c" to (20 to 3))
+        assertEquals(listOf("b", "c", "a"), com.pressia.data.sortFeeds(f, com.pressia.data.FeedSort.TIME_DESC).map { it.first })
+        assertEquals(listOf("a", "c", "b"), com.pressia.data.sortFeeds(f, com.pressia.data.FeedSort.TIME_ASC).map { it.first })
+        assertEquals(listOf("b", "c", "a"), com.pressia.data.sortFeeds(f, com.pressia.data.FeedSort.OPENS_DESC).map { it.first })
+        assertEquals(listOf("a", "c", "b"), com.pressia.data.sortFeeds(f, com.pressia.data.FeedSort.OPENS_ASC).map { it.first })
+    }
+    @Test fun `libelle court de jour stats`() {
+        assertEquals("jeu. 1/10", com.pressia.data.dayLabelShort("2026-10-01"))
+        assertTrue(com.pressia.data.dayLabelShort("n-importe").contains("n-importe"))
+    }
+    @Test fun `sections de sauvegarde et secrets`() {
+        assertEquals(listOf("prefs", "stats", "accounts", "read"), com.pressia.data.Sections.ALL)
+        // Les secrets ne sont jamais exportés implicitement
+        assertTrue("token" in com.pressia.data.SECRET_PREFS)
+        assertTrue("refresh" in com.pressia.data.SECRET_PREFS)
+        assertTrue("feedly_client_secret" in com.pressia.data.SECRET_PREFS)
+        assertFalse("theme" in com.pressia.data.SECRET_PREFS)
+    }
+
+    // ----- Registre multi-comptes -----
+
+    @Test fun `identifiant de compte stable et distinct`() {
+        val a = com.pressia.data.accountIdOf("feedly", "tok-1")
+        // Le même jeton donne toujours le même compte : une reconnexion ne crée pas de doublon.
+        assertEquals(a, com.pressia.data.accountIdOf("feedly", "tok-1"))
+        // Deux comptes du même service ne se confondent jamais.
+        assertNotEquals(a, com.pressia.data.accountIdOf("feedly", "tok-2"))
+        assertNotEquals(a, com.pressia.data.accountIdOf("inoreader", "tok-1"))
+        assertTrue(a.startsWith("feedly#"))
+    }
+
+    @Test fun `cle de proprietaire lue jusqu'au service`() {
+        assertEquals("feedly", com.pressia.data.providerBase("feedly#ab12cd34"))
+        assertEquals("inoreader", com.pressia.data.providerBase("inoreader#0011"))
+        assertEquals(com.pressia.data.LOCAL_PROVIDER, com.pressia.data.providerBase(null))
+        assertEquals(com.pressia.data.LOCAL_PROVIDER, com.pressia.data.providerBase("  "))
+        // Les flux saisis à la main ne sont jamais assimilés à un compte.
+        assertTrue(com.pressia.data.isLocalProvider(null))
+        assertTrue(com.pressia.data.isLocalProvider("local"))
+        assertFalse(com.pressia.data.isLocalProvider("feedly#ab12"))
+        assertTrue(com.pressia.data.sameAccount("feedly#ab12", "feedly#ab12"))
+        assertFalse(com.pressia.data.sameAccount("feedly#ab12", "feedly#cd34"))
+        assertFalse(com.pressia.data.sameAccount(null, "feedly#ab12"))
+    }
+
+    @Test fun `registre de comptes aller-retour`() {
+        val accounts = listOf(
+            com.pressia.data.CloudAccount("feedly#aa", "feedly", "t1", "moi@ex.com"),
+            com.pressia.data.CloudAccount("inoreader#bb", "inoreader", "t2", "")
+        )
+        val back = com.pressia.data.AccountStore.parse(com.pressia.data.AccountStore.encode(accounts))
+        assertEquals(accounts, back)
+        // Registre vide ou corrompu : aucun compte, plutôt qu'une exception au démarrage.
+        assertTrue(com.pressia.data.AccountStore.parse(null).isEmpty())
+        assertTrue(com.pressia.data.AccountStore.parse("[]").isEmpty())
+        assertTrue(com.pressia.data.AccountStore.parse("pas du json").isEmpty())
+        assertTrue(com.pressia.data.AccountStore.parse("""[{"provider":"","token":"x"}]""").isEmpty())
+        // Deux lignes de même identifiant n'en font qu'une.
+        assertEquals(1, com.pressia.data.AccountStore.parse(
+            """[{"id":"feedly#aa","provider":"feedly","token":"t1"},{"id":"feedly#aa","provider":"feedly","token":"t1"}]"""
+        ).size)
+    }
+
+    @Test fun `ajout et rafraichissement de jeton`() {
+        val one = listOf(com.pressia.data.CloudAccount("feedly#aa", "feedly", "t1", "moi@ex.com"))
+        // Même jeton : on ne duplique pas, on met juste à jour le nom.
+        val same = com.pressia.data.AccountStore.refreshToken(one, "feedly", "t1", "autre@ex.com")
+        assertEquals(1, same.size)
+        assertEquals("autre@ex.com", same[0].name)
+        // Nouveau jeton du même service : un second compte distinct, l'ancien est conservé.
+        val two = com.pressia.data.AccountStore.refreshToken(same, "feedly", "t2", "pro@ex.com")
+        assertEquals(2, two.size)
+        assertEquals(2, two.count { it.service == "feedly" })
+        assertNotEquals(two[0].id, two[1].id)
+        // upsert remplace la ligne de même identifiant.
+        val replaced = com.pressia.data.AccountStore.upsert(two, two[0].copy(name = "renomme"))
+        assertEquals(2, replaced.size)
+        assertEquals("renomme", replaced.first { it.id == two[0].id }.name)
+    }
+
+    @Test fun `libelle du jeu de favoris`() {
+        assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("app"))
+        assertEquals("Read later", com.pressia.ui.favSetLabel("later"))
+        // Une valeur inconnue retombe sur les étoiles plutôt que d'afficher un libellé vide.
+        assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("inconnu"))
+    }
+}
