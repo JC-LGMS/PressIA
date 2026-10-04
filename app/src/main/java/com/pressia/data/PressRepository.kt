@@ -28,7 +28,10 @@ const val MERGED_PREFIX = "merged:"
 fun favScopeArg(set: String): String = when (set) {
     "later" -> "later"
     "all" -> "all"
-    else -> "starred"
+    "starred" -> "starred"
+    // "" = écran de flux ordinaire : aucun filtre de favori. Sans ce cas, la valeur retombait sur
+    // "starred" et le flux de lecture n'affichait plus que les articles étoilés.
+    else -> ""
 }
 
 /**
