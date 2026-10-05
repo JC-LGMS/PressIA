@@ -79,3 +79,72 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 - Les champs de config OAuth (`FEEDLY_CLIENT_ID`, `INOREADER_APP_ID`, …) sont lus dans
   `local.properties` ou l'environnement ; ils sont vides par défaut, l'app démarre mais les
   comptes distants ne s'authentifient pas.
+
+## Contrôler l'application (ADB + UIAutomator)
+
+L'agent pilote l'app PressIA directement sur l'émulateur emulator-5554 via adb + UIAutomator dump.
+
+### Outils utilisés
+- adb : $env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe
+- emulator : $env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe (AVD Pixel_10)
+- Script utilitaire : C:\Users\jc_lg\AppData\Local\Temp\opencode\dump.ps1 (dump + pull ui.xml)
+
+### Vérifier les appareils connectés
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  devices
+`
+
+### Démarrer / relancer l'app
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  -s emulator-5554 shell am force-stop com.pressia
+&  -s emulator-5554 shell monkey -p com.pressia -c android.intent.category.LAUNCHER 1
+Start-Sleep -Seconds 3
+`
+
+### Dumper l'interface
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  -s emulator-5554 shell uiautomator dump /sdcard/ui.xml
+&  -s emulator-5554 pull /sdcard/ui.xml "C:\Users\jc_lg\AppData\Local\Temp\ui.xml"
+`
+Ou :
+`powershell
+pwsh -NoLogo -NoProfile -File "C:\Users\jc_lg\AppData\Local\Temp\opencode\dump.ps1"
+`
+
+Le fichier $env:LOCALAPPDATA\Temp\ui.xml contient l'arborescence complète de l'écran courant.
+
+### Cliquer sur un élément
+Analyser ui.xml pour repérer un node par son text, content-desc ou resource-id. Calculer le centre de son bounds et exécuter un tap :
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  -s emulator-5554 shell input tap <X> <Y>
+`
+
+Autres gestes :
+`powershell
+&  -s emulator-5554 shell input keyevent KEYCODE_BACK
+&  -s emulator-5554 shell input swipe 540 1400 540 400 300
+`
+
+### Installer l'APK
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  -s emulator-5554 install -r "C:\Perso\Projets\Android\PressIA-JCP\app\build\outputs\apk\debug\app-debug.apk"
+`
+
+### Logs
+`powershell
+ = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
+&  -s emulator-5554 logcat --pid=(&  shell pidof com.pressia) -d
+`
+
+### Méthodologie
+1. Dump UI après action
+2. Repérer élément visé dans ui.xml
+3. Calculer centre bounds
+4. Exécuter input tap
+5. Attendre (1–3s selon transition)
+6. Re-dumper si besoin

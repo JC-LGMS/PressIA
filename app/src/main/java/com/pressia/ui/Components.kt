@@ -29,9 +29,12 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -98,28 +101,46 @@ fun ArticleRow(
             else -> Unit
         }
     }
+    /**
+     * Gouttière tenue par l'action de fin. Elle sert à deux choses : la méta doit s'arrêter au bord
+     * du bouton (et non en dessous), et l'étoile de swipe doit se superposer exactement à lui —
+     * d'où une marge de (moitié de gouttière - 9 dp), les 9 dp étant le rayon de l'icône de 18 dp.
+     */
+    val trailW = when (trailing) { "read" -> 30.dp; "share" -> 48.dp; else -> 0.dp }
+    // L'étoile est centrée sur la largeur totale de la ligne, bord droit à l'écran : sa marge doit
+    // donc valoir le padding de la ligne + la moitié de gouttière - le rayon de l'icône (9 dp).
+    // Sinon elle dérive d'autant vers l'extérieur que le padding.
+    val starEnd = if (mode == "compact" && trailW > 0.dp) 12.dp + trailW / 2 - 9.dp else 28.dp
+    val density = LocalDensity.current
+    // Hauteur du bloc de méta, mesurée au rendu : elle permet de remonter l'étoile de swipe sur le
+    // bloc titre, puisque la ligne compacte est plus haute que le titre.
+    var metaH by remember(a.id) { mutableStateOf(0.dp) }
     val content: @Composable (Boolean, Boolean) -> Unit = { swiping, flipped ->
     when (mode) {
-        "compact" -> Row(
+        "compact" -> Column(
             Modifier.fillMaxWidth().longPressInert(onOpen)
-                .padding(horizontal = 12.dp, vertical = 4.dp).alpha(alpha),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 6.dp).alpha(alpha)
         ) {
-            Column(Modifier.weight(1f)) {
-                // Favicon et titre dans un même Row centré : le favicon se cale ainsi sur les
-                // lignes du titre seul, et non sur le centre de toute la ligne (titre + méta).
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.clickable { onToggleRead() }) { FeedAvatar(feeds[a.feedId]) }
-                    Spacer(Modifier.width(10.dp))
-                    Text(a.title, fontSize = titleSp.sp,
-                        fontWeight = FontWeight.Normal,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-                // La méta est décalée du retrait du favicon pour rester alignée sur le titre.
-                MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped),
-                    modifier = Modifier.padding(start = 38.dp))
+            // Favicon, titre et action de fin partagent le même Row centré : tout se cale sur les
+            // lignes du titre seul, et non sur le centre de la ligne entière (titre + méta).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // La zone cliquable garde 28 dp même quand le favicon rétrécit.
+                Box(
+                    Modifier.size(28.dp).clickable { onToggleRead() },
+                    contentAlignment = Alignment.Center
+                ) { FeedAvatar(feeds[a.feedId], 24) }
+                Spacer(Modifier.width(8.dp))
+                Text(a.title, fontSize = titleSp.sp, lineHeight = (titleSp * 1.2f).sp,
+                    fontWeight = FontWeight.Normal,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                trail(swiping)
             }
-            trail(swiping)
+            // La méta est calée sur le titre : retrait du favicon à gauche, bord du bouton à
+            // droite. Le onSizeChanged est après le padding, donc la hauteur relevée inclut l'écart.
+            MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped),
+                modifier = Modifier.padding(start = 36.dp, end = trailW, top = 3.dp)
+                    .onSizeChanged { metaH = with(density) { it.height.toDp() } })
         }
         "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressInert(onOpen)) {
             Column {
@@ -162,7 +183,7 @@ fun ArticleRow(
         )
     }
     }
-    SwipeToStar(a, onToggleStar, dotAtStart, content)
+    SwipeToStar(a, onToggleStar, dotAtStart, starEnd, metaH, content)
 }
 
 /**
@@ -174,13 +195,17 @@ fun ArticleRow(
  * d'affilée fonctionnent.
  *
  * [starAtStart] place l'étoile du côté du rond lu/non-lu, qui n'est pas toujours le même selon la
- * vue : l'étoile apparaît ainsi exactement là où l'information a disparu.
+ * vue : l'étoile apparaît ainsi exactement là où l'information a disparu. [starEnd] est la marge
+ * qui la superpose au bouton lu/non-lu, et [starBottom] la hauteur à retrancher en bas pour la
+ * remonter sur le seul bloc titre des vues où la ligne est plus haute que le titre.
  */
 @Composable
 private fun SwipeToStar(
     a: ArticleEntity,
     onToggleStar: () -> Unit,
     starAtStart: Boolean,
+    starEnd: Dp,
+    starBottom: Dp,
     content: @Composable (Boolean, Boolean) -> Unit
 ) {
     val primary = MaterialTheme.colorScheme.primary
@@ -207,7 +232,7 @@ private fun SwipeToStar(
     ) {
         if (dx < -8f) {
             Row(
-                Modifier.matchParentSize().background(primary.copy(alpha = 0.18f)),
+                Modifier.matchParentSize().padding(bottom = starBottom).background(primary.copy(alpha = 0.18f)),
                 horizontalArrangement = if (starAtStart) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -216,7 +241,7 @@ private fun SwipeToStar(
                     if (a.starred) "Retirer des favoris" else "Ajouter aux favoris",
                     tint = primary,
                     modifier = Modifier
-                        .padding(start = if (starAtStart) 22.dp else 0.dp, end = if (starAtStart) 0.dp else 28.dp)
+                        .padding(start = if (starAtStart) 22.dp else 0.dp, end = if (starAtStart) 0.dp else starEnd)
                         .size(18.dp)
                 )
             }
@@ -241,11 +266,14 @@ private fun MetaLine(
     starred: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+    // Interligne resserré : la méta tient dans une seule hauteur de ligne, sans le blanc que le
+    // style du thème laisserait sous le texte.
+    val lh = (dateSp * 1.15f).sp
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                source, fontSize = dateSp.sp, color = color,
+                source, fontSize = dateSp.sp, lineHeight = lh, color = color,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false)
             )
@@ -258,7 +286,7 @@ private fun MetaLine(
             }
         }
         Spacer(Modifier.width(6.dp))
-        Text(fmtTime(published), fontSize = dateSp.sp, color = color, maxLines = 1)
+        Text(fmtTime(published), fontSize = dateSp.sp, lineHeight = lh, color = color, maxLines = 1)
     }
 }
 
@@ -412,9 +440,15 @@ fun ArticleList(articles: List<ArticleEntity>, mode: String, onOpen: (ArticleEnt
         val now = remember(articles) { System.currentTimeMillis() }
         val grouped = remember(articles, now) { groupByDay(articles, now) }
         LazyColumn {
-            grouped.forEach { si ->
+            grouped.forEachIndexed { i, si ->
                 when (si) {
-                    is StreamItem.Day -> stickyHeader(key = "day-${si.key}") { DayHeader(si.label) }
+                    is StreamItem.Day -> {
+                        // Respiration entre le dernier article et le jour suivant. L'écart est un
+                        // élément de la liste et non un padding de l'en-tête : celui-ci est collant,
+                        // un padding haut laisserait un trou au-dessus de lui quand il se colle.
+                        if (i > 0) item(key = "gap-${si.key}") { Spacer(Modifier.height(8.dp)) }
+                        stickyHeader(key = "day-${si.key}") { DayHeader(si.label) }
+                    }
                     is StreamItem.Art -> item(key = "art-${si.article.id}") { row(si.article) }
                 }
             }
