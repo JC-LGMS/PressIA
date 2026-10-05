@@ -1,5 +1,7 @@
 package com.pressia
 
+import com.pressia.data.local.PrefEntry
+import com.pressia.data.local.Prefs
 import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
@@ -182,6 +184,31 @@ class PressLogicTest {
         assertTrue("feedly_client_secret" in com.pressia.data.SECRET_PREFS)
         assertFalse("theme" in com.pressia.data.SECRET_PREFS)
     }
+
+    @Test fun `etat local jamais exporte`() {
+        // La file des favoris restaurés n'est pas un réglage : elle ne doit pas sortir, et son
+        // absence dans ENTRIES garantit qu'elle ne peut pas être réimportée par un nom.
+        assertTrue("restored_starred" in com.pressia.data.NON_EXPORTED_PREFS)
+        assertFalse("restored_starred" in entryNames())
+        // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
+        assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
+    }
+
+    @Test fun `entrees de preferences sans doublon et sans trou connu`() {
+        val names = entryNames()
+        assertEquals("un nom de préférence ne doit être déclaré qu'une fois", names.size, names.toSet().size)
+        // last_sync_at est un Long : sans LongPref il partait dans la sauvegarde mais en sortait
+        // toujours, et la restauration déclenchait une synchronisation inutile.
+        assertTrue("last_sync_at" in names)
+        assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "last_sync_at" })
+        // Les trois OAuth / comptes que l'écran de connexion renseigne doivent rester exportables
+        // (leur secret est filtré séparément, leur identifiant public est destiné à être partagé).
+        listOf("inoreader_app_id", "feedly_client_id", "accounts", "active_account").forEach {
+            assertTrue("$it doit figurer dans ENTRIES", it in names)
+        }
+    }
+
+    private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()
 
     // ----- Registre multi-comptes -----
 

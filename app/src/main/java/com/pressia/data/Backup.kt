@@ -36,6 +36,12 @@ const val BACKUP_VERSION = 1
  */
 val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key")
 
+/**
+ * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file
+ * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration.
+ */
+val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name)
+
 /** Résultat d'un import, pour l'affichage utilisateur. */
 data class ImportReport(
     val prefs: Int = 0,
@@ -60,6 +66,7 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
         val o = JSONObject()
         prefs.data.first().asMap().forEach { (k, v) ->
             // Les secrets ne sortent que si l'utilisateur a coché « jetons ».
+            if (k.name in NON_EXPORTED_PREFS) return@forEach
             if (includeTokens || k.name !in SECRET_PREFS) o.put(k.name, jsonValue(v))
         }
         root.put(Sections.PREFS, o)
@@ -72,7 +79,10 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
         }
         o.put("categories", JSONArray().apply {
             dao.categories().forEach { c ->
-                put(JSONObject().put("id", c.id).put("label", c.label).put("provider", c.provider))
+                put(
+                    JSONObject().put("id", c.id).put("label", c.label)
+                        .put("provider", c.provider).put("sortOrder", c.sortOrder)
+                )
             }
         })
         o.put("subscriptions", JSONArray().apply {
@@ -81,7 +91,7 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
                     JSONObject()
                         .put("id", s.id).put("title", s.title).put("url", s.url).put("siteUrl", s.siteUrl)
                         .put("categoryId", s.categoryId ?: JSONObject.NULL).put("iconUrl", s.iconUrl ?: JSONObject.NULL)
-                        .put("provider", s.provider)
+                        .put("provider", s.provider).put("sortOrder", s.sortOrder)
                 )
             }
         })
@@ -141,12 +151,15 @@ suspend fun PressRepository.importJson(
             while (keys.hasNext()) {
                 val key = keys.next()
                 val v = o.get(key)
-                when (v) {
-                    // Sans « jetons », on n'écrase jamais un secret déjà présent sur l'appareil.
-                    is Boolean -> { if (hasTokens || key !in SECRET_PREFS) { prefs.setByName(key, v); n++ } }
-                    is Int -> { if (hasTokens || key !in SECRET_PREFS) { prefs.setByName(key, v); n++ } }
-                    is String -> { if (hasTokens || key !in SECRET_PREFS) { prefs.setByName(key, v); n++ } }
-                }
+                // Seuls booléen, nombre et texte sont des valeurs de préférence exploitables :
+                // un objet, un tableau ou `null` vient d'une sauvegarde abimée et est ignoré.
+                if (v !is Boolean && v !is Number && v !is String) continue
+                // Sans « jetons », on n'écrase jamais un secret déjà présent sur l'appareil.
+                if (!hasTokens && key in SECRET_PREFS) continue
+                if (key in NON_EXPORTED_PREFS) continue
+                // `setByName` renvoie faux pour une clé inconnue ou un type incohérent : elle
+                // n'est alors pas comptée, et le rapport ne surestime pas la restauration.
+                if (prefs.setByName(key, v)) n++
             }
             report = report.copy(prefs = n)
         }
@@ -185,10 +198,14 @@ suspend fun PressRepository.importJson(
                 val id = o.optString("id").takeIf { it.isNotBlank() } ?: continue
                 if (o.optBoolean("starred", false)) starred += id
             }
-            if (starred.isNotEmpty()) dao.markStarred(starred.toList())
-            // Les favoris importés sont mémorisés : sur une installation neuve les articles
-            // arrivent plus tard, et l'UPDATE ci-dessus n'aurait porté sur aucune ligne.
-            prefs.set(Prefs.RESTORED_STARRED, starred.joinToString("\n"))
+            if (starred.isNotEmpty()) {
+                dao.markStarred(starred.toList())
+                // Les favoris importés sont mémorisés : sur une installation neuve les articles
+                // arrivent plus tard, et l'UPDATE ci-dessus n'aurait porté sur aucune ligne.
+                // Une sauvegarde sans aucun favori ne touche pas à la file : elle appartient à
+                // une autre restauration, encore en attente de ses propres articles.
+                prefs.set(Prefs.RESTORED_STARRED, starred.joinToString("\n"))
+            }
             report = report.copy(read = starred.size)
         }
     }
@@ -209,7 +226,10 @@ private fun JSONArray.toCategoryList(): List<CategoryEntity> = (0 until length()
         CategoryEntity(
             id = it.optString("id"),
             label = it.optString("label"),
-            provider = it.optString("provider", "local")
+            provider = it.optString("provider", "local"),
+            // Absent des sauvegardes antérieures à l'ordre des dossiers : repli sur 0, le tri
+            // secondaire par libellé prend alors le relais.
+            sortOrder = it.optInt("sortOrder")
         )
     }
 }
@@ -223,7 +243,8 @@ private fun JSONArray.toSubscriptionList(): List<SubscriptionEntity> = (0 until 
             siteUrl = it.optString("siteUrl"),
             categoryId = it.optString("categoryId").takeIf { s -> s.isNotBlank() && s != "null" },
             iconUrl = it.optString("iconUrl").takeIf { s -> s.isNotBlank() && s != "null" },
-            provider = it.optString("provider", "local")
+            provider = it.optString("provider", "local"),
+            sortOrder = it.optInt("sortOrder")
         )
     }
 }

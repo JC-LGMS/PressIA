@@ -12,6 +12,7 @@ private val Context.ds by preferencesDataStore("pressia")
 sealed class PrefEntry(val name: String) {
     class Bool(name: String, val key: Preferences.Key<Boolean>) : PrefEntry(name)
     class IntPref(name: String, val key: Preferences.Key<Int>) : PrefEntry(name)
+    class LongPref(name: String, val key: Preferences.Key<Long>) : PrefEntry(name)
     class Str(name: String, val key: Preferences.Key<String>) : PrefEntry(name)
 }
 
@@ -76,7 +77,7 @@ class Prefs(private val ctx: Context) {
         val COLLAPSED_FOLDERS = stringPreferencesKey("collapsed_folders")
         /** Périmètre des favoris : "app" (étoiles PressIA) | "later" (Read later) | "all" (les deux). */
         val STARRED_SCOPE = stringPreferencesKey("starred_scope")
-    val TAP_FAVICON_READ = booleanPreferencesKey("tap_favicon_read")
+        val TAP_FAVICON_READ = booleanPreferencesKey("tap_favicon_read")
 
         val INOREADER_APP_ID = stringPreferencesKey("inoreader_app_id")
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
@@ -87,7 +88,8 @@ class Prefs(private val ctx: Context) {
          * Identifiants d'articles mis en favori par une restauration de sauvegarde, rejoués à chaque
          * synchronisation. Indispensable : sur une installation vierge les articles n'existent pas encore
          * au moment de l'import, un simple UPDATE ne toucherait aucune ligne et les favoris seraient perdus.
-         * Volontairement hors de [ENTRIES] : c'est un état local, pas un réglage à sauvegarder.
+         * Volontairement hors de [ENTRIES], et explicitement exclue de l'export : c'est un état
+         * local d'attente, pas un réglage. La restaurer dans une sauvegarde n'aurait aucun sens.
          */
         val RESTORED_STARRED = stringPreferencesKey("restored_starred")
 
@@ -107,7 +109,8 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("open_mode", OPEN_MODE), PrefEntry.Bool("merge_folders", MERGE_FOLDERS),
             PrefEntry.IntPref("max_items", MAX_ITEMS), PrefEntry.Bool("images_offline", IMAGES_OFFLINE),
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
-            PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
+            PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
+            PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
             PrefEntry.Bool("hide_empty_feeds", HIDE_EMPTY_FEEDS), PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),
             PrefEntry.Str("collapsed_folders", COLLAPSED_FOLDERS), PrefEntry.Str("starred_scope", STARRED_SCOPE),
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
@@ -121,14 +124,24 @@ class Prefs(private val ctx: Context) {
 
     fun <T> flow(key: Preferences.Key<T>, def: T): Flow<T> = data.map { it[key] ?: def }
 
-    /** Écrit une préférence à partir de son nom et d'une valeur JSON (booléen / entier / texte). */
-    @Suppress("UNCHECKED_CAST")
-    suspend fun setByName(name: String, value: Any) {
-        when (val e = ENTRIES.firstOrNull { it.name == name }) {
-            is PrefEntry.Bool -> set(e.key, value as Boolean)
-            is PrefEntry.IntPref -> set(e.key, value as Int)
-            is PrefEntry.Str -> set(e.key, value as String)
-            else -> Unit
+    /**
+     * Écrit une préférence à partir de son nom et d'une valeur JSON, et renvoie `true` si
+     * l'écriture a eu lieu.
+     *
+     * Un nom inconnu de [ENTRIES] ou un type incompatible renvoie `false` au lieu de lever :
+     * une sauvegarde est un fichier extérieur, il ne doit jamais faire tomber la restauration
+     * entière à cause d'une entrée aberrante. Les entiers sont acceptés pour une clé
+     * [PrefEntry.LongPref] et réciproquement, l'ordre de grandeur n'ayant pas d'importance pour
+     * un compteur.
+     */
+    suspend fun setByName(name: String, value: Any): Boolean {
+        val e = ENTRIES.firstOrNull { it.name == name } ?: return false
+        val write = when (e) {
+            is PrefEntry.Bool -> (value as? Boolean)?.let { set(e.key, it) }
+            is PrefEntry.IntPref -> (value as? Number)?.toInt()?.let { set(e.key, it) }
+            is PrefEntry.LongPref -> (value as? Number)?.toLong()?.let { set(e.key, it) }
+            is PrefEntry.Str -> (value as? String)?.let { set(e.key, it) }
         }
+        return write != null
     }
 }
