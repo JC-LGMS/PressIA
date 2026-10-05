@@ -76,6 +76,7 @@ class Prefs(private val ctx: Context) {
         val COLLAPSED_FOLDERS = stringPreferencesKey("collapsed_folders")
         /** Périmètre des favoris : "app" (étoiles PressIA) | "later" (Read later) | "all" (les deux). */
         val STARRED_SCOPE = stringPreferencesKey("starred_scope")
+    val TAP_FAVICON_READ = booleanPreferencesKey("tap_favicon_read")
 
         val INOREADER_APP_ID = stringPreferencesKey("inoreader_app_id")
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
@@ -109,6 +110,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
             PrefEntry.Bool("hide_empty_feeds", HIDE_EMPTY_FEEDS), PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),
             PrefEntry.Str("collapsed_folders", COLLAPSED_FOLDERS), PrefEntry.Str("starred_scope", STARRED_SCOPE),
+            PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET)
         )

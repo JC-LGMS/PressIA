@@ -109,6 +109,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Même chose pour l'écran Accueil, indépendant du drawer. */
     val hideEmptySubs: StateFlow<Boolean> = prefs.flow(Prefs.HIDE_EMPTY_SUBS, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** Échelle des libellés du drawer, en pourcentage. */
+    val tapFaviconRead: StateFlow<Boolean> = prefs.flow(Prefs.TAP_FAVICON_READ, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val drawerScale: StateFlow<Int> = prefs.flow(Prefs.DRAWER_TEXT_SCALE, 100).stateIn(viewModelScope, SharingStarted.Eagerly, 100)
     /** Synchronisation automatique au lancement de l'application. */
     val syncOnLaunch: StateFlow<Boolean> = prefs.flow(Prefs.SYNC_ON_LAUNCH, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
