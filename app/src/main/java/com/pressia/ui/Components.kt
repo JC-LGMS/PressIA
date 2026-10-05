@@ -102,16 +102,22 @@ fun ArticleRow(
     when (mode) {
         "compact" -> Row(
             Modifier.fillMaxWidth().longPressInert(onOpen)
-                .padding(horizontal = 12.dp, vertical = 6.dp).alpha(alpha),
+                .padding(horizontal = 12.dp, vertical = 4.dp).alpha(alpha),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FeedAvatar(feeds[a.feedId])
-            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(a.title, fontSize = titleSp.sp,
-                    fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = (titleSp + 2).sp)
-                MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped))
+                // Favicon et titre dans un même Row centré : le favicon se cale ainsi sur les
+                // lignes du titre seul, et non sur le centre de toute la ligne (titre + méta).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.clickable { onToggleRead() }) { FeedAvatar(feeds[a.feedId]) }
+                    Spacer(Modifier.width(10.dp))
+                    Text(a.title, fontSize = titleSp.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                // La méta est décalée du retrait du favicon pour rester alignée sur le titre.
+                MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped),
+                    modifier = Modifier.padding(start = 38.dp))
             }
             trail(swiping)
         }
@@ -140,14 +146,12 @@ fun ArticleRow(
             }
         }
         else -> ListItem(
-            modifier = Modifier.longPressInert(onOpen).alpha(alpha),
+            modifier = Modifier.longPressInert(onOpen).alpha(alpha).padding(vertical = 2.dp),
             headlineContent = { Text(a.title, fontSize = titleSp.sp,
-                fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped)) },
             leadingContent = {
-                if (!a.imageUrl.isNullOrBlank()) AsyncImage(a.imageUrl, null, Modifier.size(56.dp), contentScale = ContentScale.Crop)
-                // Sans image, le rond lu/non-lu occupe la place de l'image : il reste cliquable
-                // pour ne pas perdre le raccourci de bascule lu/non lu.
+                if (!a.imageUrl.isNullOrBlank()) Box(Modifier.clickable { onToggleRead() }) { AsyncImage(a.imageUrl, null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
                 else Icon(
                     if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked, null,
                     tint = readDotTint(),
@@ -230,9 +234,15 @@ private fun SwipeToStar(
  * l'heure dériver vers le centre.
  */
 @Composable
-private fun MetaLine(source: String, published: Long, dateSp: Int, starred: Boolean) {
+private fun MetaLine(
+    source: String,
+    published: Long,
+    dateSp: Int,
+    starred: Boolean,
+    modifier: Modifier = Modifier
+) {
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 source, fontSize = dateSp.sp, color = color,

@@ -642,8 +642,10 @@ fun SettingsScreen(vm: PressVM) {
         Slider(articleTitle.toFloat(), { articleTitle = it.toInt(); save() }, valueRange = 8f..28f, steps = 19)
         Text("Police du texte des articles : $fontSize sp")
         Slider(fontSize.toFloat(), { fontSize = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
+        val tapFav by vm.tapFaviconRead.collectAsState()
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Justifier le texte"); Spacer(Modifier.weight(1f)); Switch(justify, { justify = it; save() })
+            Text("Tap favicon/avatar pour marquer lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
         }
         // Taille du texte du menu : sur un drawer très rempli, la taille par défaut ne laisse pas
         // la place de tenir le nom des flux. Le réglage est en pourcentage, donc 100 % ne change rien.

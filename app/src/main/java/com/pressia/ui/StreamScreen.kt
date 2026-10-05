@@ -167,20 +167,28 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            FavScopeBar(
-                setLabel = favSetLabel(set),
-                feedLabel = feedScope.label,
-                onSetClick = { showSet = !showSet },
-                onFeedClick = { showFeed = !showFeed }
-            )
-            if (showSet || showFeed) {
-                FavScopeChooser(
-                    vm = vm,
-                    set = set,
-                    showSet = showSet,
-                    onPickSet = { vm.setFavSet(it); showSet = false },
-                    onPickFeed = { feedScope = it; showFeed = false }
-                )
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                FavScopeChip(Icons.Filled.Star, "Favoris : ${favSetLabel(set)}") { showSet = !showSet; if (showSet) showFeed = false }
+                if (showSet) {
+                    FavScopeChooser(
+                        vm = vm,
+                        set = set,
+                        showSet = true,
+                        onPickSet = { vm.setFavSet(it); showSet = false },
+                        onPickFeed = { feedScope = it; showFeed = false }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                FavScopeChip(Icons.Filled.RssFeed, "Flux : ${feedScope.label}") { showFeed = !showFeed; if (showFeed) showSet = false }
+                if (showFeed) {
+                    FavScopeChooser(
+                        vm = vm,
+                        set = set,
+                        showSet = false,
+                        onPickSet = { vm.setFavSet(it); showSet = false },
+                        onPickFeed = { feedScope = it; showFeed = false }
+                    )
+                }
             }
             when {
                 articles.isEmpty() && !vm.syncing -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
