@@ -16,8 +16,9 @@ aucun `res/layout`, aucun ViewHolder/Adapter, aucun `viewBinding`. Les 4 vues ar
 ## Chaîne d'outils (machine-specific)
 
 `gradle` **n'est pas dans le PATH** et `gradlew.bat` n'est qu'un stub (`gradle %*`) : il n'y a ni
-`gradle-wrapper.jar` ni distribution dans `~/.gradle/wrapper/dists`. Utiliser les copies déjà
-présentes dans le dossier tools temporaire :
+`gradle-wrapper.jar` ni distribution dans `~/.gradle/wrapper/dists`. Le `README.md` dit
+`./gradlew`, **ça ne marche pas sur cette machine**. Utiliser les copies déjà présentes dans
+le dossier tools temporaire :
 
 | Outil | Chemin |
 |---|---|
@@ -25,7 +26,7 @@ présentes dans le dossier tools temporaire :
 | Gradle 8.7 | `%LOCALAPPDATA%\Temp\opencode\tools\gradle-8.7\bin\gradle.bat` |
 | Android SDK | `%LOCALAPPDATA%\Android\Sdk` (cf. `local.properties`) |
 | adb | `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe` |
-| emulator | `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe` |
+| emulator | `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe` (AVD **Pixel_10**) |
 
 Ces outils sont hors du dépôt : s'ils disparaissent, les retélécharger (le ZIP de Gradle 8.7 est
 normalement déjà dans le même dossier).
@@ -36,6 +37,7 @@ Préambule PowerShell à poser avant tout appel Gradle :
 $env:JAVA_HOME = "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.20.1+1"
 $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 $g = "$env:LOCALAPPDATA\Temp\opencode\tools\gradle-8.7\bin\gradle.bat"
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 ```
 
 `--offline` fonctionne : les dépendances sont en cache dans `~/.gradle`. Ne le passer que si
@@ -51,23 +53,58 @@ rien n'a changé côté dépendances ; sinon le build échoue sur une résolutio
 
 APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Émulateur
+## Émulateur et pilotage de l'app (adb + UIAutomator)
 
-AVD disponible : **Pixel_10**. Un émulateur est souvent déjà démarré sur `emulator-5554`.
+Un émulateur est souvent déjà démarré sur `emulator-5554`. Sinon :
 
 ```powershell
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Pixel_10
 & $adb devices                                          # état des appareils
-& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Pixel_10   # si aucun device
+```
 
-& $g :app:installDebug --console=plain --offline        # installe sur l'appareil connecté
+Installer / (re)lancer / logs :
+
+```powershell
+& $g :app:installDebug --console=plain --offline        # échoue si aucun émulateur lancé
 & $adb install -r app/build/outputs/apk/debug/app-debug.apk              # variante manuelle
 & $adb shell am start -n com.pressia/.MainActivity      # (re)lance l'app
 & $adb logcat --pid=(& $adb shell pidof com.pressia)    # logs de l'app
 ```
 
-`installDebug` échoue si aucun émulateur n'est lancé : le démarrer d'abord.
+Dumper l'interface (script utilitaire, équivalent aux deux commandes suivantes) :
+
+```powershell
+pwsh -NoLogo -NoProfile -File "$env:LOCALAPPDATA\Temp\opencode\dump.ps1"
+& $adb -s emulator-5554 shell uiautomator dump /sdcard/ui.xml
+& $adb -s emulator-5554 pull /sdcard/ui.xml "$env:LOCALAPPDATA\Temp\ui.xml"
+```
+
+`$env:LOCALAPPDATA\Temp\ui.xml` contient l'arborescence de l'écran courant. Repérer un node
+par son text / content-desc / resource-id, calculer le centre de son bounds, puis :
+
+```powershell
+& $adb -s emulator-5554 shell input tap <X> <Y>
+& $adb -s emulator-5554 shell input keyevent KEYCODE_BACK
+& $adb -s emulator-5554 shell input swipe 540 1400 540 400 300
+& $adb -s emulator-5554 shell "am force-stop com.pressia; monkey -p com.pressia -c android.intent.category.LAUNCHER 1"
+```
+
+Méthodologie : dump après chaque action, attendre 1–3 s selon la transition, re-dumper.
+
+## Images / miniatures (non intuitif, tout est là)
+
+- Stockage : `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans
+  `filesDir/thumbs`. Gabarit = **plus grande miniature affichée** (bannière magazine :
+  largeur écran × 180 dp), jamais l'original full-size. Une URL partagée ne se télécharge qu'une fois.
+- Suivi : `ArticleEntity.imageCached`. `syncThumbs()` (`PressRepository`) télécharge tout ce qui
+  manque (lus + non lus, 4 en parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi
+  uniquement » hors Wi-Fi). Appelé en fin de `syncDown`, `syncReadLater` et `backfill` : **toute**
+  sync (bouton, lancement, worker, connexion de compte) récupère les images.
+- `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 :
+  la prochaine sync, quelle qu'elle soit, récupère tout.
+- Listes : les 3 `AsyncImage` d'`ArticleRow` passent par `thumbModel()` (fichier local si
+  présent, sinon URL paresseuse au scroll — aucun préchargement de liste). L'écran article garde
+  les URL pleine qualité (hero / inline / viewer).
 
 ## Pièges connus
 
@@ -79,72 +116,8 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 - Les champs de config OAuth (`FEEDLY_CLIENT_ID`, `INOREADER_APP_ID`, …) sont lus dans
   `local.properties` ou l'environnement ; ils sont vides par défaut, l'app démarre mais les
   comptes distants ne s'authentifient pas.
-
-## Contrôler l'application (ADB + UIAutomator)
-
-L'agent pilote l'app PressIA directement sur l'émulateur emulator-5554 via adb + UIAutomator dump.
-
-### Outils utilisés
-- adb : $env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe
-- emulator : $env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe (AVD Pixel_10)
-- Script utilitaire : C:\Users\jc_lg\AppData\Local\Temp\opencode\dump.ps1 (dump + pull ui.xml)
-
-### Vérifier les appareils connectés
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  devices
-`
-
-### Démarrer / relancer l'app
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  -s emulator-5554 shell am force-stop com.pressia
-&  -s emulator-5554 shell monkey -p com.pressia -c android.intent.category.LAUNCHER 1
-Start-Sleep -Seconds 3
-`
-
-### Dumper l'interface
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  -s emulator-5554 shell uiautomator dump /sdcard/ui.xml
-&  -s emulator-5554 pull /sdcard/ui.xml "C:\Users\jc_lg\AppData\Local\Temp\ui.xml"
-`
-Ou :
-`powershell
-pwsh -NoLogo -NoProfile -File "C:\Users\jc_lg\AppData\Local\Temp\opencode\dump.ps1"
-`
-
-Le fichier $env:LOCALAPPDATA\Temp\ui.xml contient l'arborescence complète de l'écran courant.
-
-### Cliquer sur un élément
-Analyser ui.xml pour repérer un node par son text, content-desc ou resource-id. Calculer le centre de son bounds et exécuter un tap :
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  -s emulator-5554 shell input tap <X> <Y>
-`
-
-Autres gestes :
-`powershell
-&  -s emulator-5554 shell input keyevent KEYCODE_BACK
-&  -s emulator-5554 shell input swipe 540 1400 540 400 300
-`
-
-### Installer l'APK
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  -s emulator-5554 install -r "C:\Perso\Projets\Android\PressIA-JCP\app\build\outputs\apk\debug\app-debug.apk"
-`
-
-### Logs
-`powershell
- = "C:\Users\jc_lg\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-&  -s emulator-5554 logcat --pid=(&  shell pidof com.pressia) -d
-`
-
-### Méthodologie
-1. Dump UI après action
-2. Repérer élément visé dans ui.xml
-3. Calculer centre bounds
-4. Exécuter input tap
-5. Attendre (1–3s selon transition)
-6. Re-dumper si besoin
+- Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
+  `exportSchema = false`, version DB actuelle : 4.
+- Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
+  message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
+  reste préférable quand l'utilisateur le demande.
