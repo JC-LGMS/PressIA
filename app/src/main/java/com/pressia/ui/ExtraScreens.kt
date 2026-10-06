@@ -633,6 +633,17 @@ fun SettingsScreen(vm: PressVM) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        val tapFav by vm.tapFaviconRead.collectAsState()
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
+        }
+        Text(
+            "Toucher le favicon du flux ou la vignette de l'article le marque lu ou non lu sans l'ouvrir. " +
+                "Désactivé, le changement d'état passe par l'ouverture de l'article, ou par le bouton de " +
+                "raccourci ci-dessus s'il est réglé sur « Lu/non-lu ».",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         HorizontalDivider()
         Text("Police des titres de liste : $titleFont sp")
         Slider(titleFont.toFloat(), { titleFont = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
@@ -642,11 +653,7 @@ fun SettingsScreen(vm: PressVM) {
         Slider(articleTitle.toFloat(), { articleTitle = it.toInt(); save() }, valueRange = 8f..28f, steps = 19)
         Text("Police du texte des articles : $fontSize sp")
         Slider(fontSize.toFloat(), { fontSize = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
-        val tapFav by vm.tapFaviconRead.collectAsState()
         val scope = androidx.compose.runtime.rememberCoroutineScope()
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Tap favicon/avatar pour marquer lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
-        }
         // Taille du texte du menu : sur un drawer très rempli, la taille par défaut ne laisse pas
         // la place de tenir le nom des flux. Le réglage est en pourcentage, donc 100 % ne change rien.
         Text("Taille du texte du menu : $drawerScale %")

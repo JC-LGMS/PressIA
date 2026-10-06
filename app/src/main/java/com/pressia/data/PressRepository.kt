@@ -5,11 +5,17 @@ import androidx.room.Room
 import com.pressia.data.local.*
 import com.pressia.data.readability.Readability
 import com.pressia.data.remote.*
+import com.pressia.data.sync.isWifiOnlyBlocked
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
@@ -106,6 +112,7 @@ class PressRepository(
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         dao.clearArticlesOf(accountId)
+        gcThumbs()
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
         dao.clearSubscriptionsOf(accountId)
         dao.clearCategoriesOf(accountId)
@@ -557,7 +564,38 @@ class PressRepository(
         }
         replayRestoredStarred()
         trimToMax(max)
+        syncThumbs()
         added
+    }
+
+    /**
+     * Récupère les miniatures de tous les articles synchronisés (lus comme non lus) dont le
+     * fichier local manque — y compris tout le stock après un vidage du cache, le suivi
+     * [ArticleEntity.imageCached] ayant alors été réinitialisé.
+     *
+     * Inactif si « Images hors-ligne » est coupé, ou si « Wi-Fi uniquement » est actif hors
+     * Wi-Fi/Ethernet : une passe manuelle sur données mobiles ne doit pas vider le forfait.
+     * Idempotent : seules les URLs manquantes sont téléchargées.
+     */
+    suspend fun syncThumbs(): Int = withContext(Dispatchers.IO) {
+        val data = prefs.data.first()
+        if (data[Prefs.IMAGES_OFFLINE] == false) return@withContext 0
+        if (isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)) return@withContext 0
+        val urls = dao.pendingThumbUrls()
+        if (urls.isEmpty()) return@withContext 0
+        val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
+        val permits = Semaphore(4)
+        return@withContext coroutineScope {
+            urls.map { url ->
+                async {
+                    permits.withPermit {
+                        if (!ThumbStore.fetch(ctx, url, maxW, maxH)) return@withPermit false
+                        dao.markThumbCached(url)
+                        true
+                    }
+                }
+            }.awaitAll().count { it }
+        }
     }
 
     /**
@@ -632,6 +670,7 @@ class PressRepository(
             continuation = next
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
+        syncThumbs()
         added
     }
 
@@ -648,13 +687,19 @@ class PressRepository(
         if (articles.isEmpty()) return 0
         val known = HashSet<String>()
         val prev = HashMap<String, FavFlags>()
+        val thumbs = HashMap<String, Boolean>()
         articles.map { it.id }.chunked(400).forEach { chunk ->
             known += dao.existingIds(chunk)
             dao.favFlagsOf(chunk).forEach { prev[it.id] = it }
+            dao.thumbFlagsOf(chunk).forEach { thumbs[it.id] = it.imageCached }
         }
         val merged = articles.map { a ->
-            val p = prev[a.id] ?: return@map a
-            a.copy(starred = p.starred, laterSaved = p.laterSaved || a.laterSaved)
+            val p = prev[a.id]
+            // La miniature déjà stockée survit à la réinsertion : sans cela chaque
+            // synchronisation (REPLACE) oublierait le fichier local et tout retéléchargerait.
+            val cached = thumbs[a.id] ?: a.imageCached
+            if (p == null) return@map if (cached) a.copy(imageCached = true) else a
+            a.copy(starred = p.starred, laterSaved = p.laterSaved || a.laterSaved, imageCached = cached)
         }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
@@ -711,12 +756,19 @@ class PressRepository(
                 added += storeArticles(items)
             }.onFailure { android.util.Log.e("PressIA", "read later ${account.id} failed", it) }
         }
+        syncThumbs()
         added
     }
 
     private suspend fun trimToMax(maxPerFeed: Int) {
         // garde les favoris + prune global > 30j (le quota fin par flux est assuré à l'affichage + prune)
-        dao.prune(System.currentTimeMillis() - 30L * 24 * 3600 * 1000)
+        if (dao.prune(System.currentTimeMillis() - 30L * 24 * 3600 * 1000) > 0) gcThumbs()
+    }
+
+    /** Supprime les miniatures dont plus aucun article n'a besoin (purge, compte supprimé). */
+    private suspend fun gcThumbs() {
+        val keep = dao.allThumbUrls().mapTo(HashSet()) { ThumbStore.thumbFileName(it) }
+        ThumbStore.gc(ctx, keep)
     }
 
     /**
@@ -811,11 +863,12 @@ class PressRepository(
     suspend fun feedIcon(feedId: String): String? = dao.feedIcon(feedId)
     suspend fun subscription(feedId: String): SubscriptionEntity? = dao.subscription(feedId)
 
-    /** Taille du cache local (base Room + images Coil) en octets. */
+    /** Taille du cache local (base Room + images Coil + miniatures) en octets. */
     suspend fun cacheSizeBytes(): Long = withContext(Dispatchers.IO) {        var total = 0L
         val dbDir = ctx.getDatabasePath("pressia.db")?.parentFile
         dbDir?.listFiles { f -> f.name.startsWith("pressia.db") }?.forEach { total += it.length() }
         total += runCatching { coil.Coil.imageLoader(ctx).diskCache?.size ?: 0L }.getOrDefault(0L)
+        total += runCatching { ThumbStore.sizeBytes(ctx) }.getOrDefault(0L)
         total
     }
 
@@ -828,15 +881,26 @@ class PressRepository(
         return String.format(java.util.Locale.FRANCE, "%.1f Mo", kb / 1024.0)
     }
 
-    /** Vide le cache : articles (favoris conservés) + images. */
+    /**
+     * Vide le cache : articles (favoris conservés) + images. Le suivi des miniatures est
+     * réinitialisé : la prochaine synchronisation récupère toutes les images des articles
+     * conservés.
+     */
     suspend fun clearCache(keepStarred: Boolean = true) = withContext(Dispatchers.IO) {
         if (keepStarred) dao.prune(Long.MAX_VALUE) // prune() ne supprime que les non-favoris
         else dao.clearArticles()
+        ThumbStore.clear(ctx)
+        dao.resetThumbsCached()
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
     }
 
-    /** Ne vide que les images (force le re-téléchargement, dont les favicons). */
+    /**
+     * Ne vide que les images (force le re-téléchargement, dont les favicons). Comme pour
+     * [clearCache], tout est récupéré à la prochaine synchronisation.
+     */
     suspend fun clearImages() = withContext(Dispatchers.IO) {
+        ThumbStore.clear(ctx)
+        dao.resetThumbsCached()
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
     }
 

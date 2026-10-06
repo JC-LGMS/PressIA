@@ -238,9 +238,32 @@ interface PressDao {
     suspend fun markAllRead(now: Long)
     @Query("UPDATE articles SET content = :html, fullFetched = 1 WHERE id = :id")
     suspend fun saveFullContent(id: String, html: String)
+    /**
+     * URLs des miniatures restant à stocker : tous les articles synchronisés (lus comme non
+     * lus) dont le fichier local n'a pas encore été enregistré. Dédupliquées : une même image
+     * partagée par plusieurs articles ne se télécharge qu'une fois.
+     */
+    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0")
+    suspend fun pendingThumbUrls(): List<String>
+    /** Toutes les URLs d'images encore référencées : sert au nettoyage des fichiers orphelins. */
+    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
+    suspend fun allThumbUrls(): List<String>
+    /** Marque tous les articles partageant cette URL : le fichier local est unique par URL. */
+    @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl = :url")
+    suspend fun markThumbCached(url: String)
+    /** Cache vidé : tout est à récupérer à la prochaine synchronisation. */
+    @Query("UPDATE articles SET imageCached = 0")
+    suspend fun resetThumbsCached()
+    /**
+     * Suivi « miniature stockée » des articles déjà connus, à relire avant une réinsertion.
+     * Comme les étoiles, `imageCached` serait écrasé par `upsertArticles` (REPLACE) à chaque
+     * synchronisation, ce qui retéléchargerait toutes les images à chaque fois.
+     */
+    @Query("SELECT id, imageCached FROM articles WHERE id IN (:ids)")
+    suspend fun thumbFlagsOf(ids: List<String>): List<ThumbFlags>
     /** Purge : les favoris et le « Read later » du compte sont toujours conservés. */
     @Query("DELETE FROM articles WHERE published < :olderThan AND starred = 0 AND laterSaved = 0")
-    suspend fun prune(olderThan: Long)
+    suspend fun prune(olderThan: Long): Int
     @Query("SELECT * FROM articles WHERE titleHash != '' GROUP BY titleHash HAVING SUM(CASE WHEN unread = 1 THEN 1 ELSE 0 END) > 0 ORDER BY published DESC LIMIT 200")
     suspend fun duplicateGroupsSeedUnread(): List<ArticleEntity>
     @Query("SELECT * FROM articles WHERE titleHash = :hash ORDER BY published DESC")
@@ -341,6 +364,9 @@ data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolea
 
 /** Drapeaux de favoris d'un article déjà en base (voir [PressDao.favFlagsOf]). */
 data class FavFlags(val id: String, val starred: Boolean, val laterSaved: Boolean)
+
+/** Suivi « miniature stockée » d'un article déjà en base (voir [PressDao.thumbFlagsOf]). */
+data class ThumbFlags(val id: String, val imageCached: Boolean)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],

@@ -277,4 +277,39 @@ class PressLogicTest {
         // Une valeur inconnue retombe sur les étoiles plutôt que d'afficher un libellé vide.
         assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("inconnu"))
     }
+
+    @Test fun `nom de miniature stable par url`() {
+        val n1 = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg")
+        val n2 = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg")
+        val n3 = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/b.jpg")
+        // Même URL = même fichier (plusieurs articles partagent le téléchargement).
+        assertEquals(n1, n2)
+        assertNotEquals(n1, n3)
+        assertTrue(n1.endsWith(".jpg"))
+        // SHA-1 hexadécimal : pas de séparateur, pas de casse ambiguë.
+        assertTrue(n1.dropLast(4).matches(Regex("[0-9a-f]{40}")))
+    }
+
+    @Test fun `sous-echantillonnage cale dans le gabarit`() {
+        val s = com.pressia.data.local.ThumbStore.sampleSize(4000, 3000, 1080, 500)
+        assertEquals(2, s)
+        // Puissance de 2.
+        assertTrue(s >= 1 && (s and (s - 1)) == 0)
+        // Le décodé couvre encore le gabarit dans les deux dimensions (pas de pixels inventés
+        // à la mise à l'échelle finale), mais un cran de plus ne le couvrirait plus.
+        assertTrue(4000 / s >= 1080 && 3000 / s >= 500)
+        assertTrue(4000 / (s * 2) < 1080 || 3000 / (s * 2) < 500)
+        // Petite image : pas de réduction.
+        assertEquals(1, com.pressia.data.local.ThumbStore.sampleSize(100, 100, 1080, 500))
+        assertEquals(1, com.pressia.data.local.ThumbStore.sampleSize(0, 0, 1080, 500))
+    }
+
+    @Test fun `dimensions finales gardent le ratio`() {
+        // Paysage : largeur du gabarit, hauteur proportionnelle.
+        assertEquals(1080 to 500, com.pressia.data.local.ThumbStore.fitSize(2160, 1000, 1080, 500))
+        // Portrait : hauteur du gabarit, largeur proportionnelle.
+        assertEquals(250 to 500, com.pressia.data.local.ThumbStore.fitSize(1000, 2000, 1080, 500))
+        // Plus petit que le gabarit : jamais agrandi (pas de pixels inventés).
+        assertEquals(56 to 56, com.pressia.data.local.ThumbStore.fitSize(56, 56, 1080, 500))
+    }
 }

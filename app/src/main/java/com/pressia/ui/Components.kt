@@ -1,5 +1,6 @@
 package com.pressia.ui
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.SubscriptionEntity
+import com.pressia.data.local.ThumbStore
 import java.text.DateFormat
 import java.util.Date
 
@@ -58,6 +60,7 @@ fun ArticleRow(
     a: ArticleEntity,
     mode: String,
     trailing: String,
+    tapFaviconRead: Boolean,
     titleSp: Int,
     dateSp: Int,
     feeds: Map<String, SubscriptionEntity>,
@@ -81,6 +84,14 @@ fun ArticleRow(
         "compact", "card" -> false
         else -> a.imageUrl.isNullOrBlank()
     }
+    /**
+     * Effet d'un appui sur le favicon du flux ou sur la vignette de l'article, identique dans les
+     * quatre vues. L'option « Favicon/miniature marque lu/non lu » éteinte ne doit laisser ni zone
+     * morte ni écart avec le reste de la ligne : l'appui ouvre alors l'article, comme le titre.
+     * [longPressInert] et non un simple [clickable], pour qu'un appui long n'ouvre rien, comme sur
+     * le reste de la ligne.
+     */
+    val leadTap: () -> Unit = if (tapFaviconRead) ({ onToggleRead() }) else ({ onOpen() })
     // Pendant un glissement, le rond lu/non-lu laisse la place à l'étoile du geste (dessinée
     // derrière la ligne) : une seule étoile, jamais deux.
     val trail: @Composable (Boolean) -> Unit = { swiping ->
@@ -126,7 +137,7 @@ fun ArticleRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // La zone cliquable garde 28 dp même quand le favicon rétrécit.
                 Box(
-                    Modifier.size(28.dp).clickable { onToggleRead() },
+                    Modifier.size(28.dp).longPressInert(leadTap),
                     contentAlignment = Alignment.Center
                 ) { FeedAvatar(feeds[a.feedId], 24) }
                 Spacer(Modifier.width(8.dp))
@@ -144,7 +155,13 @@ fun ArticleRow(
         }
         "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressInert(onOpen)) {
             Column {
-                if (!a.imageUrl.isNullOrBlank()) AsyncImage(a.imageUrl, null, Modifier.fillMaxWidth().height(180.dp).alpha(alpha), contentScale = ContentScale.Crop)
+                // La bannière est la vignette de l'article : elle répond au même appui que le
+                // favicon des autres vues.
+                if (!a.imageUrl.isNullOrBlank()) AsyncImage(
+                    thumbModel(ctx, a.imageUrl), null,
+                    Modifier.fillMaxWidth().height(180.dp).alpha(alpha).longPressInert(leadTap),
+                    contentScale = ContentScale.Crop
+                )
                 Text(a.title, Modifier.padding(12.dp), fontSize = titleSp.sp,
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -155,8 +172,17 @@ fun ArticleRow(
         }
         "card" -> Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).longPressInert(onOpen)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!a.imageUrl.isNullOrBlank()) AsyncImage(a.imageUrl, null, Modifier.size(72.dp).alpha(alpha), contentScale = ContentScale.Crop)
-                else FeedAvatar(feeds[a.feedId], 48)
+                // Même appui que dans les autres vues, sur la vignette ou sur le favicon selon ce qu'il y a.
+                if (!a.imageUrl.isNullOrBlank()) AsyncImage(
+                    thumbModel(ctx, a.imageUrl), null,
+                    Modifier.size(72.dp).alpha(alpha).longPressInert(leadTap),
+                    contentScale = ContentScale.Crop
+                )
+                // Le Box maintient la zone cliquable à 48 dp même quand le favicon rétrécit.
+                else Box(
+                    Modifier.size(48.dp).longPressInert(leadTap),
+                    contentAlignment = Alignment.Center
+                ) { FeedAvatar(feeds[a.feedId], 48) }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(a.title, fontSize = titleSp.sp,
@@ -172,7 +198,9 @@ fun ArticleRow(
                 fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped)) },
             leadingContent = {
-                if (!a.imageUrl.isNullOrBlank()) Box(Modifier.clickable { onToggleRead() }) { AsyncImage(a.imageUrl, null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
+                if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
+                // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
+                // lu/non-lu quelle que soit l'option, comme celui en bout de ligne.
                 else Icon(
                     if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked, null,
                     tint = readDotTint(),
@@ -303,6 +331,17 @@ fun readDotTint(): Color {
     return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.55f) else cs.outlineVariant
 }
 
+/**
+ * Modèle d'image pour une vignette de liste : le fichier local pré-téléchargé par la
+ * synchronisation quand il existe, sinon l'URL (chargée paresseusement par Coil au scroll).
+ * Sans `remember` : le fichier peut apparaître après une synchro pendant que la liste est
+ * affichée, et un simple `stat` ne coûte rien à la composition.
+ */
+fun thumbModel(ctx: Context, url: String?): Any? {
+    if (url.isNullOrBlank()) return null
+    return ThumbStore.cachedFile(ctx, url) ?: url
+}
+
 /** Favicon de l'abonnement : icône fournie (Feedly/Inoreader), sinon favicon du site via son host, sinon initiale. */
 fun feedFaviconUrl(sub: SubscriptionEntity?): String? {
     if (sub == null) return null
@@ -425,11 +464,12 @@ fun prettyFeedTitle(title: String?): String {
 @Composable
 fun ArticleList(articles: List<ArticleEntity>, mode: String, onOpen: (ArticleEntity) -> Unit, vm: PressVM) {
     val trailing by vm.trailingAction.collectAsState()
+    val tapFaviconRead by vm.tapFaviconRead.collectAsState()
     val titleSp by vm.titleFont.collectAsState()
     val dateSp by vm.dateFont.collectAsState()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val row: @Composable (ArticleEntity) -> Unit = { a ->
-        ArticleRow(a, mode, trailing, titleSp, dateSp, feeds,
+        ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) })
     }
     if (mode == "magazine") {

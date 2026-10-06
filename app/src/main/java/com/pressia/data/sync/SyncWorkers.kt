@@ -4,13 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.work.*
-import coil.Coil
-import coil.request.ImageRequest
 import com.pressia.data.PressRepository
-import com.pressia.data.local.Prefs
 import com.pressia.di.Locator
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
@@ -23,23 +19,11 @@ class SyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWorker(appCtx,
             repo.syncDown()
             // Le tableau « Read later » fait partie des favoris affichés : il suit la même rotation.
             repo.syncReadLater()
-            if (inputData.getBoolean("withImages", true)) prefetchImages()
+            // syncDown / syncReadLater appellent déjà syncThumbs : il ne reste ici que les
+            // articles que ces deux passes n'auraient pas couverts, sans coût si rien ne manque.
+            if (inputData.getBoolean("withImages", true)) repo.syncThumbs()
             Result.success()
         } catch (e: Exception) { Result.retry() }
-    }
-
-    private suspend fun prefetchImages() {
-        try {
-            val ctx = applicationContext
-            val prefs = Prefs(ctx)
-            if (prefs.data.first()[Prefs.IMAGES_OFFLINE] == false) return
-            val repo = Locator.repo(ctx)
-            val arts = repo.stream(null, null, unreadOnly = true, limit = 100)
-            val loader = Coil.imageLoader(ctx)
-            arts.mapNotNull { it.imageUrl }.take(60).forEach { url ->
-                try { loader.execute(ImageRequest.Builder(ctx).data(url).build()) } catch (_: Exception) {}
-            }
-        } catch (_: Exception) {}
     }
 
     companion object {
