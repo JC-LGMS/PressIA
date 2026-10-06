@@ -199,7 +199,7 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                         ) {
                             Column(Modifier.weight(1f).clickable { onOpen(a) }) {
                                 Text(
-                                    a.title.take(60), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    com.pressia.data.remote.cleanTitle(a.title).take(60), maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     fontWeight = if (newest) FontWeight.Bold else FontWeight.Normal
                                 )
                                 Text(

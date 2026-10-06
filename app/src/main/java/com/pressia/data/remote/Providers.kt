@@ -79,8 +79,8 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         val link = alternate.firstOrNull()?.href ?: origin?.htmlUrl.orEmpty()
         val html = content?.content ?: summary?.content
         val img = visual?.url ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(html.orEmpty())?.groupValues?.getOrNull(1)
-        val t = title.orEmpty()
-        return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = t.ifBlank { "(sans titre)" },
+        val t = cleanTitle(title).ifBlank { "(sans titre)" }
+        return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = t,
             author = author, url = link, summary = summary?.content, content = html, imageUrl = img,
             published = published, unread = unread, starred = false,
             titleHash = dedupHash(t, link))
@@ -136,8 +136,8 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val link = (canonical + alternate).firstOrNull()?.href.orEmpty()
         val html = content?.content ?: summary?.content
         val img = Regex("<img[^>]+src=[\"']([^\"']+)").find(html.orEmpty())?.groupValues?.getOrNull(1)
-        val tt = title.orEmpty()
-        return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = tt.ifBlank { "(sans titre)" },
+        val tt = cleanTitle(title).ifBlank { "(sans titre)" }
+        return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = tt,
             author = author, url = link, summary = summary?.content, content = html, imageUrl = img,
             published = published, unread = !categories.contains("user/-/state/com.google/read"),
             starred = false,

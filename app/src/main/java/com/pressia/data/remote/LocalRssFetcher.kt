@@ -60,17 +60,19 @@ object LocalRssFetcher {
                 val image = img
                     ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(desc)?.groupValues?.getOrNull(1)
                     ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(el.html())?.groupValues?.getOrNull(1)
+                // Les titres RSS arrivent avec des entités HTML (« &nbsp; », « &amp; », …).
+                val clean = cleanTitle(title).ifBlank { "(sans titre)" }
                 ArticleEntity(
                     id = "$feedId:${(title + link).hashCode()}",
                     feedId = feedId,
-                    title = title.ifBlank { "(sans titre)" },
+                    title = clean,
                     author = author.ifBlank { null },
                     url = link,
                     summary = desc.ifBlank { null },
                     content = desc.ifBlank { null },
                     imageUrl = image,
                     published = pub,
-                    titleHash = dedupHash(title, link)
+                    titleHash = dedupHash(clean, link)
                 )
             }
         } catch (_: Exception) { emptyList() }

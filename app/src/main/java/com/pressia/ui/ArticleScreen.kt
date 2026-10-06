@@ -141,15 +141,16 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     detectTapGestures(onDoubleTap = { scope.launch { toggleMode() } })
                 }
         ) {
-            // Le titre n'est plus cliquable : il ouvrait le navigateur alors que le réglage
-            // « Dans PressIA » avait été choisi, ce qui expliquait des articles qui partaient
-            // malgré tout hors de l'application. La sortie vers le navigateur reste explicite,
-            // via le bouton dédié en bas de l'écran.
+            // Le titre ouvre l'article d'origine dans le navigateur externe.
             Text(
-                article?.title ?: "",
+                com.pressia.data.remote.cleanTitle(article?.title).ifBlank { article?.title ?: "" },
                 fontSize = titleSp.sp,
                 lineHeight = (titleSp + 4).sp,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.clickable(
+                    enabled = !article?.url.isNullOrBlank(),
+                    onClick = { article?.url?.let { openUrl(ctx, it) } }
+                )
             )
             // Source et date sous le titre (et plus au-dessus) : source à gauche, date à droite.
             Spacer(Modifier.height(4.dp))

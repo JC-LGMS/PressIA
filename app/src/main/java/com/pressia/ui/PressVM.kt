@@ -174,6 +174,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /**
+     * Oublie les articles « collants » : passés en lus pendant la session, ils disparaissent
+     * de la liste dès que le filtre « non-lus seuls » est réactivé (œil). Sans cela, réactiver
+     * le filtre gardait les lus à l'écran via la requête collante et l'œil semblait inopérant.
+     */
+    fun clearKept() {
+        keepIds.value = emptySet()
+    }
+
+    /**
      * Flux du flux affiché : la liste se rafraîchit toute seule dès que la synchronisation
      * (bouton ou tâche d'arrière-plan) enregistre de nouveaux articles, sans rechargement manuel.
      * [fav] n'est fourni que par l'écran Favoris, qui a son propre périmètre.
@@ -333,7 +342,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun setRead(id: String, unread: Boolean) = viewModelScope.launch {
         repo.setRead(id, unread)
         // Filtre « non-lus seuls » : garder l'article à l'écran plutôt que le faire disparaître.
-        if (!unread) keepIds.value = keepIds.value + id
+        // Repasser en non-lu l'oublie : inutile de garder un article déjà visible par le filtre.
+        keepIds.value = if (!unread) keepIds.value + id else keepIds.value - id
         articles = articles.map { if (it.id == id) it.copy(unread = unread) else it }
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
@@ -350,7 +360,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             scope.categoryId != null -> repo.folderFeeds(scope.categoryId!!)
             else -> emptyList()
         }
-        repo.markAllRead(ids); refresh()
+        repo.markAllRead(ids)
+        // Tout est lu : rien à garder « collant », sinon la liste « non-lus seuls » restait pleine.
+        keepIds.value = emptySet()
+        refresh()
     }
     fun loadStats(period: StatsPeriod = StatsPeriod.WEEK, year: Int = 0) = viewModelScope.launch {
         val now = System.currentTimeMillis()

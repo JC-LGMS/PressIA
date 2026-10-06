@@ -30,6 +30,20 @@ data class StreamPage(
     val continuation: String? = null
 )
 
+/**
+ * Titres avec entités HTML (ex. «&nbsp;» sur Les Numériques) : en parseur XML, `&nbsp;`
+ * n'est pas une entité XML valide donc Jsoup la laisse brute. On déséchappe, on retire
+ * les éventuelles balises, on normalise les espaces insécables et doublons.
+ */
+fun cleanTitle(raw: String?): String {
+    if (raw.isNullOrBlank()) return ""
+    return try {
+        var t = org.jsoup.parser.Parser.unescapeEntities(raw, false)
+        if ('<' in t && '>' in t) t = org.jsoup.Jsoup.parse(t).text()
+        t.replace('\u00A0', ' ').replace(Regex("\\s+"), " ").trim()
+    } catch (_: Exception) { raw.trim() }
+}
+
 /** Normalisation pour déduplication. */
 fun dedupHash(title: String, url: String): String {
     val t = title.lowercase().replace(Regex("[^a-z0-9àâäéèêëîïôöùûüÿç ]"), "").replace(Regex("\\s+"), " ").trim()

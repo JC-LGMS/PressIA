@@ -56,6 +56,9 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     IconButton({
                         val next = !unreadOnly
                         scope.launch {
+                            // Repasser en « non-lus seuls » masque les lus de la session : on oublie
+                            // les articles gardés « collants », sinon l'œil semblait inopérant.
+                            if (next) vm.clearKept()
                             vm.repo.prefs.set(Prefs.SHOW_UNREAD_ONLY, next)
                             toast(ctx, if (next) "Non-lus seuls" else "Tous les articles, lus inclus")
                             vm.refresh()
@@ -145,6 +148,8 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                     IconButton({
                         val next = !favUnreadOnly
                         favUnreadOnly = next
+                        // Même « collant » que le flux principal : réactiver le filtre oublie les lus.
+                        if (next) vm.clearKept()
                         toast(ctx, if (next) "Non-lus seuls" else "Tous les favoris, lus inclus")
                     }) {
                         Icon(

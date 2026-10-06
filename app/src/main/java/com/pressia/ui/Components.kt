@@ -42,6 +42,7 @@ import coil.compose.AsyncImage
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.SubscriptionEntity
 import com.pressia.data.local.ThumbStore
+import com.pressia.data.remote.cleanTitle
 import java.text.DateFormat
 import java.util.Date
 
@@ -71,6 +72,8 @@ fun ArticleRow(
     val ctx = LocalContext.current
     val alpha = if (a.unread) 1f else 0.55f
     val src = remember(a.feedId, feeds) { prettyFeedTitle(feeds[a.feedId]?.title ?: feeds[a.feedId]?.id) }
+    // Titres déjà en base avec des entités HTML (« &nbsp; », …) : nettoyés à l'affichage.
+    val title = remember(a.title) { cleanTitle(a.title).ifBlank { "(sans titre)" } }
     /**
      * Où vit le rond lu/non-lu : à gauche dans la vue magazine, et dans la vue liste seulement
      * quand l'article n'a pas d'image (la place de l'image). Partout ailleurs il est à droite.
@@ -141,7 +144,7 @@ fun ArticleRow(
                     contentAlignment = Alignment.Center
                 ) { FeedAvatar(feeds[a.feedId], 24) }
                 Spacer(Modifier.width(8.dp))
-                Text(a.title, fontSize = titleSp.sp, lineHeight = (titleSp * 1.2f).sp,
+                Text(title, fontSize = titleSp.sp, lineHeight = (titleSp * 1.2f).sp,
                     fontWeight = FontWeight.Normal,
                     modifier = Modifier.weight(1f),
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -162,7 +165,7 @@ fun ArticleRow(
                     Modifier.fillMaxWidth().height(180.dp).alpha(alpha).longPressInert(leadTap),
                     contentScale = ContentScale.Crop
                 )
-                Text(a.title, Modifier.padding(12.dp), fontSize = titleSp.sp,
+                Text(title, Modifier.padding(12.dp), fontSize = titleSp.sp,
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     trail(swiping); Spacer(Modifier.width(8.dp))
@@ -185,7 +188,7 @@ fun ArticleRow(
                 ) { FeedAvatar(feeds[a.feedId], 48) }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(a.title, fontSize = titleSp.sp,
+                    Text(title, fontSize = titleSp.sp,
                         fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(alpha))
                     MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped))
                 }
@@ -194,7 +197,7 @@ fun ArticleRow(
         }
         else -> ListItem(
             modifier = Modifier.longPressInert(onOpen).alpha(alpha).padding(vertical = 2.dp),
-            headlineContent = { Text(a.title, fontSize = titleSp.sp,
+            headlineContent = { Text(title, fontSize = titleSp.sp,
                 fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped)) },
             leadingContent = {
@@ -510,10 +513,11 @@ private fun DayHeader(label: String) {
 
 /** Partage système d'un article (comme Press). */
 fun shareArticle(ctx: android.content.Context, a: ArticleEntity) {
+    val t = cleanTitle(a.title).ifBlank { "(sans titre)" }
     val i = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_SUBJECT, a.title)
-        putExtra(Intent.EXTRA_TEXT, "${a.title}\n${a.url}")
+        putExtra(Intent.EXTRA_SUBJECT, t)
+        putExtra(Intent.EXTRA_TEXT, "$t\n${a.url}")
     }
     ctx.startActivity(Intent.createChooser(i, "Partager l'article"))
 }
