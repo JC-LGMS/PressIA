@@ -15,7 +15,7 @@ Ajouts demandés :
 - `data/local` : Room (`categories`, `subscriptions`, `articles`, `sync_queue`, `reading_events`, `extract_events`) + DataStore `Prefs`.
 - `data/remote` : interface `FeedProvider` (`FeedProvider.kt`) et `Providers.kt` (`FeedlyProvider` OAuth2 + `cloud.feedly.com/v3`, `InoreaderProvider` (`inoreader.com/reader/api/0`), `LocalProvider`), `CloudApis.kt` (modèles + services Retrofit/kotlinx-serialization), `LocalRssFetcher.kt` (parsing RSS/Atom), `OAuth` (URLs d'autorisation, échange code→jeton, deep link `pressia://oauth`).
 - `data` : `PressRepository` offline-first (lecture Room, `syncDown`, `pushQueue` bidirectionnelle, `ensureFull`, `syncReadLater`), `Accounts.kt` (registre de comptes), `Backup.kt` (export/import JSON).
-- `data/sync` : `SyncWorker` (WorkManager périodique, contraintes Wi-Fi, préfetch images Coil, syncope « Read later »).
+- `data/sync` : `SyncWorker` (WorkManager périodique, contraintes Wi-Fi, synchro « Read later ») ; miniatures via `ThumbStore` (`SHA-1(url).jpg`, taille de la plus grande miniature affichée) et `syncThumbs()` (appelé en fin de `syncDown`, `syncReadLater` et `backfill`).
 - `data/readability` : extraction article complet Jsoup (double-tap).
 - `di` : `Locator` (instanciation manuelle du repository, partagée UI et WorkManager).
 - `ui` : Compose Material3 façon Press (drawer, stream, abonnements, article, recherche, doublons, stats, réglages, comptes) autour du `PressVM` ; `Components.kt` et `ExtraScreens.kt` regroupent les écrans secondaires.
@@ -61,4 +61,3 @@ Min SDK 26, target/compile 34, Kotlin 2.0, Compose BOM 2024.10, Material3 1.3, R
 | `SyncService` + `SyncBroadcastReceiver` | `SyncWorker` + `pushQueue`/`syncDown` |
 | Provider SQLite `PressProvider` | Room `PressDatabase` |
 | Prefs (font, theme, wifi, cache) | DataStore `Prefs` + `SettingsScreen` |
-| Readability toggle | `Readability.fetchFull` |
