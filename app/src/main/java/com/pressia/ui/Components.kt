@@ -67,7 +67,8 @@ fun ArticleRow(
     feeds: Map<String, SubscriptionEntity>,
     onOpen: () -> Unit,
     onToggleRead: () -> Unit,
-    onToggleStar: () -> Unit
+    onToggleStar: () -> Unit,
+    showSource: Boolean = true
 ) {
     val ctx = LocalContext.current
     val alpha = if (a.unread) 1f else 0.55f
@@ -154,7 +155,8 @@ fun ArticleRow(
             // droite. Le onSizeChanged est après le padding, donc la hauteur relevée inclut l'écart.
             MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped),
                 modifier = Modifier.padding(start = 36.dp, end = trailW, top = 3.dp)
-                    .onSizeChanged { metaH = with(density) { it.height.toDp() } })
+                    .onSizeChanged { metaH = with(density) { it.height.toDp() } },
+                showSource = showSource)
         }
         "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressInert(onOpen)) {
             Column {
@@ -169,7 +171,7 @@ fun ArticleRow(
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     trail(swiping); Spacer(Modifier.width(8.dp))
-                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped))
+                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource)
                 }
             }
         }
@@ -190,7 +192,7 @@ fun ArticleRow(
                 Column(Modifier.weight(1f)) {
                     Text(title, fontSize = titleSp.sp,
                         fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(alpha))
-                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped))
+                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource)
                 }
                 trail(swiping)
             }
@@ -199,7 +201,7 @@ fun ArticleRow(
             modifier = Modifier.longPressInert(onOpen).alpha(alpha).padding(vertical = 2.dp),
             headlineContent = { Text(title, fontSize = titleSp.sp,
                 fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
-            supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped)) },
+            supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource) },
             leadingContent = {
                 if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
                 // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
@@ -295,7 +297,8 @@ private fun MetaLine(
     published: Long,
     dateSp: Int,
     starred: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showSource: Boolean = true
 ) {
     val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
     // Interligne resserré : la méta tient dans une seule hauteur de ligne, sans le blanc que le
@@ -303,13 +306,15 @@ private fun MetaLine(
     val lh = (dateSp * 1.15f).sp
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                source, fontSize = dateSp.sp, lineHeight = lh, color = color,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
+            if (showSource) {
+                Text(
+                    source, fontSize = dateSp.sp, lineHeight = lh, color = color,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+            }
             if (starred) {
-                Spacer(Modifier.width(3.dp))
+                if (showSource) Spacer(Modifier.width(3.dp))
                 Icon(
                     Icons.Filled.Star, "favori", tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size((dateSp + 2).dp)
@@ -465,7 +470,13 @@ fun prettyFeedTitle(title: String?): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ArticleList(articles: List<ArticleEntity>, mode: String, onOpen: (ArticleEntity) -> Unit, vm: PressVM) {
+fun ArticleList(
+    articles: List<ArticleEntity>,
+    mode: String,
+    onOpen: (ArticleEntity) -> Unit,
+    vm: PressVM,
+    showSource: Boolean = true
+) {
     val trailing by vm.trailingAction.collectAsState()
     val tapFaviconRead by vm.tapFaviconRead.collectAsState()
     val titleSp by vm.titleFont.collectAsState()
@@ -473,7 +484,8 @@ fun ArticleList(articles: List<ArticleEntity>, mode: String, onOpen: (ArticleEnt
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val row: @Composable (ArticleEntity) -> Unit = { a ->
         ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
-            { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) })
+            { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
+            showSource = showSource)
     }
     if (mode == "magazine") {
         LazyVerticalGrid(GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp)) {

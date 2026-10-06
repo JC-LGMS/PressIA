@@ -116,19 +116,40 @@ object Readability {
         return text.length >= 200 && !isPaywalledText(text) && !isConsentWallText(text)
     }
 
+    /** Le vrai corps d'article porte souvent une classe explicite : on le cherche d'abord. */
+    private val CONTENT_SELECTORS = listOf(
+        "div.article-content", "div.entry-content", "div.post-content", "div.post-body",
+        "div.story-content", "div.field--name-body", "[itemprop=articleBody]"
+    )
+
+    /** Un bloc « contenu » ne doit jamais être écarté comme bruit (ex. `article-content--has-sidebar`). */
+    private val CONTENT_HINT = Regex("(?i)article|content|post-body|entry")
+
     fun extract(html: String, baseUri: String): String {
         val doc = Jsoup.parse(html, baseUri)
         doc.select("script, style, noscript, iframe[src*=ads], form, aside, nav, header, footer").remove()
-        // candidat : bloc avec le plus de <p> significatifs
+        // 1) conteneur de contenu explicite (WordPress & co) : évite qu'une newsletter ou un
+        // formulaire (texte « consentement ») gagne le score générique, comme sur Frandroid.
+        val explicit = CONTENT_SELECTORS.asSequence()
+            .flatMap { doc.select(it) }
+            .filter { it.select("p").size >= 2 || it.text().length >= 300 }
+            .maxByOrNull { it.select("p").size * 20 + it.text().length / 100 }
+        if (explicit != null) return cleaned(explicit)
+        // 2) repli générique : bloc avec le plus de <p> significatifs
         var best: org.jsoup.nodes.Element? = null; var bestScore = 0
         for (el in doc.select("article, main, div, section")) {
-            if (NOISE.containsMatchIn(el.className() + el.id())) continue
+            val cls = el.className() + " " + el.id()
+            if (NOISE.containsMatchIn(cls) && !CONTENT_HINT.containsMatchIn(cls)) continue
             val ps = el.select("p")
             val textLen = ps.sumOf { it.text().length }
             val score = ps.size * 20 + textLen / 100 - el.select("a").size * 10
             if (ps.size >= 2 && score > bestScore) { bestScore = score; best = el }
         }
         val target = best ?: doc.body() ?: return html
+        return cleaned(target)
+    }
+
+    private fun cleaned(target: org.jsoup.nodes.Element): String {
         target.select("img").forEach { it.attr("loading", "lazy") }
         // absolutiser
         target.select("img[src]").forEach { it.attr("src", it.absUrl("src")) }

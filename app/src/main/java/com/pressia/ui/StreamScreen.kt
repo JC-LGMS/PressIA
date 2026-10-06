@@ -89,7 +89,8 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     )
                 }
             } else {
-                ArticleList(localArticles, viewMode, onOpen, vm)
+                // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
+                ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
             }
         }
     }
@@ -207,7 +208,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                else -> ArticleList(articles, viewMode, onOpen, vm)
+                else -> ArticleList(articles, viewMode, onOpen, vm, showSource = feedScope.feedId == null)
             }
         }
     }

@@ -27,6 +27,21 @@ class PressLogicTest {
         val out = Readability.extract(html, "https://ex.com")
         assertTrue(out.contains("deux"))
     }
+    @Test fun `readability prefere le corps d'article au formulaire newsletter (cas Frandroid)`() {
+        // `article-content--has-sidebar` contient « sidebar » : le filtre anti-bruit ne doit pas
+        // l'écarter, sinon c'est le formulaire newsletter (texte « consentement ») qui gagne et
+        // l'extraction est classée « mur de consentement » puis bloquée.
+        val body = (1..6).joinToString("") { "<p>Paragraphe $it du vrai article Frandroid avec du contenu journalistique détaillé et informatif.</p>" }
+        val html = """<html><body><article class="container">
+            <div class="columns"><div class="column container-with-sidebar">
+            <div class="article-content article-content--has-sidebar">$body</div>
+            <div class="mb-5 mt-4-mobile mt-4"><p>Votre newsletter personnalisée</p><p>Les données transmises par le biais de ce formulaire sont destinées à Humanoid afin de vous informer de nos actualités. Nous utilisons des cookies pour la prospection commerciale et vous pouvez retirer votre consentement à tout moment. Pour plus d'informations, lisez notre politique de protection des données.</p></div>
+            </div></div></article></body></html>"""
+        val out = Readability.extract(html, "https://www.frandroid.com/")
+        assertTrue("le vrai corps doit être extrait", out.contains("vrai article Frandroid"))
+        assertFalse("la newsletter ne doit pas être extraite", out.contains("newsletter personnalisée"))
+        assertFalse(Readability.isConsentWallText(org.jsoup.Jsoup.parse(out).text()))
+    }
     @Test fun `page anti-robot detectee comme bloquee`() {
         val html = "<html><body><div><p>A required part of this site couldn't load. " +
             "This may be due to a browser extension, network issues, or browser settings.</p></div></body></html>"

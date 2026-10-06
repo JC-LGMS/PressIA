@@ -109,7 +109,7 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         Spacer(Modifier.height(8.dp))
         Text("${results.size} résultat(s) · ${searchScope.label}")
-        ArticleList(results, "list", onOpen, vm)
+        ArticleList(results, "list", onOpen, vm, showSource = searchScope.feedId == null)
     }
 }
 

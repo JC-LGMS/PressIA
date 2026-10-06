@@ -19,7 +19,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,6 +57,19 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
 
     val feedSp = (14 * textScale / 100f).coerceIn(9f, 20f)
     val folderSp = (15 * textScale / 100f).coerceIn(10f, 22f)
+    // Numéro de version affiché en bas du drawer, en petit.
+    val ctx = LocalContext.current
+    val version = remember {
+        runCatching {
+            val pm = ctx.packageManager
+            val pkg = ctx.packageName
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                pm.getPackageInfo(pkg, android.content.pm.PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION") pm.getPackageInfo(pkg, 0).versionName
+            }
+        }.getOrNull()
+    }
 
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
@@ -133,6 +148,19 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             }
             DrawerRow(Icons.Filled.AccountCircle, "Comptes", currentRoute == "login", feedSp) {
                 onNavigate("login"); onClose()
+            }
+            if (!version.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "v$version",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
