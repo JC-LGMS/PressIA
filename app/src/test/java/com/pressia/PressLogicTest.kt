@@ -77,6 +77,19 @@ class PressLogicTest {
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
     }
+    @Test fun `pkce verificateur et defi bien formes`() {
+        val v1 = OAuth.pkceVerifier()
+        val v2 = OAuth.pkceVerifier()
+        // 32 octets en base64url : 43 caractères, alphabet restreint, jamais deux fois pareil.
+        assertEquals(43, v1.length)
+        assertTrue(v1.matches(Regex("[A-Za-z0-9\\-_]{43}")))
+        assertNotEquals(v1, v2)
+        // Défi S256 stable et au bon format.
+        val c = OAuth.pkceChallenge(v1)
+        assertEquals(43, c.length)
+        assertEquals(c, OAuth.pkceChallenge(v1))
+        assertNotEquals(c, OAuth.pkceChallenge(v2))
+    }
     @Test fun `nom de flux lisible`() {
         assertEquals("lemonde.fr", com.pressia.ui.prettyFeedTitle("https://www.lemonde.fr/rss/une.xml"))
         assertEquals("Mon blog", com.pressia.ui.prettyFeedTitle("Mon blog"))

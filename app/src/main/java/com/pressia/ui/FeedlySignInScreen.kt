@@ -3,6 +3,7 @@ package com.pressia.ui
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
@@ -34,8 +35,8 @@ const val FEEDLY_AUTH_URL =
         "&redirect_uri=https%3A%2F%2Ffeedly.com%2Fi%2Flogin" +
         "&scope=https%3A%2F%2Fcloud.feedly.com%2Fsubscriptions"
 
-/** Page de connexion directe, utilisée comme repli si l'URL d'authentification n'aboutit pas. */
-const val FEEDLY_SIGNIN_URL = "https://cloud.feedly.com/signin"
+/** Retour d'authentification : c'est ici que Feedly renvoie `?code=…` (ou `?error=…`). */
+const val FEEDLY_REDIRECT_LOGIN = "https://feedly.com/i/login"
 
 /** Hôtes où chercher le cookie de session Feedly après connexion. */
 private val FEEDLY_COOKIE_HOSTS = listOf(
@@ -50,16 +51,6 @@ private val FEEDLY_COOKIE_HOSTS = listOf(
 private val FEEDLY_SESSION_COOKIES = listOf("feedly.authed", "feedly.session")
 
 /**
- * Clés de `localStorage` dans lesquelles la page Feedly range la session. La valeur est un objet
- * JSON du type `{"plan":…,"provider":…,"feedlyId":…,"feedlyToken":…}` : c'est le champ
- * `feedlyToken` qui est le jeton accepté par l'API v3.
- */
-private val FEEDLY_STORAGE_KEYS = listOf("feedly.session", "feedly.token", "token", "accessToken")
-
-/** Champs JSON pouvant porter le jeton, essayés dans l'ordre. */
-private val FEEDLY_TOKEN_FIELDS = listOf("feedlyToken", "accessToken", "access_token", "token")
-
-/**
  * Un jeton Feedly est une longue chaîne ; `feedly.authed=1` ne l'est pas.
  * On écarte ces drapeaux et les en-têtes de cookies collés ensemble pour ne jamais
  * tenter une connexion avec une valeur vide ou tronquée.
@@ -67,16 +58,6 @@ private val FEEDLY_TOKEN_FIELDS = listOf("feedlyToken", "accessToken", "access_t
 private fun plausibleToken(value: String?): String? {
     val v = value?.trim()?.trim('"')?.trim()
     return v?.takeIf { it.length >= 40 && !it.contains(';') && !it.contains(' ') }
-}
-
-/** Extrait le champ `feedlyToken` de la valeur JSON stockée par la page Feedly. */
-private fun tokenFromSessionJson(value: String?): String? {
-    val v = value?.trim()?.takeIf { it.startsWith("{") } ?: return null
-    FEEDLY_TOKEN_FIELDS.forEach { field ->
-        val m = Regex("\"$field\"\\s*:\\s*\"([^\"]+)\"").find(v) ?: return@forEach
-        plausibleToken(m.groupValues[1])?.let { return it }
-    }
-    return null
 }
 
 /** Extrait le jeton de session Feedly d'un en-tête de cookies, quel que soit son ordre. */
@@ -99,28 +80,31 @@ private fun nativeSession(): String? {
 }
 
 /**
- * Jeton de session Feedly dans le `localStorage` de la page : c'est là que Feedly le dépose
- * après une authentification réussie. `evaluateJavascript` renvoie une valeur JSON, d'où le
- * décodage de la chaîne ; l'évaluation échoue si la page n'est pas encore chargée.
+ * Jeton de session Feedly dans le stockage web de la page : c'est là que Feedly le dépose
+ * après une authentification réussie.
+ *
+ * On ratisse **toutes** les clés (`localStorage` puis `sessionStorage`) au lieu de quelques
+ * noms en dur : Feedly renomme ses clés au fil des refontes, seule la forme du jeton est
+ * stable (longue chaîne dans un champ `*token*` d'un JSON, ou chaîne brute). `evaluateJavascript`
+ * renvoie une valeur JSON, d'où le déguillemetage ; l'évaluation échoue si la page n'est pas
+ * encore chargée.
  */
 private suspend fun WebView.storageSession(): String? = suspendCoroutine { cont ->
-    // Chaque clé est renvoyée séparément : une seule valeur suffit et l'ordre n'importe pas.
-    val script = FEEDLY_STORAGE_KEYS.joinToString(
-        prefix = "(function(){try{return [", postfix = "].filter(Boolean).join(',');}catch(e){return '';}})()"
-    ) { k -> "localStorage.getItem('$k')" }
+    // La recherche a lieu côté page : on ne remonte que le jeton, jamais tout le stockage.
+    val script = "(function(){" +
+        "function hunt(s){try{for(var i=0;i<s.length;i++){" +
+        "var v=s.getItem(s.key(i))||'';" +
+        "var m=v.match(/\"(?:feedlyToken|accessToken|access_token|token)\"\\s*:\\s*\"([^\"]{40,200})\"/);" +
+        "if(m)return m[1];" +
+        "var t=v.trim().replace(/^\"|\"$/g,'');" +
+        "if(/^[A-Za-z0-9\\-_]{40,}$/.test(t))return t;" +
+        "}}catch(e){}return '';}" +
+        "try{var t=hunt(localStorage);if(t)return t;" +
+        "try{return hunt(sessionStorage);}catch(e){return '';}}" +
+        "catch(e){return '';}})()"
     runCatching {
-        evaluateJavascript(script) { value -> cont.resume(storageFrom(value)) }
+        evaluateJavascript(script) { value -> cont.resume(plausibleToken(value)) }
     }.onFailure { cont.resume(null) }
-}
-
-/** Isole le jeton dans la valeur renvoyée : champ `feedlyToken` du JSON, ou chaîne brute. */
-private fun storageFrom(raw: String?): String? {
-    val text = raw?.trim().orEmpty()
-    if (text.isEmpty() || text == "null" || text == "\"\"" || text == "\"\"") return null
-    // evaluateJavascript renvoie une chaîne JSON : on retire guillemets et échappements.
-    val unquoted = text.removeSurrounding("\"").replace("\\\"", "\"").replace("\\\\", "\\")
-    tokenFromSessionJson(unquoted)?.let { return it }
-    return plausibleToken(unquoted)
 }
 
 /** `document.cookie` : filet de sécurité quand le bac natif n'expose pas encore le cookie. */
@@ -151,8 +135,8 @@ private fun forgetFeedlySession() {
 
 /**
  * Connexion Feedly « classique », entièrement dans l'application :
- * la page officielle cloud.feedly.com/signin s'ouvre dans une WebView, puis le jeton de session
- * (`localStorage`) est récupéré automatiquement, vérifié via l'API Feedly, enregistré, et
+ * la page d'authentification officielle s'ouvre dans une WebView, puis le jeton de session
+ * (stockage web) est récupéré automatiquement, vérifié via l'API Feedly, enregistré, et
  * l'utilisateur revient sur la liste des comptes **avec ses flux réellement synchronisés**.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -165,8 +149,23 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
     var webView by remember { mutableStateOf<WebView?>(null) }
     var showTokenField by remember { mutableStateOf(false) }
     var manualToken by remember { mutableStateOf("") }
+    /** Dernière URL chargée par la WebView (suit les redirections post-connexion). */
+    var lastUrl by remember { mutableStateOf("") }
+    /** Message de blocage déjà affiché : on ne le répète pas à chaque tour de sonde. */
+    var stuckNotified by remember { mutableStateOf(false) }
+    /**
+     * PKCE (RFC 7636) : le vérificateur reste dans l'app, seul le défi part dans l'URL.
+     * Au retour, c'est nous qui échangeons le code contre le jeton : la page
+     * `feedly.com/i/login` ne sait pas le faire pour un code qu'elle n'a pas initié
+     * (`token_exchange_error` sinon).
+     */
+    val verifier = remember { com.pressia.data.remote.OAuth.pkceVerifier() }
+    val authUrl = remember(verifier) {
+        FEEDLY_AUTH_URL + "&code_challenge=" +
+            com.pressia.data.remote.OAuth.pkceChallenge(verifier) + "&code_challenge_method=S256"
+    }
 
-    /** Session Feedly visible dans la WebView : localStorage d'abord (seule source réellement utile). */
+    /** Session Feedly visible dans la WebView : stockage web d'abord, cookies en filet. */
     suspend fun findSession(): String? = webView?.storageSession() ?: nativeSession() ?: webView?.documentCookie()
 
     /**
@@ -197,17 +196,54 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
     }
 
     /**
-     * Surveille la session : la page reste affichée après la connexion, mais dès que le cookie
+     * Échange un code d'autorisation contre le jeton, puis connecte le compte.
+     * Un code déjà consommé ou périmé ne donne rien : l'utilisateur n'a qu'à se
+     * reconnecter sur la page pour en obtenir un frais (même vérificateur).
+     */
+    suspend fun connectWithCode(code: String): Boolean {
+        if (busy || done || code.isBlank()) return false
+        status = "Échange du code Feedly contre un jeton…"
+        val token = com.pressia.data.remote.OAuth.feedlyTokenPkce(code, verifier, FEEDLY_REDIRECT_LOGIN)
+        if (token.isNullOrBlank()) {
+            status = "Feedly a refusé l'échange du code. Reconnectez-vous sur la page pour un code frais, puis cela devrait passer."
+            return false
+        }
+        return tryConnect(token)
+    }
+
+    /**
+     * Surveille la session : la page reste affichée après la connexion, mais dès que le jeton
      * existe on prend le relais, on valide et on revient sur les comptes.
+     *
+     * Si la page a validé les identifiants (atterrissage sur `feedly.com/i/`) sans qu'aucune
+     * session n'apparaisse dans la WebView sous 20 s (protection anti-robot ou cookies bloqués),
+     * on le dit explicitement au lieu de tourner en rond en silence.
      */
     LaunchedEffect(Unit) {
         forgetFeedlySession()
         var lastToken = ""
         var lastTry = 0L
+        var landedAt = 0L
         while (!done) {
             delay(1200)
             if (busy) continue
-            val token = if (manualToken.isNotBlank()) manualToken.trim() else findSession() ?: continue
+            val token = if (manualToken.isNotBlank()) manualToken.trim() else findSession()
+            if (token == null) {
+                if (!stuckNotified && lastUrl.contains("feedly.com/i/")) {
+                    if (landedAt == 0L) landedAt = System.currentTimeMillis()
+                    if (System.currentTimeMillis() - landedAt > 20000) {
+                        stuckNotified = true
+                        showTokenField = true
+                        status = "Feedly vous a renvoyé ici connecté, mais PressIA ne voit aucune " +
+                            "session (protection anti-robot ou cookies bloqués). Touchez « Réessayer », " +
+                            "ou collez un jeton ci-dessous."
+                    }
+                } else if (!lastUrl.contains("feedly.com/i/")) {
+                    landedAt = 0L
+                }
+                continue
+            }
+            landedAt = 0L
             // Même jeton refusé : on réessaie au plus toutes les 5 s (le réseau peut revenir).
             val now = System.currentTimeMillis()
             if (token == lastToken && now - lastTry < 5000) continue
@@ -222,7 +258,7 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
                 title = { Text("Connexion Feedly") },
                 navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
                 actions = {
-                    IconButton({ webView?.loadUrl(FEEDLY_AUTH_URL) }) { Icon(Icons.Filled.Refresh, "recharger") }
+                    IconButton({ webView?.loadUrl(authUrl) }) { Icon(Icons.Filled.Refresh, "recharger") }
                 }
             )
         }
@@ -231,8 +267,13 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             FeedlySignInView(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                url = FEEDLY_AUTH_URL,
+                url = authUrl,
                 onView = { webView = it },
+                onUrl = { lastUrl = it },
+                onCode = { code -> scope.launch { connectWithCode(code) } },
+                onAuthError = { err ->
+                    status = "Connexion Feedly refusée : $err. Reconnectez-vous sur la page."
+                },
                 onLoaded = {
                     if (status == "Chargement de la page Feedly…") status = "Connectez-vous sur la page Feedly ci-dessous."
                 }
@@ -268,11 +309,6 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
                         Text(if (showTokenField) "Masquer la saisie manuelle" else "Connexion bloquée ? Saisir un jeton")
                     }
                 }
-                if (!showTokenField) {
-                    TextButton({ webView?.loadUrl(FEEDLY_SIGNIN_URL) }) {
-                        Text("Page de connexion simple")
-                    }
-                }
             }
         }
     }
@@ -280,20 +316,62 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun FeedlySignInView(modifier: Modifier, url: String, onView: (WebView) -> Unit, onLoaded: () -> Unit) {
+private fun FeedlySignInView(
+    modifier: Modifier,
+    url: String,
+    onView: (WebView) -> Unit,
+    onUrl: (String) -> Unit,
+    onCode: (String) -> Unit,
+    onAuthError: (String) -> Unit,
+    onLoaded: () -> Unit
+) {
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
-            WebView(ctx).apply {
+            WebView(ctx).apply webview@{
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = settings.userAgentString.replace("; wv", "")
-                CookieManager.getInstance().setAcceptCookie(true)
+                CookieManager.getInstance().apply {
+                    setAcceptCookie(true)
+                    // La connexion traverse plusieurs hôtes Feedly : sans cela les cookies de
+                    // session posés hors de la page courante sont jetés et la session ne
+                    // s'installe jamais dans la WebView.
+                    setAcceptThirdPartyCookies(this@webview, true)
+                }
                 webViewClient = object : WebViewClient() {
+                    /**
+                     * Intercepte le retour d'authentification : on échange le code nous-mêmes
+                     * (PKCE) au lieu de laisser la page `/i/login` échouer dessus. Tout le reste
+                     * charge normalement.
+                     */
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        val target = request.url.toString()
+                        android.util.Log.i("PressIA", "Feedly nav : ${target.replace(Regex("([?&]code=)[^&]*"), "$1<...>")}")
+                        if (!target.startsWith(FEEDLY_REDIRECT_LOGIN)) return false
+                        val code = request.url.getQueryParameter("code")
+                        if (!code.isNullOrBlank()) {
+                            onCode(code)
+                            return true
+                        }
+                        request.url.getQueryParameter("error")?.let { onAuthError(it) }
+                        return false
+                    }
                     override fun onPageFinished(view: WebView, url: String) {
+                        android.util.Log.i("PressIA", "Feedly page : ${url.replace(Regex("([?&]code=)[^&]*"), "$1<...>")}")
+                        onUrl(url)
                         onLoaded()
                         // La connexion par cookie passe parfois par une redirection : on relit le bac à cookies.
                         CookieManager.getInstance().flush()
+                    }
+                    override fun onReceivedHttpError(
+                        view: WebView,
+                        request: WebResourceRequest,
+                        error: WebResourceResponse
+                    ) {
+                        if (request.isForMainFrame) {
+                            android.util.Log.w("PressIA", "Feedly HTTP ${error.statusCode} ${request.url}")
+                        }
                     }
                 }
                 loadUrl(url)
