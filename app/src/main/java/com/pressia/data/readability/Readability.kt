@@ -55,13 +55,6 @@ object Readability {
         data object Failed : FullResult
     }
 
-    suspend fun fetchFull(url: String): String? = withContext(Dispatchers.IO) {
-        when (val r = fetchFullResult(url)) {
-            is FullResult.Ok -> r.html
-            else -> null
-        }
-    }
-
     suspend fun fetchFullResult(url: String): FullResult = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder().url(url)

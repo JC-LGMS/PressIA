@@ -13,8 +13,6 @@ interface FeedProvider {
     suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String? = null): StreamPage
     suspend fun markRead(token: String?, articleIds: List<String>)
     suspend fun markUnread(token: String?, articleIds: List<String>)
-    suspend fun markStarred(token: String?, articleIds: List<String>)
-    suspend fun markUnstarred(token: String?, articleIds: List<String>)
     suspend fun markAllRead(token: String?, feedIds: List<String>)
     /** Recherche serveur (si supportée), sinon null → fallback local. */
     suspend fun search(token: String?, query: String, feedId: String?): List<ArticleEntity>? = null
@@ -29,9 +27,7 @@ interface FeedProvider {
 
 data class StreamPage(
     val articles: List<ArticleEntity>,
-    val continuation: String? = null,
-    val categories: List<CategoryEntity> = emptyList(),
-    val subscriptions: List<SubscriptionEntity> = emptyList()
+    val continuation: String? = null
 )
 
 /** Normalisation pour déduplication. */

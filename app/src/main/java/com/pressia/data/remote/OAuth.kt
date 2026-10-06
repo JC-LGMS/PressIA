@@ -1,7 +1,5 @@
 package com.pressia.data.remote
 
-import android.content.Context
-import androidx.browser.customtabs.CustomTabsIntent
 import com.pressia.BuildConfig
 
 /** OAuth Feedly (code flow) + Inoreader (OAuth2). Les secrets restent configurables en Réglages. */
@@ -18,10 +16,6 @@ object OAuth {
     fun inoreaderAuthUrl(appId: String, redirect: String = BuildConfig.INOREADER_REDIRECT_URI): String =
         "https://www.inoreader.com/oauth2/auth?client_id=${enc(appId)}" +
             "&redirect_uri=${enc(redirect)}&response_type=code&scope=read+write&state=inoreader"
-
-    fun open(ctx: Context, url: String) {
-        CustomTabsIntent.Builder().build().launchUrl(ctx, android.net.Uri.parse(url))
-    }
 
     /** Résultat d'un retour OAuth : code d'autorisation ou erreur (refus utilisateur…). */
     data class RedirectResult(val code: String?, val error: String?)

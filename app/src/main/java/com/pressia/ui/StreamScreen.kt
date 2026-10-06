@@ -34,7 +34,7 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     }
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
-    val live = remember(vm.scope, unreadOnly) { vm.streamList(false, unreadOnly) }
+    val live = remember(vm.scope, unreadOnly) { vm.streamList(unreadOnly) }
     val reactive by live.collectAsState(initial = vm.articles)
     val localArticles = reactive
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
@@ -123,7 +123,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
     LaunchedEffect(vm.syncMsg) {
         vm.syncMsg?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long); vm.syncMsg = null }
     }
-    val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(true, favUnreadOnly, fav) }
+    val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
     val articles by live.collectAsState(initial = emptyList())
 
     val feed = vm.subs.firstOrNull { it.id == feedScope.feedId }
@@ -205,16 +205,6 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                 else -> ArticleList(articles, viewMode, onOpen, vm)
             }
         }
-    }
-}
-
-/** Bandeau de périmètre : deux zones cliquables, toujours visibles, qui déplient leur sélecteur. */
-@Composable
-private fun FavScopeBar(setLabel: String, feedLabel: String, onSetClick: () -> Unit, onFeedClick: () -> Unit) {
-    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-        FavScopeChip(Icons.Filled.Star, "Favoris : $setLabel", onSetClick)
-        Spacer(Modifier.height(4.dp))
-        FavScopeChip(Icons.Filled.RssFeed, "Flux : $feedLabel", onFeedClick)
     }
 }
 

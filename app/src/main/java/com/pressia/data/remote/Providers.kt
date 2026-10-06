@@ -52,12 +52,6 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun markUnread(token: String?, articleIds: List<String>) {
         if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("keepUnread", "entries", entryIds = articleIds))
     }
-    override suspend fun markStarred(token: String?, articleIds: List<String>) {
-        if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("markAsSaved", "entries", entryIds = articleIds))
-    }
-    override suspend fun markUnstarred(token: String?, articleIds: List<String>) {
-        if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("markAsUnsaved", "entries", entryIds = articleIds))
-    }
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {
         // Feedly : markAsRead sur category/feed — on boucle simplement.
         feedIds.forEach { f -> api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = listOf(f))) }
@@ -126,8 +120,6 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     }
     override suspend fun markRead(t: String?, ids: List<String>) = ids.forEach { tag(t, it, "user/-/state/com.google/read", null) }
     override suspend fun markUnread(t: String?, ids: List<String>) = ids.forEach { tag(t, it, null, "user/-/state/com.google/read") }
-    override suspend fun markStarred(t: String?, ids: List<String>) = ids.forEach { tag(t, it, "user/-/state/com.google/starred", null) }
-    override suspend fun markUnstarred(t: String?, ids: List<String>) = ids.forEach { tag(t, it, null, "user/-/state/com.google/starred") }
     override suspend fun markAllRead(t: String?, feedIds: List<String>) { /* via mark-all-as-read endpoint côté repo */ }
     override suspend fun profile(token: String?): String? {
         val u = api.userInfo(auth(token))
@@ -169,7 +161,5 @@ class LocalProvider : FeedProvider {
     }
     override suspend fun markRead(token: String?, articleIds: List<String>) {}
     override suspend fun markUnread(token: String?, articleIds: List<String>) {}
-    override suspend fun markStarred(token: String?, articleIds: List<String>) {}
-    override suspend fun markUnstarred(token: String?, articleIds: List<String>) {}
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {}
 }

@@ -46,7 +46,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var folders by mutableStateOf<List<PressRepository.Folder>>(emptyList())
     var subs by mutableStateOf<List<SubscriptionEntity>>(emptyList())
     var syncing by mutableStateOf(false)
-    var pending by mutableStateOf(0)
     var stats by mutableStateOf<ReadingStats?>(null)
     /** Années avec des données de lecture (sélecteur « par année »). */
     var statsYears by mutableStateOf<List<Int>>(emptyList())
@@ -104,9 +103,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val mergeFolders: StateFlow<Boolean> = prefs.flow(Prefs.MERGE_FOLDERS, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /** Jeu de favoris retenu par l'écran Favoris : « app » (étoiles) | « later » (Read later) | « all ». */
     val favSet: StateFlow<String> = prefs.flow(Prefs.STARRED_SCOPE, "app").stateIn(viewModelScope, SharingStarted.Eagerly, "app")
-    /** Masquage des flux sans article non lu — réglage propre au drawer. */
-    val hideEmptyFeeds: StateFlow<Boolean> = prefs.flow(Prefs.HIDE_EMPTY_FEEDS, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    /** Même chose pour l'écran Accueil, indépendant du drawer. */
+    /** Masquage des flux sans article non lu, pour l'écran Accueil (indépendant du drawer). */
     val hideEmptySubs: StateFlow<Boolean> = prefs.flow(Prefs.HIDE_EMPTY_SUBS, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** Échelle des libellés du drawer, en pourcentage. */
     val tapFaviconRead: StateFlow<Boolean> = prefs.flow(Prefs.TAP_FAVICON_READ, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -181,7 +178,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * (bouton ou tâche d'arrière-plan) enregistre de nouveaux articles, sans rechargement manuel.
      * [fav] n'est fourni que par l'écran Favoris, qui a son propre périmètre.
      */
-    fun streamList(starredOnly: Boolean, onlyUnread: Boolean, fav: FavScope? = null): Flow<List<ArticleEntity>> {
+    fun streamList(onlyUnread: Boolean, fav: FavScope? = null): Flow<List<ArticleEntity>> {
         val s = fav?.scope ?: scope
         val kind = if (fav == null) "" else fav.set
         return keepIds.flatMapLatest { keep ->
@@ -206,15 +203,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         articles = repo.stream(scope.feedId, scope.categoryId, unreadOnly.value)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
-        pending = repo.pendingCount()
-    }
-
-    /** Total des non-lus, toutes places confondues. */
-    val unreadTotal: Int get() = unreads.values.sum()
-
-    /** Bascule « masquer les dossiers sans article non lu ». */
-    fun toggleHideEmptyFeeds() = viewModelScope.launch {
-        prefs.set(Prefs.HIDE_EMPTY_FEEDS, !hideEmptyFeeds.value)
     }
 
     /** Bascule « masquer les flux sans dossier », pour l'écran Accueil. */
@@ -314,9 +302,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Déclenche [syncNow] en tâche de fond et publie le résultat dans [syncMsg]. */
     fun sync() = viewModelScope.launch { syncMsg = syncNow() }
 
-    /** Alias explicite : même comportement, tout est synchronisé. */
-    fun syncAll() = sync()
-
     /**
      * Durée minimale entre deux synchronisations automatiques au lancement.
      *
@@ -350,7 +335,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Filtre « non-lus seuls » : garder l'article à l'écran plutôt que le faire disparaître.
         if (!unread) keepIds.value = keepIds.value + id
         articles = articles.map { if (it.id == id) it.copy(unread = unread) else it }
-        pending = repo.pendingCount()
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)

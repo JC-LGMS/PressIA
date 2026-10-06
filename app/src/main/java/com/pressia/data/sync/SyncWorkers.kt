@@ -18,10 +18,8 @@ class SyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWorker(appCtx,
             repo.pushQueue()
             repo.syncDown()
             // Le tableau « Read later » fait partie des favoris affichés : il suit la même rotation.
+            // syncDown et syncReadLater téléchargent déjà les miniatures manquantes (syncThumbs).
             repo.syncReadLater()
-            // syncDown / syncReadLater appellent déjà syncThumbs : il ne reste ici que les
-            // articles que ces deux passes n'auraient pas couverts, sans coût si rien ne manque.
-            if (inputData.getBoolean("withImages", true)) repo.syncThumbs()
             Result.success()
         } catch (e: Exception) { Result.retry() }
     }
@@ -38,13 +36,6 @@ class SyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWorker(appCtx,
             val req = PeriodicWorkRequestBuilder<SyncWorker>(intervalMin.toLong(), TimeUnit.MINUTES)
                 .setConstraints(constraints).addTag(TAG).build()
             WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(TAG, ExistingPeriodicWorkPolicy.UPDATE, req)
-        }
-        fun syncNow(ctx: Context, withImages: Boolean = true) {
-            val req = OneTimeWorkRequestBuilder<SyncWorker>()
-                .setInputData(workDataOf("withImages" to withImages))
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                .build()
-            WorkManager.getInstance(ctx).enqueue(req)
         }
     }
 }

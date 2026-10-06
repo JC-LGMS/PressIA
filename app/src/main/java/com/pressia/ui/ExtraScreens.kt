@@ -549,8 +549,8 @@ fun SettingsScreen(vm: PressVM) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             com.pressia.ui.theme.BACKGROUNDS.forEach { choice ->
                 val sel = bg == choice.id
-                val swatch = com.pressia.ui.theme.resolveBackground(choice.id, dark = false)
-                    ?: MaterialTheme.colorScheme.surfaceVariant
+                val raw = com.pressia.ui.theme.resolveBackground(choice.id, dark = false)
+                val swatch = raw ?: MaterialTheme.colorScheme.surfaceVariant
                 Box(
                     Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
                         .background(swatch)
@@ -562,7 +562,7 @@ fun SettingsScreen(vm: PressVM) {
                         .clickable { bg = choice.id; save() },
                     contentAlignment = androidx.compose.ui.Alignment.Center
                 ) {
-                    if (swatch == null) Text("A", style = MaterialTheme.typography.labelLarge)
+                    if (raw == null) Text("A", style = MaterialTheme.typography.labelLarge)
                 }
             }
             val customBg = bg.startsWith("#")

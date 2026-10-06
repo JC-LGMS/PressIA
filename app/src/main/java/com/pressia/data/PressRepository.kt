@@ -563,7 +563,7 @@ class PressRepository(
                 .onFailure { android.util.Log.e("PressIA", "sync ${account.id} failed", it) }
         }
         replayRestoredStarred()
-        trimToMax(max)
+        trimToMax()
         syncThumbs()
         added
     }
@@ -760,7 +760,7 @@ class PressRepository(
         added
     }
 
-    private suspend fun trimToMax(maxPerFeed: Int) {
+    private suspend fun trimToMax() {
         // garde les favoris + prune global > 30j (le quota fin par flux est assuré à l'affichage + prune)
         if (dao.prune(System.currentTimeMillis() - 30L * 24 * 3600 * 1000) > 0) gcThumbs()
     }
@@ -830,8 +830,6 @@ class PressRepository(
     /** Vide la file de synchronisation (bascule cloud → RSS local). */
     suspend fun purgeQueue() = withContext(Dispatchers.IO) { dao.clearQueue() }
 
-    /** File de synchronisation ignorée en RSS local (aucun compteur, aucune action en attente). */
-    suspend fun pendingCount(): Int = if (isLocal()) 0 else dao.pendingCount()
     suspend fun unreadByFeed(): Map<String, Int> =
         dao.unreadByFeed().associate { it.feedId to it.c }
 
@@ -860,7 +858,6 @@ class PressRepository(
     }
     /** Nom + icône d'origine d'un flux (affichés sous le titre article). */
     suspend fun feedTitle(feedId: String): String? = dao.feedTitle(feedId)
-    suspend fun feedIcon(feedId: String): String? = dao.feedIcon(feedId)
     suspend fun subscription(feedId: String): SubscriptionEntity? = dao.subscription(feedId)
 
     /** Taille du cache local (base Room + images Coil + miniatures) en octets. */
@@ -1081,9 +1078,6 @@ fun startOfDay(ts: Long): Long {
     c.set(java.util.Calendar.MILLISECOND, 0)
     return c.timeInMillis
 }
-
-/** Bornes `[from, to]` d'une année civile. */
-fun yearRange(year: Int): LongArray = statsRange(StatsPeriod.ALL, year = year, now = Long.MAX_VALUE, first = 0L)
 
 /** Tri du bloc « temps par flux ». */
 enum class FeedSort(val label: String) {

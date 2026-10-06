@@ -163,8 +163,6 @@ interface PressDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSubscriptions(s: List<SubscriptionEntity>)
-    @Query("DELETE FROM subscriptions")
-    suspend fun clearSubscriptions()
     /** Ne retire que les flux d'un compte : les flux des autres comptes doivent survivre à sa synchronisation. */
     @Query("DELETE FROM subscriptions WHERE provider = :provider")
     suspend fun clearSubscriptionsOf(provider: String)
@@ -178,8 +176,6 @@ interface PressDao {
     // --- Articles ---
     @Query("SELECT * FROM articles WHERE id = :id")
     suspend fun article(id: String): ArticleEntity?
-    @Query("SELECT * FROM articles ORDER BY published DESC LIMIT :limit")
-    suspend fun latest(limit: Int): List<ArticleEntity>
     /**
      * [favScope] sélectionne le périmètre des favoris : "" = aucun filtre, "starred" = les étoiles
      * PressIA, "later" = le tableau « Read later » du compte, "all" = les deux réunis.
@@ -205,8 +201,6 @@ interface PressDao {
     suspend fun unreadByFeed(): List<FeedUnread>
     @Query("SELECT title FROM subscriptions WHERE id = :feedId LIMIT 1")
     suspend fun feedTitle(feedId: String): String?
-    @Query("SELECT iconUrl FROM subscriptions WHERE id = :feedId LIMIT 1")
-    suspend fun feedIcon(feedId: String): String?
     @Query("SELECT * FROM subscriptions WHERE id = :feedId LIMIT 1")
     suspend fun subscription(feedId: String): SubscriptionEntity?
     @Query("DELETE FROM articles")
@@ -282,8 +276,6 @@ interface PressDao {
     suspend fun dequeue(rowId: Long)
     @Query("UPDATE sync_queue SET tries = tries + 1 WHERE rowId = :rowId")
     suspend fun bumpTry(rowId: Long)
-    @Query("SELECT COUNT(*) FROM sync_queue")
-    suspend fun pendingCount(): Int
     @Query("DELETE FROM sync_queue")
     suspend fun clearQueue()
 
@@ -298,8 +290,6 @@ interface PressDao {
     suspend fun readingYears(): List<String>
     @Query("SELECT COUNT(*) FROM reading_events WHERE openedAt BETWEEN :from AND :to")
     suspend fun readsBetween(from: Long, to: Long): Int
-    @Query("SELECT openedAt, COUNT(*) as c FROM reading_events WHERE openedAt BETWEEN :from AND :to GROUP BY (openedAt / 86400000) ORDER BY openedAt")
-    suspend fun readsPerDay(from: Long, to: Long): List<DayCount>
     /** Ouvertures agrégées par jour local (« 2026-10-01 »). */
     @Query("SELECT strftime('%Y-%m-%d', openedAt / 1000, 'unixepoch', 'localtime') AS day, COUNT(*) AS c FROM reading_events WHERE openedAt BETWEEN :from AND :to GROUP BY day ORDER BY day")
     suspend fun readsPerLocalDay(from: Long, to: Long): List<LocalDayCount>
@@ -343,8 +333,6 @@ interface PressDao {
      */
     @Query("SELECT a.id AS id, a.unread AS unread, a.starred AS starred, a.readAt AS readAt FROM articles a WHERE a.starred = 1")
     suspend fun starredStates(): List<ReadStateRow>
-    @Query("SELECT id, unread, starred, readAt FROM articles WHERE id = :id")
-    suspend fun readState(id: String): ReadStateRow?
     /** Rejoue les favoris restaurés d'une sauvegarde sur les articles tout juste synchronisés. */
     @Query("UPDATE articles SET starred = 1 WHERE id IN (:ids)")
     suspend fun markStarred(ids: List<String>)
@@ -353,9 +341,7 @@ interface PressDao {
     suspend fun existingIds(ids: List<String>): List<String>
 }
 
-data class FeedCount(val feedId: String, val c: Int)
 data class FeedUnread(val feedId: String, val c: Int)
-data class DayCount(val openedAt: Long, val c: Int)
 data class LocalDayCount(val day: String, val c: Int)
 data class CategorySeconds(val categoryId: String?, val secs: Int)
 data class FeedSeconds(val feedId: String, val secs: Int, val c: Int)
