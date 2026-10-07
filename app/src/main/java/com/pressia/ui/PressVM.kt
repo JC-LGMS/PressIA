@@ -45,7 +45,20 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Dossiers affichés (un par dossier, ou fusionnés entre comptes selon [mergeFolders]). */
     var folders by mutableStateOf<List<PressRepository.Folder>>(emptyList())
     var subs by mutableStateOf<List<SubscriptionEntity>>(emptyList())
-    var syncing by mutableStateOf(false)
+    /**
+     * Synchronisations / rafraîchissements de premier plan en cours. Un compteur plutôt qu'un
+     * booléen : un rafraîchissement lancé pendant une synchronisation (démarrage : les deux
+     * partent ensemble) ne doit pas éteindre l'indicateur à sa propre fin.
+     */
+    private var syncJobs by mutableStateOf(0)
+    /** Une synchronisation de premier plan est en cours (manuelle, démarrage, rafraîchissement). */
+    val syncing: Boolean get() = syncJobs > 0
+    /** Synchronisation périodique (Worker) en cours, même sans action de l'utilisateur. */
+    val workerSyncing: StateFlow<Boolean> =
+        androidx.work.WorkManager.getInstance(repo.appCtx)
+            .getWorkInfosByTagFlow(com.pressia.data.sync.SyncWorker.TAG)
+            .map { infos -> infos.any { it.state == androidx.work.WorkInfo.State.RUNNING } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     var stats by mutableStateOf<ReadingStats?>(null)
     /** Années avec des données de lecture (sélecteur « par année »). */
     var statsYears by mutableStateOf<List<Int>>(emptyList())
@@ -108,6 +121,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Échelle des libellés du drawer, en pourcentage. */
     val tapFaviconRead: StateFlow<Boolean> = prefs.flow(Prefs.TAP_FAVICON_READ, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val drawerScale: StateFlow<Int> = prefs.flow(Prefs.DRAWER_TEXT_SCALE, 100).stateIn(viewModelScope, SharingStarted.Eagerly, 100)
+    /** Échelle des libellés dossier / flux de l'écran Accueil, en pourcentage. */
+    val homeScale: StateFlow<Int> = prefs.flow(Prefs.HOME_TEXT_SCALE, 100).stateIn(viewModelScope, SharingStarted.Eagerly, 100)
     /** Synchronisation automatique au lancement de l'application. */
     val syncOnLaunch: StateFlow<Boolean> = prefs.flow(Prefs.SYNC_ON_LAUNCH, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /** Identifiant du compte actif, null en RSS local — sert à cocher le compte dans l'écran Comptes. */
@@ -195,9 +210,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         }
     }
 
+    /** Verrouille / déverrouille l'indicateur (toujours appariés, en `finally`). */
+    private fun lockSync() { syncJobs++ }
+    private fun unlockSync() { syncJobs = (syncJobs - 1).coerceAtLeast(0) }
+
     fun refresh() = viewModelScope.launch {
-        syncing = true
-        try { refreshNow() } finally { syncing = false }
+        lockSync()
+        try { refreshNow() } finally { unlockSync() }
     }
 
     /** Remplit l'état local depuis la base (version suspendable de [refresh]). */
@@ -292,7 +311,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * rien à l'utilisateur et masquait le seul chiffre utile.
      */
     suspend fun syncNow(): String {
-        syncing = true
+        lockSync()
         try {
             val pushed = repo.pushQueue()
             val n = repo.syncDown()
@@ -300,11 +319,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             // « connecté » en revenant sur des listes encore vides.
             refreshNow()
             return if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
-            else "Aucun nouvel article"
+            else "Synchronisation terminée"
         } catch (e: Exception) {
             return "Échec de synchronisation : vérifiez la connexion"
         } finally {
-            syncing = false
+            unlockSync()
         }
     }
 
@@ -329,26 +348,33 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * ne dépend que des actions de lecture en attente depuis la dernière visite.
      */
     fun syncOnLaunch() = viewModelScope.launch {
-        val prefs = repo.prefs
-        val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
-        val fresh = last > 0L && System.currentTimeMillis() - last < launchSyncDelayMs
-        if (syncOnLaunch.value && !fresh) {
-            repo.pushQueue().also { repo.syncDown() }
-            prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+        lockSync()
+        try {
+            val prefs = repo.prefs
+            val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
+            val fresh = last > 0L && System.currentTimeMillis() - last < launchSyncDelayMs
+            if (syncOnLaunch.value && !fresh) {
+                repo.pushQueue().also { repo.syncDown() }
+                prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+            }
+            repo.syncReadLater()
+            refreshNow()
+        } finally {
+            unlockSync()
         }
-        repo.syncReadLater()
-        refreshNow()
     }
     fun setRead(id: String, unread: Boolean) = viewModelScope.launch {
+        // Passer en lu : rendre l'article « collant » AVANT l'écriture — la réémission du flux
+        // qui suit l'écriture le trouve déjà gardé, sinon la ligne disparaissait puis
+        // réapparaissait (filtre non-lus + pas encore collant entre les deux émissions).
+        // Repasser en non-lu : l'oublier APRÈS l'écriture, pour la raison symétrique.
+        if (!unread) keepIds.value = keepIds.value + id
         repo.setRead(id, unread)
-        // Filtre « non-lus seuls » : garder l'article à l'écran plutôt que le faire disparaître.
-        // Repasser en non-lu l'oublie : inutile de garder un article déjà visible par le filtre.
-        keepIds.value = if (!unread) keepIds.value + id else keepIds.value - id
-        if (unread && unreadOnly.value && articles.none { it.id == id }) {
-            // L'article repasse dans le filtre mais manque à la liste héritée (ex. lu « collant »
-            // rouvert depuis l'écran article) : sans l'y ajouter, un retour sur la liste
-            // l'oubliait un instant — la ligne disparaissait puis réapparaissait à la réémission
-            // du flux. Elle ne fait désormais que changer d'apparence (plus d'estompage).
+        if (unread) keepIds.value = keepIds.value - id
+        if (articles.none { it.id == id }) {
+            // L'article manque à la liste héritée (arrivé par le flux réactif après le refresh,
+            // ou rouvert sous filtre non-lus) : l'y mettre pour un retour sur la liste sans flash —
+            // la ligne ne fait que changer d'apparence (estompage).
             repo.article(id)?.let { full ->
                 articles = (articles + full).sortedByDescending { it.published }
                 return@launch
@@ -405,8 +431,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun setFavSet(set: String) = viewModelScope.launch { prefs.set(Prefs.STARRED_SCOPE, set) }
     /** Recharge le tableau « Read later » des comptes, à la demande. */
     fun reloadReadLater() = viewModelScope.launch {
-        syncing = true
-        try { repo.syncReadLater(); refreshNow() } finally { syncing = false }
+        lockSync()
+        try { repo.syncReadLater(); refreshNow() } finally { unlockSync() }
     }
 
     // ----- Comptes -----
@@ -422,12 +448,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         val connected = repo.addAccount(service, token, name)
         refreshNow()
         account = repo.accountInfo()
-        syncing = true
+        lockSync()
         syncMsg = try {
             val n = repo.backfill(connected.id)
             if (n > 0) "Historique du compte récupéré : $n articles" else null
         } finally {
-            syncing = false
+            unlockSync()
             refreshNow()
         }
     }

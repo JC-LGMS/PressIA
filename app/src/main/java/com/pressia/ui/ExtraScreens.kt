@@ -405,6 +405,7 @@ fun SettingsScreen(vm: PressVM) {
     var openMode by remember { mutableStateOf("internal") }
     var mergeFolders by remember { mutableStateOf(true) }
     var drawerScale by remember { mutableStateOf(100) }
+    var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
@@ -435,7 +436,8 @@ fun SettingsScreen(vm: PressVM) {
         wifiOnly = get(Prefs.WIFI_ONLY, true); maxItems = get(Prefs.MAX_ITEMS, 1000)
         imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, 120)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
-        drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
+        drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
+        syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         refreshCacheInfo()
     }
 
@@ -497,6 +499,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
         vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
+        vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
         com.pressia.data.sync.SyncWorker.schedule(ctx, interval, wifiOnly)
         vm.refresh()
@@ -662,6 +665,13 @@ fun SettingsScreen(vm: PressVM) {
         Slider(drawerScale.toFloat(), { drawerScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
         Text(
             "Concerne les noms de flux et de dossiers du menu latéral. 100 % correspond à la taille actuelle.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("Taille du texte de l'accueil : $homeScale %")
+        Slider(homeScale.toFloat(), { homeScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
+        Text(
+            "Concerne les noms de flux et de dossiers de l'écran Accueil. 100 % correspond à la taille actuelle.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

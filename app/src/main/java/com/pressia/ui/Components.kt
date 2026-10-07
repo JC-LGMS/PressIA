@@ -546,29 +546,82 @@ fun toast(ctx: android.content.Context, msg: String) {
 }
 
 /**
- * Bouton de synchronisation : l'icône pivote tant que [PressVM.syncing], pour les écrans
- * Accueil / flux / favoris qui partagent le même état de synchronisation.
+ * Échelle d'animation système (0 = animations coupées : option développeur, accessibilité ou
+ * économie d'énergie). Les animations Compose se figent alors (une rotation à 360° retombe à
+ * 0°) : l'indicateur de synchronisation doit avoir un repli qui n'en dépend pas.
+ */
+private fun animatorScale(ctx: Context): Float = runCatching {
+    android.provider.Settings.Global.getFloat(
+        ctx.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f
+    )
+}.getOrDefault(1f)
+
+/**
+ * Bouton de synchronisation : l'icône pivote tant qu'une synchronisation a lieu — manuelle,
+ * de démarrage ou périodique (Worker, suivie via [PressVM.workerSyncing]) — pour les écrans
+ * Accueil / flux / favoris qui partagent le même état. Animations coupées : pulsation manuelle
+ * (`delay`, insensible à l'échelle) au lieu de la rotation.
  */
 @Composable
 fun SyncButton(vm: PressVM, description: String = "actualiser", onClick: () -> Unit = { vm.sync() }) {
+    val bgSync by vm.workerSyncing.collectAsState()
     IconButton(onClick) {
-        if (vm.syncing) {
-            val angle by rememberInfiniteTransition(label = "sync").animateFloat(
-                initialValue = 0f, targetValue = 360f,
-                animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
-                label = "spin"
-            )
-            Icon(Icons.Filled.Refresh, description, Modifier.graphicsLayer { rotationZ = angle })
+        if (vm.syncing || bgSync) {
+            val ctx = LocalContext.current
+            if (remember { animatorScale(ctx) } > 0f) {
+                val angle by rememberInfiniteTransition(label = "sync").animateFloat(
+                    initialValue = 0f, targetValue = 360f,
+                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
+                    label = "spin"
+                )
+                Icon(Icons.Filled.Refresh, description, Modifier.graphicsLayer { rotationZ = angle })
+            } else {
+                // Pas d'API d'animation : on tourne par pas (recomposition pilotée par `delay`,
+                // insensible à l'échelle), même vitesse qu'en mode animé (~1 tour/s).
+                var angle by remember { mutableFloatStateOf(0f) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        kotlinx.coroutines.delay(40)
+                        angle = (angle + 15f) % 360f
+                    }
+                }
+                Icon(Icons.Filled.Refresh, description, Modifier.graphicsLayer { rotationZ = angle })
+            }
         } else {
             Icon(Icons.Filled.Refresh, description)
         }
     }
 }
 
-/** Barre de chargement de synchronisation, un peu plus haute que le trait fin par défaut. */
+/**
+ * Barre de chargement de synchronisation, un peu plus haute que le trait fin par défaut.
+ * Animations coupées : balayage maison (la version M3 démarre en retrait du bord et avance
+ * par à-coups) — un segment qui part du bord gauche et grandit en continu, sans API d'animation.
+ */
 @Composable
 fun SyncProgress() {
-    LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp))
+    val ctx = LocalContext.current
+    if (remember { animatorScale(ctx) } > 0f) {
+        LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp))
+    } else {
+        var f by remember { mutableFloatStateOf(0f) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(60)
+                f = if (f >= 1f) 0f else f + 0.04f
+            }
+        }
+        Box(
+            Modifier.fillMaxWidth().height(6.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+        ) {
+            Box(
+                Modifier.fillMaxHeight().fillMaxWidth(f)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+    }
 }
 
 /** Nom de version affiché (drawer, écran À propos) : suit le `versionName` du build. */

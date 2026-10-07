@@ -54,6 +54,8 @@ class PressRepository(
     private val inoreader: FeedProvider = InoreaderProvider(),
     private val local: LocalProvider = LocalProvider()
 ) {
+    /** Contexte applicatif (l'UI s'en sert pour suivre l'état du Worker de synchronisation). */
+    val appCtx: Context get() = ctx.applicationContext
     private val dao get() = db.dao()
 
     // ----- Comptes -----

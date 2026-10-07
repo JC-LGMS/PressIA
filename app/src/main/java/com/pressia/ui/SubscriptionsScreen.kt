@@ -38,6 +38,10 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     val ctx = LocalContext.current
     val totalUnread = vm.unreads.values.sum()
     val hiddenEmpty by vm.hideEmptySubs.collectAsState()
+    // Libellés un peu plus grands qu'avant (dossier 16 sp, flux 15 sp), réglables en pourcentage.
+    val homeScale by vm.homeScale.collectAsState()
+    val folderSp = (16 * homeScale / 100f).coerceIn(11f, 23f)
+    val feedSp = (15 * homeScale / 100f).coerceIn(10f, 21f)
     val snackbar = remember { SnackbarHostState() }
     var editing by remember { mutableStateOf<PressRepository.Folder?>(null) }   // dossier renommé
     var creating by remember { mutableStateOf(false) }                          // création d'un dossier
@@ -98,6 +102,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                     item(key = "cat-${f.id}") {
                         FolderRow(
                             label = f.label,
+                            labelSp = folderSp,
                             unread = subs.sumOf { vm.unreads[it.id] ?: 0 },
                             collapsed = vm.isCollapsed(f.id),
                             canMoveUp = fi > 0,
@@ -122,7 +127,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                         items(shown, key = { "s-${it.id}" }) { s ->
                             val i = shown.indexOfFirst { it.id == s.id }
                             SubRow(
-                                vm, s, Modifier.padding(start = 20.dp), onOpenStream,
+                                vm, s, Modifier.padding(start = 20.dp), feedSp, onOpenStream,
                                 onMove = { moving = s },
                                 onMoveUp = { vm.moveFeedOrder(s.id, -1, s.categoryId) },
                                 onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
@@ -143,7 +148,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                 items(visibleUncategorized, key = { "s-${it.id}" }) { s ->
                     val i = visibleUncategorized.indexOfFirst { it.id == s.id }
                     SubRow(
-                        vm, s, Modifier, onOpenStream,
+                        vm, s, Modifier, feedSp, onOpenStream,
                         onMove = { moving = s },
                         onMoveUp = { vm.moveFeedOrder(s.id, -1, null) },
                         onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
@@ -262,6 +267,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
 @Composable
 private fun FolderRow(
     label: String,
+    labelSp: Float,
     unread: Int,
     collapsed: Boolean,
     canMoveUp: Boolean,
@@ -294,7 +300,7 @@ private fun FolderRow(
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+            label, fontSize = labelSp.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(start = 2.dp)
         )
@@ -387,6 +393,7 @@ private fun SubRow(
     vm: PressVM,
     sub: SubscriptionEntity,
     mod: Modifier,
+    feedSp: Float,
     onOpenStream: () -> Unit,
     onMove: () -> Unit,
     onMoveUp: () -> Unit,
@@ -406,7 +413,7 @@ private fun SubRow(
         FeedAvatar(sub, 26)
         Spacer(Modifier.width(10.dp))
         Text(
-            pretty, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            pretty, fontSize = feedSp.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
         val n = vm.unreads[sub.id] ?: 0
