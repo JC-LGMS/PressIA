@@ -55,8 +55,9 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
     // Un seul menu contextuel pour toute la colonne : chaque élément est désigné par une clé
     // composite, ce qui évite d'empiler un état par dossier et par flux.
 
-    val feedSp = (14 * textScale / 100f).coerceIn(9f, 20f)
-    val folderSp = (15 * textScale / 100f).coerceIn(10f, 22f)
+    // 100 % = l'ancien 125 % : bases relevées d'un quart (flux 17,5 sp, dossier 18,75 sp).
+    val feedSp = (17.5f * textScale / 100f).coerceIn(11f, 25f)
+    val folderSp = (18.75f * textScale / 100f).coerceIn(12f, 27f)
     // Numéro de version affiché en bas du drawer, en petit.
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }

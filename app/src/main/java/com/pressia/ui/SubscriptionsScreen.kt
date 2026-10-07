@@ -38,10 +38,10 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     val ctx = LocalContext.current
     val totalUnread = vm.unreads.values.sum()
     val hiddenEmpty by vm.hideEmptySubs.collectAsState()
-    // Libellés un peu plus grands qu'avant (dossier 16 sp, flux 15 sp), réglables en pourcentage.
+    // 100 % = l'ancien 110 % : bases relevées d'un dixième (dossier 17,6 sp, flux 16,5 sp).
     val homeScale by vm.homeScale.collectAsState()
-    val folderSp = (16 * homeScale / 100f).coerceIn(11f, 23f)
-    val feedSp = (15 * homeScale / 100f).coerceIn(10f, 21f)
+    val folderSp = (17.6f * homeScale / 100f).coerceIn(12f, 25f)
+    val feedSp = (16.5f * homeScale / 100f).coerceIn(11f, 23f)
     val snackbar = remember { SnackbarHostState() }
     var editing by remember { mutableStateOf<PressRepository.Folder?>(null) }   // dossier renommé
     var creating by remember { mutableStateOf(false) }                          // création d'un dossier
