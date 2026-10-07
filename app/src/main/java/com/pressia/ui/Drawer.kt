@@ -59,17 +59,7 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
     val folderSp = (15 * textScale / 100f).coerceIn(10f, 22f)
     // Numéro de version affiché en bas du drawer, en petit.
     val ctx = LocalContext.current
-    val version = remember {
-        runCatching {
-            val pm = ctx.packageManager
-            val pkg = ctx.packageName
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
-                pm.getPackageInfo(pkg, android.content.pm.PackageManager.PackageInfoFlags.of(0)).versionName
-            } else {
-                @Suppress("DEPRECATION") pm.getPackageInfo(pkg, 0).versionName
-            }
-        }.getOrNull()
-    }
+    val version = remember { appVersionName(ctx) }
 
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
@@ -148,6 +138,9 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             }
             DrawerRow(Icons.Filled.AccountCircle, "Comptes", currentRoute == "login", feedSp) {
                 onNavigate("login"); onClose()
+            }
+            DrawerRow(Icons.Filled.Info, "À propos", currentRoute == "about", feedSp) {
+                onNavigate("about"); onClose()
             }
             if (!version.isNullOrBlank()) {
                 Spacer(Modifier.height(6.dp))

@@ -62,14 +62,14 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                             else "masquer les flux sans article non lu"
                         )
                     }
-                    IconButton({
+                    SyncButton(vm, "actualiser") {
                         toast(ctx, "Actualisation des abonnements")
                         vm.sync()
-                    }) { Icon(Icons.Filled.Refresh, "actualiser") }
+                    }
                     IconButton({ creating = true }) { Icon(Icons.Filled.CreateNewFolder, "nouveau dossier") }
                 }
             )
-            if (vm.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (vm.syncing) SyncProgress()
         }
     ) { pad ->
         val uncategorized = vm.subs.filter { it.categoryId == null }

@@ -24,6 +24,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Barre de navigation Android noire, icônes claires.
+        @Suppress("DEPRECATION") window.navigationBarColor = android.graphics.Color.BLACK
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightNavigationBars = false
         val repo = Locator.repo(this)
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -59,9 +63,9 @@ class MainActivity : ComponentActivity() {
                 else current == "stream" && vm.scope.feedId == null && vm.scope.categoryId == null
 
                 // Dernière destination de contenu réellement visitée (accueil, dossier ou article).
-                // Les écrans utilitaires — Favoris, Recherche, Doublons, Stats, Réglages, Comptes —
-                // s'appuient dessus pour renvoyer là où l'utilisateur se trouvait, plutôt que de
-                // remonter une pile qui peut ne plus contenir cette destination.
+                // Les écrans utilitaires — Favoris, Recherche, Doublons, Stats, Réglages, Comptes,
+                // À propos — s'appuient dessus pour renvoyer là où l'utilisateur se trouvait,
+                // plutôt que de remonter une pile qui peut ne plus contenir cette destination.
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
                     if (current in CONTENT_ROUTES) lastContent = current
@@ -234,6 +238,12 @@ class MainActivity : ComponentActivity() {
                                         onFeedlySignIn = { nav.navigate("feedly-signin") })
                                 }
                             }
+                            composable("about") {
+                                BackRule()
+                                ScaffoldWithMenu("À propos", { openDrawer() }) {
+                                    AboutScreen()
+                                }
+                            }
                             composable("feedly-signin") {
                                 BackRule()
                                 FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
@@ -272,7 +282,7 @@ private val CONTENT_ROUTES = setOf("home", "stream", "article")
  * sans avoir à remonter l'empilement des écrans précédents.
  */
 private val UTILITY_ROUTES = setOf(
-    "starred", "search", "dedup", "stats", "settings", "login", "feedly-signin", "oauth"
+    "starred", "search", "dedup", "stats", "settings", "login", "feedly-signin", "oauth", "about"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

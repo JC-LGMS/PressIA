@@ -230,6 +230,19 @@ interface PressDao {
     suspend fun markFeedsRead(feedIds: List<String>, now: Long)
     @Query("UPDATE articles SET unread = 0, readAt = :now")
     suspend fun markAllRead(now: Long)
+    /**
+     * Réconciliation du lu/non-lu distant : non-lus locaux des flux d'un compte, pour les
+     * comparer aux non-lus du compte (lus ailleurs → à passer en lus).
+     */
+    @Query("SELECT a.id FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 1")
+    suspend fun unreadIdsOfProvider(provider: String): List<String>
+    /** Parmi des IDs distants, ceux que le local connaît comme lus (non lus ailleurs → à rouvrir). */
+    @Query("SELECT a.id FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 0 AND a.id IN (:ids)")
+    suspend fun readIdsOfProviderAmong(provider: String, ids: List<String>): List<String>
+    @Query("UPDATE articles SET unread = 0, readAt = :now WHERE id IN (:ids)")
+    suspend fun markIdsRead(ids: List<String>, now: Long)
+    @Query("UPDATE articles SET unread = 1, readAt = NULL WHERE id IN (:ids)")
+    suspend fun markIdsUnread(ids: List<String>)
     @Query("UPDATE articles SET content = :html, fullFetched = 1 WHERE id = :id")
     suspend fun saveFullContent(id: String, html: String)
     /**

@@ -115,17 +115,22 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         vm.setStar(it.id, !it.starred); article = article?.copy(starred = !it.starred)
                         toast(ctx, if (!it.starred) "Ajouté aux favoris" else "Retiré des favoris")
                     } }) {
-                        Icon(if (article?.starred == true) Icons.Filled.Star else Icons.Filled.StarBorder, "favori")
+                        // Favori dans la couleur dominante de l'application.
+                        Icon(
+                            if (article?.starred == true) Icons.Filled.Star else Icons.Filled.StarBorder,
+                            "favori", tint = MaterialTheme.colorScheme.primary
+                        )
                     }
                     IconButton({ article?.let {
                         vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
                         toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
                     } }) {
                         Icon(
-                            // Non lu = plein, lu = vide.
+                            // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
+                            // rond des listes) : c'est un bouton d'action, pas un indicateur.
                             if (article?.unread == true) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
                             if (article?.unread == true) "marquer lu" else "marquer non lu",
-                            tint = readDotTint(),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
                     }

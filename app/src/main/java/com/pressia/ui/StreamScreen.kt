@@ -69,14 +69,14 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                             if (unreadOnly) "afficher aussi les lus" else "ne montrer que les non-lus"
                         )
                     }
-                    IconButton({ vm.sync() }) { Icon(Icons.Filled.Refresh, "actualiser") }
+                    SyncButton(vm)
                     IconButton({
                         vm.markAllRead()
                         toast(ctx, "Tous marqués comme lus")
                     }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
                 }
             )
-            if (vm.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (vm.syncing) SyncProgress()
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
@@ -159,17 +159,17 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                         )
                     }
                     // Le tableau du compte est distant : son rafraîchissement est une action explicite.
-                    IconButton({
+                    SyncButton(vm, "actualiser les favoris") {
                         if (set == "later") {
                             scope.launch {
                                 vm.reloadReadLater()
                                 toast(ctx, "« Read later » actualisé")
                             }
                         } else vm.sync()
-                    }) { Icon(Icons.Filled.Refresh, "actualiser les favoris") }
+                    }
                 }
             )
-            if (vm.syncing) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (vm.syncing) SyncProgress()
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {

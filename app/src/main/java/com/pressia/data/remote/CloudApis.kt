@@ -98,7 +98,9 @@ interface InoreaderService {
         @Path(value = "stream", encoded = true) stream: String,
         @Query("n") n: Int = 100,
         @Query("c") cont: String? = null,
-        @Query("output") o: String = "json"
+        @Query("output") o: String = "json",
+        /** État à exclure (ex. `user/-/state/com.google/read` = non-lus seuls). */
+        @Query("xt") xt: String? = null
     ): InoreaderStream
     @FormUrlEncoded @POST("reader/api/0/edit-tag")
     suspend fun editTag(

@@ -615,6 +615,15 @@ class PressRepository(
         val page = p.stream(account.token, feedId, categoryId, max)
         var added = storeArticles(page.articles)
         if (feedId == null && categoryId == null) {
+            // Sync globale : les articles ne redescendent que par fenêtre récente, les lus / non lus
+            // d'ailleurs plus anciens n'y figureraient jamais. On réconcilie donc avec les non-lus
+            // du compte sur 30 jours (borné : au-delà, on ne fait que rouvrir, jamais passer en lu
+            // à l'aveugle — de toute façon le local ne conserve que ça, et Feedly marque lu à 31 j).
+            runCatching { reconcileReadState(account) }
+                .onSuccess { (read, unread) ->
+                    if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
+                }
+                .onFailure { android.util.Log.e("PressIA", "reconcile ${account.id} failed", it) }
             val cats = p.categories(account.token).map { it.copy(provider = account.id) }
             replaceCategories(account.id, cats)
             val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
@@ -627,6 +636,35 @@ class PressRepository(
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
         }
         return added
+    }
+
+    /**
+     * Propage le lu/non-lu distant : les articles lus ailleurs (hors fenêtre récente) passent en
+     * lus, ceux rouverts ailleurs repassent en non-lus.
+     *
+     * Les actions locales non poussées gagnent toujours : le serveur est périmé pour elles
+     * (file « read » / « unread », ou « markAllRead » en attente qui interdit tout passage en lu).
+     * Renvoie (passés en lus, rouverts).
+     */
+    suspend fun reconcileReadState(account: CloudAccount, maxIds: Int = 5000): Pair<Int, Int> = withContext(Dispatchers.IO) {
+        val remote = providerFor(account.provider).unreadIds(account.token, maxIds) ?: return@withContext 0 to 0
+        val pending = dao.pendingSync()
+        val pendingIds = pending.filter { it.kind == "read" || it.kind == "unread" }.map { it.articleId }.toSet()
+        val hasPendingMarkAll = pending.any { it.kind == "markAllRead" }
+        val localUnread = dao.unreadIdsOfProvider(account.id).toSet()
+        // SQLite refuse ~999 variables liées par requête `IN` : on découpe comme dans storeArticles.
+        val localReadAmongRemote = remote.ids.chunked(400).flatMap { dao.readIdsOfProviderAmong(account.id, it) }.toSet()
+        val split = computeReadReconciliation(localUnread, remote.ids, localReadAmongRemote, pendingIds, remote.complete, hasPendingMarkAll)
+        var read = 0
+        var unread = 0
+        if (split.markRead.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            split.markRead.chunked(400).forEach { dao.markIdsRead(it, now); read += it.size }
+        }
+        if (split.markUnread.isNotEmpty()) {
+            split.markUnread.chunked(400).forEach { dao.markIdsUnread(it); unread += it.size }
+        }
+        read to unread
     }
 
     /**

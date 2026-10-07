@@ -69,6 +69,32 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500))
         return s.items.map { it.toEntity().copy(laterSaved = true) }
     }
+    /**
+     * Non-lus du compte sur 30 jours (flux global, `unreadOnly`, du plus récent au plus ancien) :
+     * sert à propager les lus / non lus d'ailleurs, y compris hors de la fenêtre récente
+     * redescendue par la synchronisation. On ne retient que les articles que le serveur dit
+     * non-lus, au cas où le filtre serait ignoré ; on s'arrête dès qu'une page est entièrement
+     * plus vieille que la fenêtre.
+     */
+    override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
+        val scope = userId(token)
+        if (scope.isBlank()) return UnreadSet(emptySet(), true)
+        val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
+        val ids = HashSet<String>()
+        var cont: String? = null
+        var complete = false
+        while (ids.size < maxIds) {
+            val s = api.stream(auth(token), "user/$scope/category/global.all", count = 500, unreadOnly = true, cont = cont)
+            if (s.items.isEmpty()) { complete = true; break }
+            s.items.filter { it.unread && publishedMs(it.published) >= cutoff }.forEach { ids += it.id }
+            val oldest = s.items.minOf { publishedMs(it.published) }
+            val next = s.continuation
+            // Page entièrement hors fenêtre (dates renseignées) : les suivantes sont plus vieilles.
+            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || next == cont) { complete = true; break }
+            cont = next
+        }
+        return UnreadSet(ids, complete)
+    }
     override suspend fun profile(token: String?): String? {
         val p = api.profile(auth(token))
         return listOfNotNull(p.userName?.takeIf { it.isNotBlank() }, p.email?.takeIf { it.isNotBlank() })
@@ -131,6 +157,33 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
         return s.items.map { it.toEntity().copy(laterSaved = true) }
     }
+    /**
+     * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus
+     * ancien) : même usage que côté Feedly. Le filtre se fait aussi sur les catégories de chaque
+     * article, au cas où `xt` serait ignoré ; arrêt dès qu'une page est entièrement hors fenêtre.
+     */
+    override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
+        val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
+        val ids = HashSet<String>()
+        var cont: String? = null
+        var complete = false
+        while (ids.size < maxIds) {
+            val s = api.stream(auth(token), "user/-/state/com.google/reading-list", n = 1000, cont = cont, xt = READ_STATE)
+            if (s.items.isEmpty()) { complete = true; break }
+            s.items
+                .filter { !it.categories.contains(READ_STATE) && publishedMs(it.published) >= cutoff }
+                .forEach { ids += it.id }
+            val oldest = s.items.minOf { publishedMs(it.published) }
+            val next = s.continuation
+            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || next == cont) { complete = true; break }
+            cont = next
+        }
+        return UnreadSet(ids, complete)
+    }
+
+    companion object {
+        const val READ_STATE = "user/-/state/com.google/read"
+    }
 
     private fun InoreaderItem.toEntity(): ArticleEntity {
         val link = (canonical + alternate).firstOrNull()?.href.orEmpty()
@@ -139,7 +192,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val tt = cleanTitle(title).ifBlank { "(sans titre)" }
         return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = tt,
             author = author, url = link, summary = summary?.content, content = html, imageUrl = img,
-            published = published, unread = !categories.contains("user/-/state/com.google/read"),
+            published = published, unread = !categories.contains(READ_STATE),
             starred = false,
             titleHash = dedupHash(tt, link))
     }

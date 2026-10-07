@@ -22,6 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -71,7 +76,8 @@ fun ArticleRow(
     showSource: Boolean = true
 ) {
     val ctx = LocalContext.current
-    val alpha = if (a.unread) 1f else 0.55f
+    // Lus bien estompés, mais encore lisibles.
+    val alpha = if (a.unread) 1f else 0.48f
     val src = remember(a.feedId, feeds) { prettyFeedTitle(feeds[a.feedId]?.title ?: feeds[a.feedId]?.id) }
     // Titres déjà en base avec des entités HTML (« &nbsp; », …) : nettoyés à l'affichage.
     val title = remember(a.title) { cleanTitle(a.title).ifBlank { "(sans titre)" } }
@@ -538,3 +544,40 @@ fun shareArticle(ctx: android.content.Context, a: ArticleEntity) {
 fun toast(ctx: android.content.Context, msg: String) {
     android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
 }
+
+/**
+ * Bouton de synchronisation : l'icône pivote tant que [PressVM.syncing], pour les écrans
+ * Accueil / flux / favoris qui partagent le même état de synchronisation.
+ */
+@Composable
+fun SyncButton(vm: PressVM, description: String = "actualiser", onClick: () -> Unit = { vm.sync() }) {
+    IconButton(onClick) {
+        if (vm.syncing) {
+            val angle by rememberInfiniteTransition(label = "sync").animateFloat(
+                initialValue = 0f, targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
+                label = "spin"
+            )
+            Icon(Icons.Filled.Refresh, description, Modifier.graphicsLayer { rotationZ = angle })
+        } else {
+            Icon(Icons.Filled.Refresh, description)
+        }
+    }
+}
+
+/** Barre de chargement de synchronisation, un peu plus haute que le trait fin par défaut. */
+@Composable
+fun SyncProgress() {
+    LinearProgressIndicator(Modifier.fillMaxWidth().height(6.dp))
+}
+
+/** Nom de version affiché (drawer, écran À propos) : suit le `versionName` du build. */
+fun appVersionName(ctx: Context): String? = runCatching {
+    val pm = ctx.packageManager
+    val pkg = ctx.packageName
+    if (android.os.Build.VERSION.SDK_INT >= 33) {
+        pm.getPackageInfo(pkg, android.content.pm.PackageManager.PackageInfoFlags.of(0)).versionName
+    } else {
+        @Suppress("DEPRECATION") pm.getPackageInfo(pkg, 0).versionName
+    }
+}.getOrNull()

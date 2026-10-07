@@ -344,6 +344,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Filtre « non-lus seuls » : garder l'article à l'écran plutôt que le faire disparaître.
         // Repasser en non-lu l'oublie : inutile de garder un article déjà visible par le filtre.
         keepIds.value = if (!unread) keepIds.value + id else keepIds.value - id
+        if (unread && unreadOnly.value && articles.none { it.id == id }) {
+            // L'article repasse dans le filtre mais manque à la liste héritée (ex. lu « collant »
+            // rouvert depuis l'écran article) : sans l'y ajouter, un retour sur la liste
+            // l'oubliait un instant — la ligne disparaissait puis réapparaissait à la réémission
+            // du flux. Elle ne fait désormais que changer d'apparence (plus d'estompage).
+            repo.article(id)?.let { full ->
+                articles = (articles + full).sortedByDescending { it.published }
+                return@launch
+            }
+        }
         articles = articles.map { if (it.id == id) it.copy(unread = unread) else it }
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {

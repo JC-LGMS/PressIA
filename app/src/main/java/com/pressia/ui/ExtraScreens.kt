@@ -1,11 +1,13 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -855,6 +857,43 @@ fun ColorPickerDialog(title: String, current: String, onDismiss: () -> Unit, onP
                     Button({ onPick(color.toHex()) }) { Text("Valider") }
                 }
             }
+        }
+    }
+}
+
+/** Écran « À propos » : nom, version, description courte et bouton vers le code source. */
+@Composable
+fun AboutScreen() {
+    val ctx = LocalContext.current
+    val version = remember { appVersionName(ctx) }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Image(
+            painter = androidx.compose.ui.res.painterResource(com.pressia.R.drawable.ic_launcher),
+            contentDescription = null,
+            modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp))
+        )
+        Spacer(Modifier.height(12.dp))
+        Text("PressIA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        if (!version.isNullOrBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Version $version", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Lecteur RSS façon Press : Feedly, Inoreader ou flux locaux, 100 % Jetpack Compose, " +
+                "lecture hors-ligne et article complet via Readability.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+        OutlinedButton({ openUrl(ctx, "https://github.com/JC-LGMS/PressIA-JCP") }) {
+            Text("Code source")
         }
     }
 }
