@@ -2,6 +2,7 @@ package com.pressia.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -40,6 +41,15 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val fontSize by vm.fontSize.collectAsState()
     val justify by vm.justify.collectAsState()
     val titleSp by vm.articleTitle.collectAsState()
+
+    // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
+    // horizontal navigue vers eux. Hors liste (recherche, favoris), pas de voisin.
+    val ids = remember(vm.articles) { vm.articles.map { it.id } }
+    val idx = ids.indexOf(articleId)
+    val prevId = if (idx > 0) ids[idx - 1] else null
+    val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
+    var offsetX by remember(articleId) { mutableFloatStateOf(0f) }
+    var dragging by remember(articleId) { mutableStateOf(false) }
 
     /** Contenu RSS d'origine (jamais le HTML complet, pour éviter les allers-retours dégradés). */
     fun rssHtml(a: ArticleEntity?): String? = a?.summary?.takeIf { it.isNotBlank() } ?: a?.content
@@ -140,8 +150,39 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             )
         }
     ) { pad ->
+        // Balayage horizontal : le contenu suit le doigt, puis ouvre le voisin au relâchement.
+        // Gauche → article suivant (plus ancien), droite → précédent (plus récent).
+        Box(
+            Modifier.padding(pad).fillMaxSize()
+                .pointerInput(prevId, nextId) {
+                    if (prevId != null || nextId != null) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            val hasNeighbor = (amount < 0 && nextId != null) || (amount > 0 && prevId != null)
+                            if (hasNeighbor) {
+                                val lo = if (prevId == null) -600f else -600f
+                                val hi = if (nextId == null) 600f else 600f
+                                offsetX = (offsetX + amount).coerceIn(lo, hi)
+                            }
+                        },
+                        onDragEnd = {
+                            dragging = false
+                            when {
+                                offsetX <= -120f && nextId != null -> vm.selectedArticleId = nextId
+                                offsetX >= 120f && prevId != null -> vm.selectedArticleId = prevId
+                                else -> offsetX = 0f
+                            }
+                        },
+                        onDragCancel = { dragging = false; offsetX = 0f }
+                    )
+                    }
+                }
+        ) {
         Column(
-            Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState())
+            Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())
+                .graphicsLayer { translationX = offsetX }
                 .pointerInput(Unit) {
                     detectTapGestures(onDoubleTap = { scope.launch { toggleMode() } })
                 }
@@ -232,6 +273,22 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             if (fullMode) AssistChip({ scope.launch { toggleMode() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.Filled.Article, null) })
             else AssistChip({ scope.launch { loadFull() } }, { Text("Double-tap : article complet") }, leadingIcon = { Icon(Icons.Filled.AutoStories, null) })
             Spacer(Modifier.height(16.dp))
+        }
+        // Flèches de direction pendant le geste : confirment le voisin visé.
+        if (dragging && offsetX < -40f && nextId != null) {
+            Icon(
+                Icons.Filled.ChevronRight, "article suivant",
+                Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        if (dragging && offsetX > 40f && prevId != null) {
+            Icon(
+                Icons.Filled.ChevronLeft, "article précédent",
+                Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
         }
     }
     viewerUrl?.let { ImageViewer(it) { viewerUrl = null } }

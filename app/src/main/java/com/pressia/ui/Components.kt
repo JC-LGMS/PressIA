@@ -12,7 +12,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -50,6 +52,7 @@ import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.cleanTitle
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
 
 /**
  * Clic court uniquement : l'appui long est consommé sans rien déclencher.
@@ -474,6 +477,26 @@ fun prettyFeedTitle(title: String?): String {
     } catch (_: Exception) { t }
 }
 
+/** Deux petits boutons en surimpression, en bas au centre : haut / bas de liste. */
+@Composable
+fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth().padding(bottom = 16.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(shadowElevation = 4.dp, shape = CircleShape) {
+            Row {
+                IconButton(onTop, Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.KeyboardArrowUp, "remonter en haut")
+                }
+                IconButton(onBottom, Modifier.size(40.dp)) {
+                    Icon(Icons.Filled.KeyboardArrowDown, "descendre en bas")
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ArticleList(
@@ -494,24 +517,59 @@ fun ArticleList(
             showSource = showSource)
     }
     if (mode == "magazine") {
-        LazyVerticalGrid(GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp)) {
-            items(articles, key = { it.id }) { a -> row(a) }
+        val gridState = rememberLazyGridState()
+        val scope = rememberCoroutineScope()
+        Box(Modifier.fillMaxSize()) {
+            LazyVerticalGrid(
+                GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp),
+                state = gridState
+            ) {
+                items(articles, key = { it.id }) { a -> row(a) }
+            }
+            if (articles.size > 3) {
+                ScrollJumpOverlay(
+                    onTop = { scope.launch { gridState.animateScrollToItem(0) } },
+                    onBottom = {
+                        scope.launch {
+                            val last = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            gridState.animateScrollToItem(last)
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
         val grouped = remember(articles, now) { groupByDay(articles, now) }
-        LazyColumn {
-            grouped.forEachIndexed { i, si ->
-                when (si) {
-                    is StreamItem.Day -> {
-                        // Respiration entre le dernier article et le jour suivant. L'écart est un
-                        // élément de la liste et non un padding de l'en-tête : celui-ci est collant,
-                        // un padding haut laisserait un trou au-dessus de lui quand il se colle.
-                        if (i > 0) item(key = "gap-${si.key}") { Spacer(Modifier.height(8.dp)) }
-                        stickyHeader(key = "day-${si.key}") { DayHeader(si.label) }
+        val listState = rememberLazyListState()
+        val scope = rememberCoroutineScope()
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(state = listState) {
+                grouped.forEachIndexed { i, si ->
+                    when (si) {
+                        is StreamItem.Day -> {
+                            // Respiration entre le dernier article et le jour suivant. L'écart est un
+                            // élément de la liste et non un padding de l'en-tête : celui-ci est collant,
+                            // un padding haut laisserait un trou au-dessus de lui quand il se colle.
+                            if (i > 0) item(key = "gap-${si.key}") { Spacer(Modifier.height(8.dp)) }
+                            stickyHeader(key = "day-${si.key}") { DayHeader(si.label) }
+                        }
+                        is StreamItem.Art -> item(key = "art-${si.article.id}") { row(si.article) }
                     }
-                    is StreamItem.Art -> item(key = "art-${si.article.id}") { row(si.article) }
                 }
+            }
+            if (articles.size > 3) {
+                ScrollJumpOverlay(
+                    onTop = { scope.launch { listState.animateScrollToItem(0) } },
+                    onBottom = {
+                        scope.launch {
+                            val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            listState.animateScrollToItem(last)
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
     }

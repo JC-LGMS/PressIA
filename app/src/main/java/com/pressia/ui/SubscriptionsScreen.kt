@@ -1,10 +1,13 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -12,13 +15,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pressia.data.PressRepository
 import com.pressia.data.local.SubscriptionEntity
+import com.pressia.R
+import kotlinx.coroutines.launch
 
 /**
  * Accueil façon Press : l'arborescence des dossiers et des abonnements.
@@ -56,7 +63,16 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(if (totalUnread > 0) "Accueil ($totalUnread)" else "Accueil") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painterResource(R.drawable.ic_launcher), "logo PressIA",
+                            Modifier.size(28.dp).clip(CircleShape)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (totalUnread > 0) "Accueil ($totalUnread)" else "Accueil")
+                    }
+                },
                 navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
                 actions = {
                     IconButton({ vm.toggleHideEmptySubs() }) {
@@ -78,7 +94,10 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     ) { pad ->
         val uncategorized = vm.subs.filter { it.categoryId == null }
         val visibleUncategorized = if (hiddenEmpty) uncategorized.filter { (vm.unreads[it.id] ?: 0) > 0 } else uncategorized
-        LazyColumn(Modifier.padding(pad).fillMaxSize()) {
+        val listState = rememberLazyListState()
+        val jumpScope = rememberCoroutineScope()
+        Box(Modifier.padding(pad).fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             if (vm.subs.isEmpty() && !vm.syncing) {
                 item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -157,6 +176,19 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                     )
                 }
             }
+        }
+        if (vm.subs.size + vm.folders.size > 3) {
+            ScrollJumpOverlay(
+                onTop = { jumpScope.launch { listState.animateScrollToItem(0) } },
+                onBottom = {
+                    jumpScope.launch {
+                        val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                        listState.animateScrollToItem(last)
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
         }
     }
 
