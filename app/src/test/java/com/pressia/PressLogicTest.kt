@@ -117,8 +117,8 @@ class PressLogicTest {
         assertEquals("#FAFAFA", c.toHex())
         assertNull(com.pressia.ui.theme.parseHexColor("pas une couleur"))
         assertNull(com.pressia.ui.theme.parseHexColor("#12345"))
-        // Le fond par défaut du thème jour est #FAFAFA.
-        assertEquals("#FAFAFA", com.pressia.ui.theme.BACKGROUNDS.first { it.id == "default" }.light?.toHex())
+        // Le fond par défaut du thème jour est #D0D0CE.
+        assertEquals("#D0D0CE", com.pressia.ui.theme.BACKGROUNDS.first { it.id == "default" }.light?.toHex())
     }
     @Test fun `nom de flux lisible`() {
         assertEquals("lemonde.fr", com.pressia.ui.prettyFeedTitle("https://www.lemonde.fr/rss/une.xml"))

@@ -72,11 +72,10 @@ data class BgChoice(val id: String, val label: String, val light: Color?, val da
  * Fonds proposés. Chaque choix a une variante claire et une variante sombre : sans cela, un fond
  * clair (gris, sépia, blanc) écrasait le thème Sombre / AMOLED qui restait alors clair.
  *
- * « Défaut » vaut #FAFAFA le jour (les Scaffold affichent `surface`, blanc sans cela) et
- * #121212 la nuit, comme le schéma de base.
+ * « Défaut » vaut #D0D0CE le jour et #121212 la nuit.
  */
 val BACKGROUNDS = listOf(
-    BgChoice("default", "Défaut", Color(0xFFFAFAFA), Color(0xFF121212)),
+    BgChoice("default", "Défaut", Color(0xFFD0D0CE), Color(0xFF121212)),
     BgChoice("white", "Blanc", Color(0xFFFFFFFF), Color(0xFF1C1C1E)),
     BgChoice("black", "Noir", Color(0xFF000000), Color(0xFF000000)),
     BgChoice("sepia", "Sépia", Color(0xFFF3E9D2), Color(0xFF2B2317)),
