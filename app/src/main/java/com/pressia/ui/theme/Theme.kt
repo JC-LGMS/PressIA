@@ -28,7 +28,9 @@ fun parseHexColor(hex: String): Color? {
         if (h.length != 6 && h.length != 8) return null
         h.toLong(16) // valide les caractères
         val v = if (h.length == 6) "FF$h" else h
-        Color(v.toULong(16))
+        // Constructeur Long (0xAARRGGBB sRGB), pas ULong : ce dernier attend une valeur déjà
+        // packée et fabriquait une couleur corrompue qui plantait au premier luminance().
+        Color(v.toLong(16))
     } catch (_: Exception) { null }
 }
 
@@ -69,9 +71,12 @@ data class BgChoice(val id: String, val label: String, val light: Color?, val da
 /**
  * Fonds proposés. Chaque choix a une variante claire et une variante sombre : sans cela, un fond
  * clair (gris, sépia, blanc) écrasait le thème Sombre / AMOLED qui restait alors clair.
+ *
+ * « Défaut » vaut #FAFAFA le jour (les Scaffold affichent `surface`, blanc sans cela) et
+ * #121212 la nuit, comme le schéma de base.
  */
 val BACKGROUNDS = listOf(
-    BgChoice("default", "Défaut", null, null),
+    BgChoice("default", "Défaut", Color(0xFFFAFAFA), Color(0xFF121212)),
     BgChoice("white", "Blanc", Color(0xFFFFFFFF), Color(0xFF1C1C1E)),
     BgChoice("black", "Noir", Color(0xFF000000), Color(0xFF000000)),
     BgChoice("sepia", "Sépia", Color(0xFFF3E9D2), Color(0xFF2B2317)),

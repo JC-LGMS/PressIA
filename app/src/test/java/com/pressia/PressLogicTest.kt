@@ -6,6 +6,8 @@ import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
 import com.pressia.data.readability.Readability
+import com.pressia.ui.theme.toHex
+import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -104,6 +106,19 @@ class PressLogicTest {
         assertEquals(43, c.length)
         assertEquals(c, OAuth.pkceChallenge(v1))
         assertNotEquals(c, OAuth.pkceChallenge(v2))
+    }
+    @Test fun `couleur hex parsee utilisable`() {
+        val c = com.pressia.ui.theme.parseHexColor("#FAFAFA")
+        assertNotNull(c)
+        // La couleur parsée doit supporter luminance() : avec le constructeur ULong elle était
+        // corrompue et plantait (ArrayIndexOutOfBounds) au premier usage dans le thème.
+        assertTrue(c!!.red > 0.97f && c.green > 0.97f && c.blue > 0.97f)
+        assertTrue(c.luminance() > 0.9f)
+        assertEquals("#FAFAFA", c.toHex())
+        assertNull(com.pressia.ui.theme.parseHexColor("pas une couleur"))
+        assertNull(com.pressia.ui.theme.parseHexColor("#12345"))
+        // Le fond par défaut du thème jour est #FAFAFA.
+        assertEquals("#FAFAFA", com.pressia.ui.theme.BACKGROUNDS.first { it.id == "default" }.light?.toHex())
     }
     @Test fun `nom de flux lisible`() {
         assertEquals("lemonde.fr", com.pressia.ui.prettyFeedTitle("https://www.lemonde.fr/rss/une.xml"))
@@ -304,6 +319,41 @@ class PressLogicTest {
         assertEquals("Read later", com.pressia.ui.favSetLabel("later"))
         // Une valeur inconnue retombe sur les étoiles plutôt que d'afficher un libellé vide.
         assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("inconnu"))
+    }
+
+    @Test fun `reconciliation lu-non-lu distant`() {
+        val localUnread = setOf("a", "b", "c")
+        val remoteUnread = setOf("b", "d")
+        // `a` lu ailleurs → en lu ; `d` rouvert ailleurs → en non-lu.
+        val r = com.pressia.data.remote.computeReadReconciliation(
+            localUnread, remoteUnread, setOf("d"), emptySet(), true, false
+        )
+        assertEquals(setOf("a", "c"), r.markRead)
+        assertEquals(setOf("d"), r.markUnread)
+        // Énumération plafonnée : on rouvre mais on ne passe rien en lu à l'aveugle.
+        val capped = com.pressia.data.remote.computeReadReconciliation(
+            localUnread, remoteUnread, setOf("d"), emptySet(), false, false
+        )
+        assertTrue(capped.markRead.isEmpty())
+        assertEquals(setOf("d"), capped.markUnread)
+        // Actions locales non poussées : jamais écrasées (ni lu distant, ni rouverture).
+        val pend = com.pressia.data.remote.computeReadReconciliation(
+            localUnread, remoteUnread, setOf("b"), setOf("b", "c"), true, false
+        )
+        assertEquals(setOf("a"), pend.markRead)
+        assertTrue(pend.markUnread.isEmpty())
+        // « Tout marquer lu » en attente : aucun passage en lu distant en attendant la pousse.
+        val mall = com.pressia.data.remote.computeReadReconciliation(
+            localUnread, remoteUnread, emptySet(), emptySet(), true, true
+        )
+        assertTrue(mall.markRead.isEmpty())
+    }
+
+    @Test fun `publishedMs comprend secondes et millisecondes`() {
+        assertEquals(1_760_000_000_000L, com.pressia.data.remote.publishedMs(1_760_000_000_000L))
+        assertEquals(1_760_000_000_000L, com.pressia.data.remote.publishedMs(1_760_000_000L))
+        assertEquals(0L, com.pressia.data.remote.publishedMs(0L))
+        assertEquals(30L * 24 * 3600 * 1000, com.pressia.data.remote.RECONCILE_WINDOW_MS)
     }
 
     @Test fun `nom de miniature stable par url`() {
