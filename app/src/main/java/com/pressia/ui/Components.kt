@@ -9,7 +9,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -497,6 +499,55 @@ fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifie
     }
 }
 
+/**
+ * Fin curseur de position verticale, au bord droit : le haut du curseur dit où l'on est
+ * dans la liste, sa hauteur dit quelle part est visible. Masqué quand tout tient à l'écran.
+ */
+@Composable
+private fun PositionTrack(topFrac: Float, thumbFrac: Float, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.width(4.dp).padding(vertical = 8.dp)) {
+        val trackH = maxHeight
+        Box(
+            Modifier.fillMaxSize()
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+        )
+        Box(
+            Modifier.fillMaxWidth()
+                .offset(y = trackH * topFrac)
+                .fillMaxHeight(thumbFrac)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary)
+        )
+    }
+}
+
+/** Curseur de position pour une [LazyColumn] : suit l'index et le décalage du 1er visible. */
+@Composable
+fun LazyListPositionIndicator(state: LazyListState, modifier: Modifier = Modifier) {
+    val total = state.layoutInfo.totalItemsCount
+    val visible = state.layoutInfo.visibleItemsInfo.size
+    if (total <= visible || total <= 0 || visible <= 0) return
+    val firstSize = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.coerceAtLeast(1) ?: 1
+    val frac = (state.firstVisibleItemScrollOffset.toFloat() / firstSize).coerceIn(0f, 1f)
+    val thumb = (visible.toFloat() / total).coerceIn(0.06f, 1f)
+    val top = ((state.firstVisibleItemIndex + frac) / total).coerceIn(0f, 1f - thumb)
+    PositionTrack(top, thumb, modifier)
+}
+
+/** Curseur de position pour une grille magazine. */
+@Composable
+fun LazyGridPositionIndicator(state: LazyGridState, modifier: Modifier = Modifier) {
+    val total = state.layoutInfo.totalItemsCount
+    val visible = state.layoutInfo.visibleItemsInfo.size
+    if (total <= visible || total <= 0 || visible <= 0) return
+    val firstH = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.height?.coerceAtLeast(1) ?: 1
+    val frac = (state.firstVisibleItemScrollOffset.toFloat() / firstH).coerceIn(0f, 1f)
+    val thumb = (visible.toFloat() / total).coerceIn(0.06f, 1f)
+    val top = ((state.firstVisibleItemIndex + frac) / total).coerceIn(0f, 1f - thumb)
+    PositionTrack(top, thumb, modifier)
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ArticleList(
@@ -538,6 +589,10 @@ fun ArticleList(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
+            LazyGridPositionIndicator(
+                gridState,
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
+            )
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -571,6 +626,10 @@ fun ArticleList(
                     modifier = Modifier.align(Alignment.BottomCenter)
                 )
             }
+            LazyListPositionIndicator(
+                listState,
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
+            )
         }
     }
 }

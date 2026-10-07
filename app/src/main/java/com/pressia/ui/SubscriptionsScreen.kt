@@ -189,6 +189,10 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
+        LazyListPositionIndicator(
+            listState,
+            Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
+        )
         }
     }
 
