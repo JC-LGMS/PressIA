@@ -440,6 +440,7 @@ fun SettingsScreen(vm: PressVM) {
     var viewMode by remember { mutableStateOf("list") }
     var trailing by remember { mutableStateOf("read") }
     var swipe by remember { mutableStateOf("star") }
+    var swipeRight by remember { mutableStateOf("read") }
     var fontSize by remember { mutableStateOf(16) }
     var articleTitle by remember { mutableStateOf(20) }
     var titleFont by remember { mutableStateOf(16) }
@@ -478,6 +479,7 @@ fun SettingsScreen(vm: PressVM) {
         night = get(Prefs.NIGHT_THEME, "dark"); accent = get(Prefs.ACCENT, "red"); bg = get(Prefs.BG, "default"); home = get(Prefs.HOME_SCREEN, "subs")
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
         swipe = get(Prefs.SWIPE_ACTION, "star")
+        swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
         fontSize = get(Prefs.FONT_SIZE, 16); articleTitle = get(Prefs.ARTICLE_TITLE_SIZE, 20)
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
@@ -541,6 +543,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
         vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
+        vm.repo.prefs.set(Prefs.SWIPE_RIGHT_ACTION, swipeRight)
         vm.repo.prefs.set(Prefs.FONT_SIZE, fontSize); vm.repo.prefs.set(Prefs.ARTICLE_TITLE_SIZE, articleTitle)
         vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
         vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
@@ -685,7 +688,7 @@ fun SettingsScreen(vm: PressVM) {
             onSelect = { trailing = it; save() }
         )
         Text(
-            "Les favoris se gèrent aussi en glissant l'article vers la gauche, selon le réglage suivant.",
+            "Les favoris se gèrent aussi en glissant l'article vers la gauche ou vers la droite, selon les deux réglages suivants.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -695,6 +698,13 @@ fun SettingsScreen(vm: PressVM) {
             selected = swipe,
             label = "Action du glissement",
             onSelect = { swipe = it; save() }
+        )
+        Text("Glissement d'un article vers la droite")
+        ActionDropDown(
+            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+            selected = swipeRight,
+            label = "Action du glissement",
+            onSelect = { swipeRight = it; save() }
         )
         val tapFav by vm.tapFaviconRead.collectAsState()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

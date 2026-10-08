@@ -82,7 +82,8 @@ fun ArticleRow(
     onToggleStar: () -> Unit,
     showSource: Boolean = true,
     onInstapaper: () -> Unit = {},
-    swipe: String = "star"
+    swipe: String = "star",
+    swipeRight: String = "read"
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -154,8 +155,9 @@ fun ArticleRow(
     // bloc titre, puisque la ligne compacte est plus haute que le titre.
     var metaH by remember(a.id) { mutableStateOf(0.dp) }
     val content: @Composable (Boolean, Boolean) -> Unit = { swiping, flipped ->
-        // L'étoile de la méta ne s'efface pendant le geste que si le geste pilote les favoris.
-        val metaStar = a.starred && (swipe != "star" || !swiping || !flipped)
+        // L'étoile de la méta ne s'efface pendant le geste que si le geste pilote les favoris,
+        // dans un sens ou dans l'autre.
+        val metaStar = a.starred && ((swipe != "star" && swipeRight != "star") || !swiping || !flipped)
     when (mode) {
         "compact" -> Column(
             Modifier.fillMaxWidth().longPressInert(onOpen)
@@ -241,16 +243,17 @@ fun ArticleRow(
         )
     }
     }
-    SwipeAction(a, swipe, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, content)
+    SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, content)
 }
 
 /**
- * Balayage d'un article vers la gauche : déclenche l'action choisie en Réglages (favori,
- * lu/non-lu, partage, Instapaper) — ou rien si « Aucun ».
+ * Balayage d'un article vers la gauche ou vers la droite : déclenche l'action choisie en
+ * Réglages pour chaque sens (favori, lu/non-lu, partage, Instapaper) — ou rien si « Aucun ».
  *
- * Le bouton de fin disparaît dès le début du glissement et laisse place à l'icône de l'action
- * qui reflète l'état actuel ; dès que le seuil est franchi l'action bascule (une seule fois
- * par geste), et le bouton revient au relâchement. L'état du geste est stable (clé sur l'id
+ * Même fonctionnement des deux côtés : le bouton de fin disparaît dès le début du
+ * glissement et laisse place à l'icône de l'action du sens en cours, qui reflète l'état
+ * actuel ; dès que le seuil est franchi l'action bascule (une seule fois par geste et par
+ * sens), et le bouton revient au relâchement. L'état du geste est stable (clé sur l'id
  * seul) pour que deux balayages d'affilée fonctionnent.
  *
  * [iconAtStart] place l'icône du côté du rond lu/non-lu, qui n'est pas toujours le même selon
@@ -262,6 +265,7 @@ fun ArticleRow(
 private fun SwipeAction(
     a: ArticleEntity,
     action: String,
+    actionRight: String,
     onToggleStar: () -> Unit,
     onToggleRead: () -> Unit,
     onShare: () -> Unit,
@@ -271,45 +275,59 @@ private fun SwipeAction(
     iconBottom: Dp,
     content: @Composable (Boolean, Boolean) -> Unit
 ) {
-    if (action == "none") {
+    if (action == "none" && actionRight == "none") {
         content(false, false)
         return
     }
     val primary = MaterialTheme.colorScheme.primary
-    val fire: () -> Unit = when (action) {
+    fun fireOf(act: String): () -> Unit = when (act) {
         "read" -> onToggleRead
         "share" -> onShare
         "instapaper" -> onInstapaper
         else -> onToggleStar
     }
-    val toggle by rememberUpdatedState(fire)
-    var dx by remember(a.id, action) { mutableFloatStateOf(0f) }
-    var swiping by remember(a.id, action) { mutableStateOf(false) }
-    var fired by remember(a.id, action) { mutableStateOf(false) }
+    val toggleLeft by rememberUpdatedState(fireOf(action))
+    val toggleRight by rememberUpdatedState(fireOf(actionRight))
+    var dx by remember(a.id, action, actionRight) { mutableFloatStateOf(0f) }
+    var swiping by remember(a.id, action, actionRight) { mutableStateOf(false) }
+    // Sens du geste qui a basculé : -1 gauche, +1 droite, 0 aucun (remis si on revient en arrière).
+    var fired by remember(a.id, action, actionRight) { mutableIntStateOf(0) }
+    val lo = if (action == "none") 0f else -160f
+    val hi = if (actionRight == "none") 0f else 160f
     Box(
-        Modifier.fillMaxWidth().pointerInput(a.id, action) {
+        Modifier.fillMaxWidth().pointerInput(a.id, action, actionRight) {
             detectHorizontalDragGestures(
                 onDragStart = { swiping = true },
                 onHorizontalDrag = { change, amount ->
                     change.consume()
-                    dx = (dx + amount).coerceIn(-160f, 0f)
+                    dx = (dx + amount).coerceIn(lo, hi)
                     // Bascule dès le franchissement du seuil (et non au relâchement), une seule
-                    // fois par geste : le drapeau est remis si l'utilisateur revient en arrière.
-                    if (!fired && dx <= -72f) { fired = true; toggle() }
-                    else if (fired && dx > -72f) fired = false
+                    // fois par geste et par sens : le drapeau est remis si l'utilisateur revient
+                    // en arrière, ce qui autorise l'autre sens dans le même geste.
+                    if (fired == 0) {
+                        if (dx <= -72f) { fired = -1; toggleLeft() }
+                        else if (dx >= 72f) { fired = 1; toggleRight() }
+                    } else if (fired == -1 && dx > -72f) fired = 0
+                    else if (fired == 1 && dx < 72f) fired = 0
                 },
-                onDragEnd = { dx = 0f; swiping = false; fired = false },
-                onDragCancel = { dx = 0f; swiping = false; fired = false }
+                onDragEnd = { dx = 0f; swiping = false; fired = 0 },
+                onDragCancel = { dx = 0f; swiping = false; fired = 0 }
             )
         }
     ) {
-        if (dx < -8f) {
+        if (dx < -8f || dx > 8f) {
+            val goingRight = dx > 0f
+            val act = if (goingRight) actionRight else action
+            // L'icône vit sur la bande découverte par le geste ; vers la gauche on garde le
+            // placement historique (côté du rond, sinon bout de ligne), vers la droite son
+            // miroir : la bande découverte est à gauche dans tous les cas.
+            val atStart = goingRight || iconAtStart
             Row(
                 Modifier.matchParentSize().padding(bottom = iconBottom).background(primary.copy(alpha = 0.18f)),
-                horizontalArrangement = if (iconAtStart) Arrangement.Start else Arrangement.End,
+                horizontalArrangement = if (atStart) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val (icon, desc) = when (action) {
+                val (icon, desc) = when (act) {
                     "read" -> (if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
                         (if (a.unread) "marquer lu" else "marquer non lu")
                     "share" -> Icons.Filled.Share to "partager"
@@ -321,12 +339,17 @@ private fun SwipeAction(
                     icon, desc,
                     tint = primary,
                     modifier = Modifier
-                        .padding(start = if (iconAtStart) 22.dp else 0.dp, end = if (iconAtStart) 0.dp else iconEnd)
+                        .padding(
+                            start = if (atStart) (if (iconAtStart) 22.dp else iconEnd) else 0.dp,
+                            end = if (atStart) 0.dp else iconEnd
+                        )
                         .size(18.dp)
                 )
             }
         }
-        Box(Modifier.fillMaxWidth().graphicsLayer { translationX = dx }) { content(swiping, fired) }
+        // La méta ne perd son étoile que si le geste a basculé les favoris, dans un sens ou l'autre.
+        val starFlipped = (fired == -1 && action == "star") || (fired == 1 && actionRight == "star")
+        Box(Modifier.fillMaxWidth().graphicsLayer { translationX = dx }) { content(swiping, starFlipped) }
     }
 }
 
@@ -651,6 +674,7 @@ fun ArticleList(
 ) {
     val trailing by vm.trailingAction.collectAsState()
     val swipe by vm.swipeAction.collectAsState()
+    val swipeRight by vm.swipeRightAction.collectAsState()
     val tapFaviconRead by vm.tapFaviconRead.collectAsState()
     val titleSp by vm.titleFont.collectAsState()
     val dateSp by vm.dateFont.collectAsState()
@@ -662,7 +686,7 @@ fun ArticleList(
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
             showSource = showSource,
             onInstapaper = { sendScope.launch { vm.sendToInstapaper(a) { toast(ctx, it) } } },
-            swipe = swipe)
+            swipe = swipe, swipeRight = swipeRight)
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()

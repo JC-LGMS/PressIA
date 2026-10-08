@@ -108,6 +108,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val trailingAction: StateFlow<String> = prefs.flow(Prefs.TRAILING_ACTION, "read").stateIn(viewModelScope, SharingStarted.Eagerly, "read")
     /** Glissement d'un article vers la gauche : "star" (défaut) | "read" | "share" | "instapaper" | "none". */
     val swipeAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_ACTION, "star").stateIn(viewModelScope, SharingStarted.Eagerly, "star")
+    /** Glissement d'un article vers la droite : mêmes options, "read" par défaut. */
+    val swipeRightAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_RIGHT_ACTION, "read").stateIn(viewModelScope, SharingStarted.Eagerly, "read")
     /** Identifiant Instapaper connecté, vide si aucun (le mot de passe reste dans les prefs). */
     val instapaperUser: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_USER, "").stateIn(viewModelScope, SharingStarted.Eagerly, "")
     val homeScreen: StateFlow<String> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, "subs")

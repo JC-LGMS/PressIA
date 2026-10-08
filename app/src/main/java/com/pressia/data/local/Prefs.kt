@@ -46,6 +46,8 @@ class Prefs(private val ctx: Context) {
         val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "star"|"read"|"share"|"instapaper"|"none"
         /** Glissement d'un article vers la gauche : "star"|"read"|"share"|"instapaper"|"none". */
         val SWIPE_ACTION = stringPreferencesKey("swipe_action")
+        /** Glissement d'un article vers la droite : mêmes options, défaut "read". */
+        val SWIPE_RIGHT_ACTION = stringPreferencesKey("swipe_right_action")
         val HOME_SCREEN = stringPreferencesKey("home_screen") // "stream"|"subs"
         val JUSTIFY = booleanPreferencesKey("justify")
         /** Ouverture d'un article : "internal" (vue dans PressIA) | "external" (navigateur). */
@@ -120,6 +122,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.IntPref("font_size", FONT_SIZE), PrefEntry.IntPref("title_font_size", TITLE_FONT_SIZE),
             PrefEntry.IntPref("article_title_size", ARTICLE_TITLE_SIZE), PrefEntry.IntPref("date_font_size", DATE_FONT_SIZE),
             PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("swipe_action", SWIPE_ACTION),
+            PrefEntry.Str("swipe_right_action", SWIPE_RIGHT_ACTION),
             PrefEntry.Str("home_screen", HOME_SCREEN),
             PrefEntry.Bool("justify", JUSTIFY), PrefEntry.Bool("wifi_only", WIFI_ONLY),
             PrefEntry.Str("open_mode", OPEN_MODE), PrefEntry.Bool("merge_folders", MERGE_FOLDERS),
