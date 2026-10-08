@@ -25,10 +25,10 @@ import kotlinx.coroutines.launch
 /**
  * Écran Comptes.
  *
- * Organisation retenue : **les comptes de lecture d'abord** (Feedly, flux RSS locaux, liste
- * des comptes connectés), **puis les comptes tiers** (Inoreader, Instapaper) sous leur propre
- * section. C'est l'ordre qui répond à la question posée le plus souvent — « j'ai bien
- * connecté ce compte ? » — sans avoir à faire défiler l'écran.
+ * Organisation retenue : trois sections — **agrégateur de flux RSS** (Feedly, Inoreader,
+ * liste des comptes connectés), **flux RSS locaux**, puis **services tiers** (Instapaper).
+ * C'est l'ordre qui répond à la question posée le plus souvent — « j'ai bien connecté ce
+ * compte ? » — sans avoir à faire défiler l'écran.
  *
  * Plusieurs comptes peuvent être enregistrés, y compris plusieurs comptes du même service : chacun
  * garde ses dossiers et ses abonnements. Un seul est « actif » : c'est lui qui sert de référence
@@ -71,7 +71,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
         Modifier.padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Se connecter…", style = MaterialTheme.typography.titleMedium)
+        Text("Agrégateur de flux RSS", style = MaterialTheme.typography.titleMedium)
 
         // ---- Feedly ------------------------------------------------------------------------
         OutlinedButton(
@@ -93,7 +93,81 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // (Inoreader et Instapaper : voir « Comptes tiers », plus bas)
+        // ---- Inoreader ---------------------------------------------------------------------
+        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
+            OutlinedButton(
+                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
+                Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
+            }
+            if (service == "inoreader") {
+                OutlinedTextField(
+                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                OutlinedTextField(
+                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                Button({
+                    scope.launch {
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
+                        onOAuth("inoreader")
+                    }
+                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
+                Text(
+                    "La page Inoreader s'ouvre ensuite dans l'application.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // ---- comptes connectés : regroupés avec l'agrégateur ---------------------------------
+        if (accounts.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Vos comptes", style = MaterialTheme.typography.titleMedium)
+            accounts.forEach { acc ->
+                AccountRow(
+                    account = acc,
+                    feeds = vm.subs.count { it.provider == acc.id },
+                    active = acc.id == active,
+                    onSelect = { vm.useAccount(acc); toast(ctx, "Compte ${acc.label} actif") },
+                    onRemove = { removing = acc }
+                )
+            }
+            Text(
+                "Le compte actif est celui qui est synchronisé en premier. Les autres restent " +
+                    "connectés et conservent leurs propres dossiers et abonnements.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Feed RSS local seul : aucun compte connecté.
+        if (accounts.isEmpty()) {
+            HorizontalDivider()
+            vm.account?.let { info ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.RssFeed, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (isLocalProvider(info.provider)) "Flux RSS locaux uniquement" else info.label,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "${info.feeds} flux", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
 
         // ---- flux RSS saisis à la main ------------------------------------------------------
         HorizontalDivider()
@@ -145,89 +219,17 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             }
         }
 
-        // ---- comptes connectés ----------------------------------------------------------------
-        if (accounts.isNotEmpty()) {
-            HorizontalDivider()
-            Text("Vos comptes", style = MaterialTheme.typography.titleMedium)
-            accounts.forEach { acc ->
-                AccountRow(
-                    account = acc,
-                    feeds = vm.subs.count { it.provider == acc.id },
-                    active = acc.id == active,
-                    onSelect = { vm.useAccount(acc); toast(ctx, "Compte ${acc.label} actif") },
-                    onRemove = { removing = acc }
-                )
-            }
-            Text(
-                "Le compte actif est celui qui est synchronisé en premier. Les autres restent " +
-                    "connectés et conservent leurs propres dossiers et abonnements.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        // (comptes connectés : voir « Agrégateur de flux RSS », plus haut)
 
-        // Feed RSS local seul : aucun compte connecté.
-        if (accounts.isEmpty()) {
-            HorizontalDivider()
-            vm.account?.let { info ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.RssFeed, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            if (isLocalProvider(info.provider)) "Flux RSS locaux uniquement" else info.label,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            "${info.feeds} flux", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---- comptes tiers ------------------------------------------------------------------
+        // ---- services tiers -------------------------------------------------------------------
         HorizontalDivider()
-        Text("Comptes tiers", style = MaterialTheme.typography.titleMedium)
+        Text("Services tiers", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Services annexes : synchronisation Inoreader, envoi vers Instapaper.",
+            "Services annexes : envoi vers Instapaper.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        // ---- Inoreader ---------------------------------------------------------------------
-        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
-            OutlinedButton(
-                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
-                Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
-            }
-            if (service == "inoreader") {
-                OutlinedTextField(
-                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                Button({
-                    scope.launch {
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
-                        onOAuth("inoreader")
-                    }
-                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
-                Text(
-                    "La page Inoreader s'ouvre ensuite dans l'application.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+        // (Inoreader : voir « Agrégateur de flux RSS », plus haut)
 
         // ---- Instapaper --------------------------------------------------------------------
         Text("Instapaper", style = MaterialTheme.typography.titleSmall)
