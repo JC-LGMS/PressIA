@@ -106,6 +106,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val articleTitle: StateFlow<Int> = prefs.flow(Prefs.ARTICLE_TITLE_SIZE, 20).stateIn(viewModelScope, SharingStarted.Eagerly, 20)
     val dateFont: StateFlow<Int> = prefs.flow(Prefs.DATE_FONT_SIZE, 12).stateIn(viewModelScope, SharingStarted.Eagerly, 12)
     val trailingAction: StateFlow<String> = prefs.flow(Prefs.TRAILING_ACTION, "read").stateIn(viewModelScope, SharingStarted.Eagerly, "read")
+    /** Identifiant Instapaper connecté, vide si aucun (le mot de passe reste dans les prefs). */
+    val instapaperUser: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_USER, "").stateIn(viewModelScope, SharingStarted.Eagerly, "")
     val homeScreen: StateFlow<String> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, "subs")
     val justify: StateFlow<Boolean> = prefs.flow(Prefs.JUSTIFY, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val unreadOnly: StateFlow<Boolean> = prefs.flow(Prefs.SHOW_UNREAD_ONLY, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -436,6 +438,63 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     // ----- Comptes -----
+    /**
+     * Connecte le compte Instapaper : les identifiants sont validés par `/api/authenticate`
+     * avant d'être conservés (l'identifiant part en sauvegarde, jamais le mot de passe).
+     */
+    fun connectInstapaper(user: String, pass: String, done: (String) -> Unit) = viewModelScope.launch {
+        val u = user.trim()
+        if (u.isBlank() || pass.isEmpty()) {
+            done("Identifiant et mot de passe requis")
+            return@launch
+        }
+        val ok = try {
+            com.pressia.data.remote.Instapaper.authenticate(u, pass)
+        } catch (_: Exception) {
+            false
+        }
+        if (ok) {
+            prefs.set(Prefs.INSTAPAPER_USER, u)
+            prefs.set(Prefs.INSTAPAPER_PASS, pass)
+            done("Compte Instapaper connecté")
+        } else {
+            done("Connexion refusée : vérifiez identifiant et mot de passe")
+        }
+    }
+
+    /** Déconnecte Instapaper : l'identifiant et le mot de passe sont effacés de l'appareil. */
+    fun disconnectInstapaper() = viewModelScope.launch {
+        prefs.set(Prefs.INSTAPAPER_USER, "")
+        prefs.set(Prefs.INSTAPAPER_PASS, "")
+    }
+
+    /**
+     * Envoie un article vers Instapaper (Simple API `/api/add`). Le titre affiché est nettoyé
+     * comme dans les listes ; sans compte connecté, le message renvoie vers l'écran Comptes.
+     */
+    fun sendToInstapaper(article: ArticleEntity, done: (String) -> Unit) = viewModelScope.launch {
+        val user = prefs.flow(Prefs.INSTAPAPER_USER, "").first()
+        val pass = prefs.flow(Prefs.INSTAPAPER_PASS, "").first()
+        if (user.isBlank() || pass.isEmpty()) {
+            done("Instapaper non connecté : ajoutez le compte depuis Comptes")
+            return@launch
+        }
+        val url = article.url
+        if (url.isBlank()) {
+            done("Cet article n'a pas de lien à envoyer")
+            return@launch
+        }
+        val title = com.pressia.data.remote.cleanTitle(article.title).ifBlank { "(sans titre)" }
+        done(
+            when (com.pressia.data.remote.Instapaper.add(user, pass, url, title)) {
+                com.pressia.data.remote.Instapaper.AddResult.Ok -> "Envoyé vers Instapaper"
+                com.pressia.data.remote.Instapaper.AddResult.BadRequest -> "Envoi refusé par Instapaper"
+                com.pressia.data.remote.Instapaper.AddResult.InvalidCredentials -> "Instapaper : identifiants invalides"
+                com.pressia.data.remote.Instapaper.AddResult.ServerError -> "Instapaper indisponible, réessayez"
+                com.pressia.data.remote.Instapaper.AddResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
+            }
+        )
+    }
     /**
      * Connecte un compte et le rend actif.
      *

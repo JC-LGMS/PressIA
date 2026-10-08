@@ -628,7 +628,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         Text("Bouton de raccourci à droite de chaque article")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("read" to "Lu/non-lu", "share" to "Partager", "none" to "Aucun").forEach { (id, l) ->
+            listOf("read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun").forEach { (id, l) ->
                 FilterChip(trailing == id, { trailing = id; save() }, { Text(l) })
             }
         }

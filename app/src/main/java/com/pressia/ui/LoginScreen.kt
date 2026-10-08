@@ -43,6 +43,10 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     var inoreaderKey by remember { mutableStateOf(BuildConfig.INOREADER_APP_KEY) }
     var rssUrl by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
+    var instaUser by remember { mutableStateOf("") }
+    var instaPass by remember { mutableStateOf("") }
+    var instaBusy by remember { mutableStateOf(false) }
+    val instaConnected by vm.instapaperUser.collectAsState()
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
 
@@ -120,6 +124,63 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        // ---- Instapaper --------------------------------------------------------------------
+        HorizontalDivider()
+        Text("Instapaper", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Pour envoyer un article vers Instapaper depuis le bouton de raccourci à droite " +
+                "de chaque article (Réglages). Le mot de passe ne sert qu'à valider le compte " +
+                "puis chaque envoi : il reste sur l'appareil et n'est jamais exporté.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (instaConnected.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Bookmark, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Instapaper · $instaConnected", modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                TextButton({
+                    vm.disconnectInstapaper()
+                    instaUser = ""; instaPass = ""
+                    toast(ctx, "Instapaper déconnecté")
+                }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
+            }
+        } else {
+            OutlinedTextField(
+                instaUser, { instaUser = it }, label = { Text("Identifiant Instapaper") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+                    autoCorrect = false
+                )
+            )
+            OutlinedTextField(
+                instaPass, { instaPass = it }, label = { Text("Mot de passe") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                    autoCorrect = false
+                )
+            )
+            Button(
+                {
+                    instaBusy = true
+                    vm.connectInstapaper(instaUser, instaPass) {
+                        msg = it
+                        toast(ctx, it)
+                        if (it == "Compte Instapaper connecté") instaPass = ""
+                        instaBusy = false
+                    }
+                },
+                Modifier.fillMaxWidth(),
+                enabled = instaUser.isNotBlank() && instaPass.isNotEmpty() && !instaBusy
+            ) { Text(if (instaBusy) "Vérification…" else "Connecter Instapaper") }
         }
 
         // ---- flux RSS saisis à la main ------------------------------------------------------

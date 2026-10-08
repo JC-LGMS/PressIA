@@ -43,7 +43,7 @@ class Prefs(private val ctx: Context) {
         val TITLE_FONT_SIZE = intPreferencesKey("title_font_size") // titres de liste, sp 12..24
         val ARTICLE_TITLE_SIZE = intPreferencesKey("article_title_size") // titre écran article, sp 12..28
         val DATE_FONT_SIZE = intPreferencesKey("date_font_size") // dates de liste, sp 10..16
-        val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "star"|"read"|"share"
+        val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "read"|"share"|"instapaper"|"none"
         val HOME_SCREEN = stringPreferencesKey("home_screen") // "stream"|"subs"
         val JUSTIFY = booleanPreferencesKey("justify")
         /** Ouverture d'un article : "internal" (vue dans PressIA) | "external" (navigateur). */
@@ -83,6 +83,14 @@ class Prefs(private val ctx: Context) {
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
         val FEEDLY_CLIENT_ID = stringPreferencesKey("feedly_client_id")
         val FEEDLY_CLIENT_SECRET = stringPreferencesKey("feedly_client_secret")
+        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
+        val INSTAPAPER_USER = stringPreferencesKey("instapaper_user")
+        /**
+         * Mot de passe Instapaper, volontairement hors de [ENTRIES] : il ne doit jamais partir
+         * dans une sauvegarde exportée. Même niveau de protection que les jetons stockés en
+         * base (lisible sur l'appareil), mais au moins il ne voyage pas dans un fichier JSON.
+         */
+        val INSTAPAPER_PASS = stringPreferencesKey("instapaper_pass")
 
         /**
          * Identifiants d'articles mis en favori par une restauration de sauvegarde, rejoués à chaque
@@ -116,7 +124,8 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("collapsed_folders", COLLAPSED_FOLDERS), PrefEntry.Str("starred_scope", STARRED_SCOPE),
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
-            PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET)
+            PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
+            PrefEntry.Str("instapaper_user", INSTAPAPER_USER)
         )
     }
 

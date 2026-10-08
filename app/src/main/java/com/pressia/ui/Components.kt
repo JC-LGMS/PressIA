@@ -78,7 +78,8 @@ fun ArticleRow(
     onOpen: () -> Unit,
     onToggleRead: () -> Unit,
     onToggleStar: () -> Unit,
-    showSource: Boolean = true
+    showSource: Boolean = true,
+    onInstapaper: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -124,6 +125,7 @@ fun ArticleRow(
                 }
             }
             "share" -> if (dotAtStart) Unit else IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager") }
+            "instapaper" -> if (dotAtStart) Unit else IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper") }
             else -> Unit
         }
     }
@@ -132,7 +134,7 @@ fun ArticleRow(
      * du bouton (et non en dessous), et l'étoile de swipe doit se superposer exactement à lui —
      * d'où une marge de (moitié de gouttière - 9 dp), les 9 dp étant le rayon de l'icône de 18 dp.
      */
-    val trailW = when (trailing) { "read" -> 30.dp; "share" -> 48.dp; else -> 0.dp }
+    val trailW = when (trailing) { "read" -> 30.dp; "share", "instapaper" -> 48.dp; else -> 0.dp }
     // L'étoile est centrée sur la largeur totale de la ligne, bord droit à l'écran : sa marge doit
     // donc valoir le padding de la ligne + la moitié de gouttière - le rayon de l'icône (9 dp).
     // Sinon elle dérive d'autant vers l'extérieur que le padding.
@@ -562,10 +564,13 @@ fun ArticleList(
     val titleSp by vm.titleFont.collectAsState()
     val dateSp by vm.dateFont.collectAsState()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
+    val ctx = LocalContext.current
+    val sendScope = rememberCoroutineScope()
     val row: @Composable (ArticleEntity) -> Unit = { a ->
         ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
-            showSource = showSource)
+            showSource = showSource,
+            onInstapaper = { sendScope.launch { vm.sendToInstapaper(a) { toast(ctx, it) } } })
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
