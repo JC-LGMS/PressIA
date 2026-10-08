@@ -247,11 +247,12 @@ interface PressDao {
     suspend fun saveFullContent(id: String, html: String)
     /**
      * URLs des miniatures restant à stocker : les plus récentes d'abord (ordre d'affichage),
-     * bornées par passe — le reste attend la synchronisation suivante, idempotente. Sans borne,
-     * un vidage du cache faisait télécharger tout le stock avant de terminer la sync.
+     * sans borne — la première synchronisation télécharge tout le stock, les suivantes ne
+     * récupèrent que les nouveautés. Dédupliquées : une même image partagée par plusieurs
+     * articles ne se télécharge qu'une fois.
      */
-    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0 ORDER BY published DESC LIMIT :limit")
-    suspend fun pendingThumbUrls(limit: Int): List<String>
+    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0 ORDER BY published DESC")
+    suspend fun pendingThumbUrls(): List<String>
     /** Toutes les URLs d'images encore référencées : sert au nettoyage des fichiers orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
