@@ -78,6 +78,12 @@ class MainActivity : ComponentActivity() {
                  */
                 fun openContent(route: String, apply: () -> Unit = {}) {
                     apply()
+                    if (route == "home") {
+                        // Revenir à l'accueil, c'est revenir à « Tous les articles » : sans cela le
+                        // flux courant (et la portée de recherche qui le suit) restait bloqué sur le
+                        // dernier flux visité.
+                        vm.switchScope(Scope(label = "Tous les articles"))
+                    }
                     if (route == "stream") vm.refresh()
                     nav.navigate(route) {
                         popUpTo(nav.graph.findStartDestination().id) { inclusive = false }

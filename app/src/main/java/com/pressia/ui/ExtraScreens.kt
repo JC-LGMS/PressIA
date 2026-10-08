@@ -50,6 +50,10 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     val scope = rememberCoroutineScope()
     // Portée de recherche : par défaut celle du flux affiché, élargissable sans y toucher.
     var searchScope by remember { mutableStateOf(vm.scope) }
+    // La portée suit le flux affiché : en revenant à l'accueil (ou en changeant de flux), une
+    // portée devenue obsolète est réalignée et les résultats périmés sont vidés. Un choix manuel
+    // dans cet écran n'y touche pas : seul switchScope (la navigation) fait bouger vm.scope.
+    LaunchedEffect(vm.scope) { searchScope = vm.scope; results = emptyList() }
 
     Column(Modifier.padding(16.dp)) {
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), label = { Text("Rechercher…") },

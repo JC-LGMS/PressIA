@@ -121,6 +121,9 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     }
                 },
                 actions = {
+                    IconButton({ article?.let { vm.sendToInstapaper(it) { toast(ctx, it) } } }) {
+                        Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
+                    }
                     IconButton({ article?.let {
                         vm.setStar(it.id, !it.starred); article = article?.copy(starred = !it.starred)
                         toast(ctx, if (!it.starred) "Ajouté aux favoris" else "Retiré des favoris")
