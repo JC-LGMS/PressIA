@@ -246,8 +246,10 @@ fun StatsScreen(vm: PressVM) {
     LaunchedEffect(period, year) { vm.loadStats(period, year) }
     val s = vm.stats
     val years = vm.statsYears
+    val scroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
     Column(
-        Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(16.dp).verticalScroll(scroll).fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -366,6 +368,8 @@ fun StatsScreen(vm: PressVM) {
                 }
             }
         }
+        }
+        ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
 }
 
@@ -434,7 +438,7 @@ fun SettingsScreen(vm: PressVM) {
     var bg by remember { mutableStateOf("default") }
     var home by remember { mutableStateOf("subs") }
     var viewMode by remember { mutableStateOf("list") }
-    var trailing by remember { mutableStateOf("star") }
+    var trailing by remember { mutableStateOf("read") }
     var swipe by remember { mutableStateOf("star") }
     var fontSize by remember { mutableStateOf(16) }
     var articleTitle by remember { mutableStateOf(20) }
@@ -550,7 +554,9 @@ fun SettingsScreen(vm: PressVM) {
         vm.refresh()
     }
 
-    Column(Modifier.padding(16.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+    val scroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.padding(16.dp).verticalScroll(scroll).fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Affichage", style = MaterialTheme.typography.titleMedium)
         Text("Thème de nuit (bouton Nuit du menu)")
@@ -673,7 +679,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         Text("Bouton de raccourci à droite de chaque article")
         ActionDropDown(
-            options = listOf("read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
             selected = trailing,
             label = "Bouton de raccourci",
             onSelect = { trailing = it; save() }
@@ -774,6 +780,8 @@ fun SettingsScreen(vm: PressVM) {
             OutlinedButton({ showImportDialog = true }) { Text("Importer…") }
         }
         if (backupMsg.isNotBlank()) Text(backupMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        }
+        ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
     if (showAccentPicker) {
         ColorPickerDialog("Couleur dominante", accent, { showAccentPicker = false }) {

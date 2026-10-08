@@ -3,6 +3,7 @@ package com.pressia.ui
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -127,6 +128,13 @@ fun ArticleRow(
             }
             "share" -> if (dotAtStart) Unit else IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager") }
             "instapaper" -> if (dotAtStart) Unit else IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper") }
+            "star" -> if (dotAtStart) Unit else IconButton(onToggleStar) {
+                Icon(
+                    if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    if (a.starred) "Retirer des favoris" else "Ajouter aux favoris",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
             else -> Unit
         }
     }
@@ -135,7 +143,7 @@ fun ArticleRow(
      * du bouton (et non en dessous), et l'étoile de swipe doit se superposer exactement à lui —
      * d'où une marge de (moitié de gouttière - 9 dp), les 9 dp étant le rayon de l'icône de 18 dp.
      */
-    val trailW = when (trailing) { "read" -> 30.dp; "share", "instapaper" -> 48.dp; else -> 0.dp }
+    val trailW = when (trailing) { "read" -> 30.dp; "share", "instapaper", "star" -> 48.dp; else -> 0.dp }
     // L'étoile est centrée sur la largeur totale de la ligne, bord droit à l'écran : sa marge doit
     // donc valoir le padding de la ligne + la moitié de gouttière - le rayon de l'icône (9 dp).
     // Sinon elle dérive d'autant vers l'extérieur que le padding.
@@ -543,6 +551,34 @@ private fun PositionTrack(topFrac: Float, thumbFrac: Float, modifier: Modifier =
             Modifier.fillMaxWidth()
                 .offset(y = trackH * topFrac)
                 .fillMaxHeight(thumbFrac)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary)
+        )
+    }
+}
+
+/** Curseur de position pour une colonne défilante : masqué quand tout tient à l'écran. */
+@Composable
+fun ColumnPositionIndicator(state: ScrollState, modifier: Modifier = Modifier) {
+    val max = state.maxValue
+    if (max <= 0) return
+    // Un seul BoxWithConstraints, comme les listes : un BoxWithConstraints imbriqué avec un
+    // fillMaxSize prenait tout l'écran au lieu de 4 dp.
+    BoxWithConstraints(modifier.width(4.dp).padding(vertical = 8.dp)) {
+        val viewportPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        val contentPx = viewportPx + max
+        val thumb = (viewportPx / contentPx).coerceIn(0.06f, 1f)
+        val top = (state.value / contentPx).coerceIn(0f, 1f - thumb)
+        val trackH = maxHeight
+        Box(
+            Modifier.fillMaxSize()
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+        )
+        Box(
+            Modifier.fillMaxWidth()
+                .offset(y = trackH * top)
+                .fillMaxHeight(thumb)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary)
         )

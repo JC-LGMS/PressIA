@@ -43,7 +43,7 @@ class Prefs(private val ctx: Context) {
         val TITLE_FONT_SIZE = intPreferencesKey("title_font_size") // titres de liste, sp 12..24
         val ARTICLE_TITLE_SIZE = intPreferencesKey("article_title_size") // titre écran article, sp 12..28
         val DATE_FONT_SIZE = intPreferencesKey("date_font_size") // dates de liste, sp 10..16
-        val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "read"|"share"|"instapaper"|"none"
+        val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "star"|"read"|"share"|"instapaper"|"none"
         /** Glissement d'un article vers la gauche : "star"|"read"|"share"|"instapaper"|"none". */
         val SWIPE_ACTION = stringPreferencesKey("swipe_action")
         val HOME_SCREEN = stringPreferencesKey("home_screen") // "stream"|"subs"

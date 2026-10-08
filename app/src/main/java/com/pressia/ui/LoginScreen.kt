@@ -67,8 +67,10 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     // Les flux locaux sont affichés sous leur propre section : ils ne dépendent d'aucun compte.
     LaunchedEffect(vm.localFeeds) { localFeeds = vm.localFeeds }
 
+    val loginScroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
     Column(
-        Modifier.padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(loginScroll).fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("Agrégateur de flux RSS", style = MaterialTheme.typography.titleMedium)
@@ -291,6 +293,8 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             Text(vm.authMsg!!, color = MaterialTheme.colorScheme.primary)
         }
         if (msg.isNotBlank()) Text(msg, color = MaterialTheme.colorScheme.primary)
+        }
+        ColumnPositionIndicator(loginScroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
 
     removing?.let { acc ->
