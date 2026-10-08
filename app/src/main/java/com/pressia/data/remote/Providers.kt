@@ -3,6 +3,11 @@ package com.pressia.data.remote
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.CategoryEntity
 import com.pressia.data.local.SubscriptionEntity
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Provider Feedly Cloud (OAuth2, endpoints gratuits v3).
@@ -206,9 +211,18 @@ class LocalProvider : FeedProvider {
     override suspend fun subscriptions(token: String?) = feeds
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?): StreamPage {
         val targets = if (feedId != null) feeds.filter { it.id == feedId } else feeds
-        val all = mutableListOf<ArticleEntity>()
-        targets.take(30).forEach { f ->
-            try { all += LocalRssFetcher.fetch(f.url.ifBlank { f.id }, f.id, max) } catch (_: Exception) {}
+        // En parallèle (8 flux à la fois) : en séquentiel, un seul flux lent (timeout 15 s)
+        // retardait tous les autres. Le tri final rend l'ordre d'arrivée indifférent.
+        val permits = Semaphore(8)
+        val all = coroutineScope {
+            targets.take(30).map { f ->
+                async {
+                    permits.withPermit {
+                        runCatching { LocalRssFetcher.fetch(f.url.ifBlank { f.id }, f.id, max) }
+                            .getOrDefault(emptyList())
+                    }
+                }
+            }.awaitAll().flatten()
         }
         return StreamPage(all.sortedByDescending { it.published }.take(max))
     }

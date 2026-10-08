@@ -549,6 +549,7 @@ class PressRepository(
      */
     suspend fun syncDown(feedId: String? = null, categoryId: String? = null): Int = withContext(Dispatchers.IO) {
         val max = maxItems()
+        val t0 = System.currentTimeMillis()
         var added = 0
         // Flux RSS saisis à la main : sans compte, donc toujours synchronisés.
         runCatching {
@@ -557,16 +558,25 @@ class PressRepository(
             added += storeArticles(page.articles)
         }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }
 
-        // Comptes cloud. Sur un flux précis, seul le compte qui le détient est interrogé.
+        // Comptes cloud en parallèle : chacun a son jeton et ses propres dossiers, et les
+        // écritures concurrentes sont sérialisées par Room. Sur un flux précis, seul le
+        // compte qui le détient est interrogé.
         val owner = feedId?.let { dao.subscription(it)?.provider }
-        for (account in cloudAccounts()) {
-            if (owner != null && !sameAccount(owner, account.id)) continue
-            runCatching { added += syncAccount(account, feedId, categoryId, max) }
-                .onFailure { android.util.Log.e("PressIA", "sync ${account.id} failed", it) }
+        added += coroutineScope {
+            cloudAccounts()
+                .filter { owner == null || sameAccount(owner, it.id) }
+                .map { account ->
+                    async {
+                        runCatching { syncAccount(account, feedId, categoryId, max) }
+                            .onFailure { android.util.Log.e("PressIA", "sync ${account.id} failed", it) }
+                            .getOrDefault(0)
+                    }
+                }.awaitAll().sum()
         }
         replayRestoredStarred()
         trimToMax()
         syncThumbs()
+        android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
         added
     }
 
@@ -586,7 +596,7 @@ class PressRepository(
         val urls = dao.pendingThumbUrls()
         if (urls.isEmpty()) return@withContext 0
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
-        val permits = Semaphore(4)
+        val permits = Semaphore(6)
         return@withContext coroutineScope {
             urls.map { url ->
                 async {
@@ -784,17 +794,23 @@ class PressRepository(
      * indépendant des étoiles PressIA : un article peut être dans l'un, l'autre, ou les deux.
      */
     suspend fun syncReadLater(): Int = withContext(Dispatchers.IO) {
-        var added = 0
-        for (account in cloudAccounts()) {
-            runCatching {
-                val items = providerFor(account.provider).readLater(account.token)
-                if (items.isEmpty()) return@runCatching
-                // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
-                // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
-                val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
-                if (feeds.isNotEmpty()) dao.clearLater(feeds)
-                added += storeArticles(items)
-            }.onFailure { android.util.Log.e("PressIA", "read later ${account.id} failed", it) }
+        val accounts = cloudAccounts()
+        if (accounts.isEmpty()) return@withContext 0
+        val added = coroutineScope {
+            accounts.map { account ->
+                async {
+                    runCatching {
+                        val items = providerFor(account.provider).readLater(account.token)
+                        if (items.isEmpty()) return@runCatching 0
+                        // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
+                        // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
+                        val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
+                        if (feeds.isNotEmpty()) dao.clearLater(feeds)
+                        storeArticles(items)
+                    }.onFailure { android.util.Log.e("PressIA", "read later ${account.id} failed", it) }
+                        .getOrDefault(0)
+                }
+            }.awaitAll().sum()
         }
         syncThumbs()
         added
