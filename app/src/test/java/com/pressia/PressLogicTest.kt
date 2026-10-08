@@ -2,6 +2,7 @@ package com.pressia
 
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
+import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
@@ -12,6 +13,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PressLogicTest {
+    @Test fun `readCapped lit en entier sous le plafond`() {
+        val data = ByteArray(1000) { it.toByte() }
+        val out = ThumbStore.readCapped(java.io.ByteArrayInputStream(data), 10 * 1024)
+        assertNotNull(out)
+        assertArrayEquals(data, out)
+    }
+    @Test fun `readCapped refuse au-dela du plafond`() {
+        val data = ByteArray(3000) { it.toByte() }
+        assertNull(ThumbStore.readCapped(java.io.ByteArrayInputStream(data), 1000))
+    }
     @Test fun `dedup hash identique pour même titre`() {
         val h1 = dedupHash("Hello World!", "https://ex.com/a?x=1")
         val h2 = dedupHash("hello  world ", "https://ex.com/a?y=2")

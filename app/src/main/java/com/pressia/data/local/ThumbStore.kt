@@ -29,6 +29,8 @@ object ThumbStore {
     const val DIR = "thumbs"
     private const val BANNER_DP_HEIGHT = 180
     private const val JPEG_QUALITY = 85
+    /** Plafond d'un original : au-delà, on saute (une vignette pèse ~100 Ko). */
+    const val MAX_SOURCE_BYTES = 10 * 1024 * 1024
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -88,7 +90,10 @@ object ThumbStore {
                 val bytes = http.newCall(Request.Builder().url(url).get().build())
                     .execute().use { resp ->
                         if (!resp.isSuccessful) return@withContext false
-                        resp.body?.bytes()?.takeIf { it.isNotEmpty() } ?: return@withContext false
+                        val body = resp.body ?: return@withContext false
+                        // Plafond : charger 10 Mo en RAM pour une vignette de ~100 Ko ne sert à rien.
+                        readCapped(body.byteStream(), MAX_SOURCE_BYTES)?.takeIf { it.isNotEmpty() }
+                            ?: return@withContext false
                     }
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -107,8 +112,9 @@ object ThumbStore {
                 // que de laisser un fond noir aux logos PNG.
                 val opaque = if (scaled.hasAlpha()) {
                     Bitmap.createBitmap(scaled.width, scaled.height, Bitmap.Config.RGB_565).also { out ->
-                        Canvas(out).drawColor(Color.WHITE)
-                        Canvas(out).drawBitmap(scaled, 0f, 0f, null)
+                        val c = Canvas(out)
+                        c.drawColor(Color.WHITE)
+                        c.drawBitmap(scaled, 0f, 0f, null)
                     }.also { scaled.recycle() }
                 } else scaled
                 val d = dir(ctx)
@@ -126,6 +132,22 @@ object ThumbStore {
                 false
             }
         }
+
+    /** Lit au plus [cap] octets, `null` si le corps dépasse. Pur JVM, testé en unitaire. */
+    fun readCapped(stream: java.io.InputStream, cap: Int): ByteArray? {
+        if (cap <= 0) return null
+        val out = java.io.ByteArrayOutputStream(minOf(cap, 256 * 1024))
+        val buf = ByteArray(32 * 1024)
+        var total = 0
+        while (true) {
+            val n = stream.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > cap) return null
+            out.write(buf, 0, n)
+        }
+        return out.toByteArray()
+    }
 
     /** Taille occupée par les miniatures, en octets. */
     suspend fun sizeBytes(ctx: Context): Long = withContext(Dispatchers.IO) {

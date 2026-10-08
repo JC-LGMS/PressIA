@@ -246,18 +246,21 @@ interface PressDao {
     @Query("UPDATE articles SET content = :html, fullFetched = 1 WHERE id = :id")
     suspend fun saveFullContent(id: String, html: String)
     /**
-     * URLs des miniatures restant à stocker : tous les articles synchronisés (lus comme non
-     * lus) dont le fichier local n'a pas encore été enregistré. Dédupliquées : une même image
-     * partagée par plusieurs articles ne se télécharge qu'une fois.
+     * URLs des miniatures restant à stocker : les plus récentes d'abord (ordre d'affichage),
+     * bornées par passe — le reste attend la synchronisation suivante, idempotente. Sans borne,
+     * un vidage du cache faisait télécharger tout le stock avant de terminer la sync.
      */
-    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0")
-    suspend fun pendingThumbUrls(): List<String>
+    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0 ORDER BY published DESC LIMIT :limit")
+    suspend fun pendingThumbUrls(limit: Int): List<String>
     /** Toutes les URLs d'images encore référencées : sert au nettoyage des fichiers orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
     /** Marque tous les articles partageant cette URL : le fichier local est unique par URL. */
     @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl = :url")
     suspend fun markThumbCached(url: String)
+    /** Variante groupée : une requête par paquet plutôt qu'une par URL. */
+    @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl IN (:urls)")
+    suspend fun markThumbsCached(urls: List<String>)
     /** Cache vidé : tout est à récupérer à la prochaine synchronisation. */
     @Query("UPDATE articles SET imageCached = 0")
     suspend fun resetThumbsCached()

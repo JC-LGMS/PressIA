@@ -581,33 +581,32 @@ class PressRepository(
     }
 
     /**
-     * Récupère les miniatures de tous les articles synchronisés (lus comme non lus) dont le
-     * fichier local manque — y compris tout le stock après un vidage du cache, le suivi
-     * [ArticleEntity.imageCached] ayant alors été réinitialisé.
+     * Récupère les miniatures manquantes, les plus récentes d'abord, [limit] par passe — le
+     * reste attend la passe suivante. Y compris tout le stock après un vidage du cache, le
+     * suivi [ArticleEntity.imageCached] ayant alors été réinitialisé.
      *
      * Inactif si « Images hors-ligne » est coupé, ou si « Wi-Fi uniquement » est actif hors
      * Wi-Fi/Ethernet : une passe manuelle sur données mobiles ne doit pas vider le forfait.
      * Idempotent : seules les URLs manquantes sont téléchargées.
      */
-    suspend fun syncThumbs(): Int = withContext(Dispatchers.IO) {
+    suspend fun syncThumbs(limit: Int = 120): Int = withContext(Dispatchers.IO) {
         val data = prefs.data.first()
         if (data[Prefs.IMAGES_OFFLINE] == false) return@withContext 0
         if (isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)) return@withContext 0
-        val urls = dao.pendingThumbUrls()
+        val urls = dao.pendingThumbUrls(limit)
         if (urls.isEmpty()) return@withContext 0
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
-        return@withContext coroutineScope {
+        val done = coroutineScope {
             urls.map { url ->
                 async {
-                    permits.withPermit {
-                        if (!ThumbStore.fetch(ctx, url, maxW, maxH)) return@withPermit false
-                        dao.markThumbCached(url)
-                        true
-                    }
+                    permits.withPermit { ThumbStore.fetch(ctx, url, maxW, maxH) }
                 }
-            }.awaitAll().count { it }
+            }.awaitAll()
         }
+        // Marquage groupé : une requête par paquet plutôt qu'une par URL.
+        urls.filterIndexed { i, _ -> done[i] }.chunked(200).forEach { dao.markThumbsCached(it) }
+        done.count { it }
     }
 
     /**
