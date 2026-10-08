@@ -379,6 +379,47 @@ private fun StatCard(value: String, label: String, mod: Modifier) {
     }
 }
 
+/**
+ * Liste déroulante de choix d'action (raccourci, glissement) : affiche le libellé courant,
+ * ouvre la liste au toucher. Remplace les rangées de pastilles, illisibles dès qu'il y a
+ * plus de quatre choix.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionDropDown(
+    options: List<Pair<String, String>>,
+    selected: String,
+    label: String,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        OutlinedTextField(
+            value = options.firstOrNull { it.first == selected }?.second ?: "",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { (id, l) ->
+                DropdownMenuItem(
+                    text = { Text(l) },
+                    onClick = { expanded = false; onSelect(id) }
+                )
+            }
+        }
+    }
+}
+
 /** Réglages façon Press + sync. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -631,22 +672,24 @@ fun SettingsScreen(vm: PressVM) {
             }
         }
         Text("Bouton de raccourci à droite de chaque article")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun").forEach { (id, l) ->
-                FilterChip(trailing == id, { trailing = id; save() }, { Text(l) })
-            }
-        }
+        ActionDropDown(
+            options = listOf("read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+            selected = trailing,
+            label = "Bouton de raccourci",
+            onSelect = { trailing = it; save() }
+        )
         Text(
             "Les favoris se gèrent aussi en glissant l'article vers la gauche, selon le réglage suivant.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text("Glissement d'un article vers la gauche")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun").forEach { (id, l) ->
-                FilterChip(swipe == id, { swipe = id; save() }, { Text(l) })
-            }
-        }
+        ActionDropDown(
+            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+            selected = swipe,
+            label = "Action du glissement",
+            onSelect = { swipe = it; save() }
+        )
         val tapFav by vm.tapFaviconRead.collectAsState()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
