@@ -393,6 +393,7 @@ fun SettingsScreen(vm: PressVM) {
     var home by remember { mutableStateOf("subs") }
     var viewMode by remember { mutableStateOf("list") }
     var trailing by remember { mutableStateOf("star") }
+    var swipe by remember { mutableStateOf("star") }
     var fontSize by remember { mutableStateOf(16) }
     var articleTitle by remember { mutableStateOf(20) }
     var titleFont by remember { mutableStateOf(16) }
@@ -430,6 +431,7 @@ fun SettingsScreen(vm: PressVM) {
     suspend fun reloadFromPrefs() {
         night = get(Prefs.NIGHT_THEME, "dark"); accent = get(Prefs.ACCENT, "red"); bg = get(Prefs.BG, "default"); home = get(Prefs.HOME_SCREEN, "subs")
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
+        swipe = get(Prefs.SWIPE_ACTION, "star")
         fontSize = get(Prefs.FONT_SIZE, 16); articleTitle = get(Prefs.ARTICLE_TITLE_SIZE, 20)
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
@@ -492,6 +494,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
+        vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
         vm.repo.prefs.set(Prefs.FONT_SIZE, fontSize); vm.repo.prefs.set(Prefs.ARTICLE_TITLE_SIZE, articleTitle)
         vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
         vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
@@ -633,11 +636,16 @@ fun SettingsScreen(vm: PressVM) {
             }
         }
         Text(
-            "Les favoris se gèrent en glissant l'article vers la gauche : étoile vide pour ajouter, " +
-                "étoile pleine pour retirer.",
+            "Les favoris se gèrent aussi en glissant l'article vers la gauche, selon le réglage suivant.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Text("Glissement d'un article vers la gauche")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun").forEach { (id, l) ->
+                FilterChip(swipe == id, { swipe = id; save() }, { Text(l) })
+            }
+        }
         val tapFav by vm.tapFaviconRead.collectAsState()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })

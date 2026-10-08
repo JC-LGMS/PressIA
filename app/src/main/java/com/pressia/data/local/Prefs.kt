@@ -44,6 +44,8 @@ class Prefs(private val ctx: Context) {
         val ARTICLE_TITLE_SIZE = intPreferencesKey("article_title_size") // titre écran article, sp 12..28
         val DATE_FONT_SIZE = intPreferencesKey("date_font_size") // dates de liste, sp 10..16
         val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "read"|"share"|"instapaper"|"none"
+        /** Glissement d'un article vers la gauche : "star"|"read"|"share"|"instapaper"|"none". */
+        val SWIPE_ACTION = stringPreferencesKey("swipe_action")
         val HOME_SCREEN = stringPreferencesKey("home_screen") // "stream"|"subs"
         val JUSTIFY = booleanPreferencesKey("justify")
         /** Ouverture d'un article : "internal" (vue dans PressIA) | "external" (navigateur). */
@@ -112,7 +114,8 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("background", BG), PrefEntry.Str("view_mode", VIEW_MODE),
             PrefEntry.IntPref("font_size", FONT_SIZE), PrefEntry.IntPref("title_font_size", TITLE_FONT_SIZE),
             PrefEntry.IntPref("article_title_size", ARTICLE_TITLE_SIZE), PrefEntry.IntPref("date_font_size", DATE_FONT_SIZE),
-            PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("home_screen", HOME_SCREEN),
+            PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("swipe_action", SWIPE_ACTION),
+            PrefEntry.Str("home_screen", HOME_SCREEN),
             PrefEntry.Bool("justify", JUSTIFY), PrefEntry.Bool("wifi_only", WIFI_ONLY),
             PrefEntry.Str("open_mode", OPEN_MODE), PrefEntry.Bool("merge_folders", MERGE_FOLDERS),
             PrefEntry.IntPref("max_items", MAX_ITEMS), PrefEntry.Bool("images_offline", IMAGES_OFFLINE),

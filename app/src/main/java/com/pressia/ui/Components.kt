@@ -79,7 +79,8 @@ fun ArticleRow(
     onToggleRead: () -> Unit,
     onToggleStar: () -> Unit,
     showSource: Boolean = true,
-    onInstapaper: () -> Unit = {}
+    onInstapaper: () -> Unit = {},
+    swipe: String = "star"
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -144,6 +145,8 @@ fun ArticleRow(
     // bloc titre, puisque la ligne compacte est plus haute que le titre.
     var metaH by remember(a.id) { mutableStateOf(0.dp) }
     val content: @Composable (Boolean, Boolean) -> Unit = { swiping, flipped ->
+        // L'étoile de la méta ne s'efface pendant le geste que si le geste pilote les favoris.
+        val metaStar = a.starred && (swipe != "star" || !swiping || !flipped)
     when (mode) {
         "compact" -> Column(
             Modifier.fillMaxWidth().longPressInert(onOpen)
@@ -166,7 +169,7 @@ fun ArticleRow(
             }
             // La méta est calée sur le titre : retrait du favicon à gauche, bord du bouton à
             // droite. Le onSizeChanged est après le padding, donc la hauteur relevée inclut l'écart.
-            MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped),
+            MetaLine(src, a.published, dateSp, metaStar,
                 modifier = Modifier.padding(start = 36.dp, end = trailW, top = 3.dp)
                     .onSizeChanged { metaH = with(density) { it.height.toDp() } },
                 showSource = showSource)
@@ -184,7 +187,7 @@ fun ArticleRow(
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     trail(swiping); Spacer(Modifier.width(8.dp))
-                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource)
+                    MetaLine(src, a.published, dateSp, metaStar, showSource = showSource)
                 }
             }
         }
@@ -205,7 +208,7 @@ fun ArticleRow(
                 Column(Modifier.weight(1f)) {
                     Text(title, fontSize = titleSp.sp,
                         fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(alpha))
-                    MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource)
+                    MetaLine(src, a.published, dateSp, metaStar, showSource = showSource)
                 }
                 trail(swiping)
             }
@@ -214,7 +217,7 @@ fun ArticleRow(
             modifier = Modifier.longPressInert(onOpen).alpha(alpha).padding(vertical = 2.dp),
             headlineContent = { Text(title, fontSize = titleSp.sp,
                 fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
-            supportingContent = { MetaLine(src, a.published, dateSp, a.starred && (!swiping || !flipped), showSource = showSource) },
+            supportingContent = { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) },
             leadingContent = {
                 if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
                 // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
@@ -229,38 +232,53 @@ fun ArticleRow(
         )
     }
     }
-    SwipeToStar(a, onToggleStar, dotAtStart, starEnd, metaH, content)
+    SwipeAction(a, swipe, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, content)
 }
 
 /**
- * Balayage d'un article vers la gauche : bascule le favori.
+ * Balayage d'un article vers la gauche : déclenche l'action choisie en Réglages (favori,
+ * lu/non-lu, partage, Instapaper) — ou rien si « Aucun ».
  *
- * Le rond lu/non-lu disparaît dès le début du glissement et laisse place à l'étoile qui reflète
- * l'état favori actuel ; dès que le seuil est franchi l'étoile bascule, et le rond revient au
- * relâchement. L'état du geste est stable (clé sur l'id seul) pour que deux balayages
- * d'affilée fonctionnent.
+ * Le bouton de fin disparaît dès le début du glissement et laisse place à l'icône de l'action
+ * qui reflète l'état actuel ; dès que le seuil est franchi l'action bascule (une seule fois
+ * par geste), et le bouton revient au relâchement. L'état du geste est stable (clé sur l'id
+ * seul) pour que deux balayages d'affilée fonctionnent.
  *
- * [starAtStart] place l'étoile du côté du rond lu/non-lu, qui n'est pas toujours le même selon la
- * vue : l'étoile apparaît ainsi exactement là où l'information a disparu. [starEnd] est la marge
- * qui la superpose au bouton lu/non-lu, et [starBottom] la hauteur à retrancher en bas pour la
- * remonter sur le seul bloc titre des vues où la ligne est plus haute que le titre.
+ * [iconAtStart] place l'icône du côté du rond lu/non-lu, qui n'est pas toujours le même selon
+ * la vue : l'icône apparaît ainsi exactement là où l'information a disparu. [iconEnd] est la
+ * marge qui la superpose au bouton de fin, et [iconBottom] la hauteur à retrancher en bas pour
+ * la remonter sur le seul bloc titre des vues où la ligne est plus haute que le titre.
  */
 @Composable
-private fun SwipeToStar(
+private fun SwipeAction(
     a: ArticleEntity,
+    action: String,
     onToggleStar: () -> Unit,
-    starAtStart: Boolean,
-    starEnd: Dp,
-    starBottom: Dp,
+    onToggleRead: () -> Unit,
+    onShare: () -> Unit,
+    onInstapaper: () -> Unit,
+    iconAtStart: Boolean,
+    iconEnd: Dp,
+    iconBottom: Dp,
     content: @Composable (Boolean, Boolean) -> Unit
 ) {
+    if (action == "none") {
+        content(false, false)
+        return
+    }
     val primary = MaterialTheme.colorScheme.primary
-    val toggle by rememberUpdatedState(onToggleStar)
-    var dx by remember(a.id) { mutableFloatStateOf(0f) }
-    var swiping by remember(a.id) { mutableStateOf(false) }
-    var fired by remember(a.id) { mutableStateOf(false) }
+    val fire: () -> Unit = when (action) {
+        "read" -> onToggleRead
+        "share" -> onShare
+        "instapaper" -> onInstapaper
+        else -> onToggleStar
+    }
+    val toggle by rememberUpdatedState(fire)
+    var dx by remember(a.id, action) { mutableFloatStateOf(0f) }
+    var swiping by remember(a.id, action) { mutableStateOf(false) }
+    var fired by remember(a.id, action) { mutableStateOf(false) }
     Box(
-        Modifier.fillMaxWidth().pointerInput(a.id) {
+        Modifier.fillMaxWidth().pointerInput(a.id, action) {
             detectHorizontalDragGestures(
                 onDragStart = { swiping = true },
                 onHorizontalDrag = { change, amount ->
@@ -278,16 +296,23 @@ private fun SwipeToStar(
     ) {
         if (dx < -8f) {
             Row(
-                Modifier.matchParentSize().padding(bottom = starBottom).background(primary.copy(alpha = 0.18f)),
-                horizontalArrangement = if (starAtStart) Arrangement.Start else Arrangement.End,
+                Modifier.matchParentSize().padding(bottom = iconBottom).background(primary.copy(alpha = 0.18f)),
+                horizontalArrangement = if (iconAtStart) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val (icon, desc) = when (action) {
+                    "read" -> (if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
+                        (if (a.unread) "marquer lu" else "marquer non lu")
+                    "share" -> Icons.Filled.Share to "partager"
+                    "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
+                    else -> (if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
+                        (if (a.starred) "Retirer des favoris" else "Ajouter aux favoris")
+                }
                 Icon(
-                    if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
-                    if (a.starred) "Retirer des favoris" else "Ajouter aux favoris",
+                    icon, desc,
                     tint = primary,
                     modifier = Modifier
-                        .padding(start = if (starAtStart) 22.dp else 0.dp, end = if (starAtStart) 0.dp else starEnd)
+                        .padding(start = if (iconAtStart) 22.dp else 0.dp, end = if (iconAtStart) 0.dp else iconEnd)
                         .size(18.dp)
                 )
             }
@@ -560,6 +585,7 @@ fun ArticleList(
     showSource: Boolean = true
 ) {
     val trailing by vm.trailingAction.collectAsState()
+    val swipe by vm.swipeAction.collectAsState()
     val tapFaviconRead by vm.tapFaviconRead.collectAsState()
     val titleSp by vm.titleFont.collectAsState()
     val dateSp by vm.dateFont.collectAsState()
@@ -570,7 +596,8 @@ fun ArticleList(
         ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
             showSource = showSource,
-            onInstapaper = { sendScope.launch { vm.sendToInstapaper(a) { toast(ctx, it) } } })
+            onInstapaper = { sendScope.launch { vm.sendToInstapaper(a) { toast(ctx, it) } } },
+            swipe = swipe)
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
