@@ -25,9 +25,10 @@ import kotlinx.coroutines.launch
 /**
  * Écran Comptes.
  *
- * Organisation retenue : **les boutons de connexion d'abord, la liste des comptes en dessous**.
- * C'est l'ordre qui répond à la question posée le plus souvent — « j'ai bien connecté ce compte ? » —
- * sans avoir à faire défiler l'écran.
+ * Organisation retenue : **les comptes de lecture d'abord** (Feedly, flux RSS locaux, liste
+ * des comptes connectés), **puis les comptes tiers** (Inoreader, Instapaper) sous leur propre
+ * section. C'est l'ordre qui répond à la question posée le plus souvent — « j'ai bien
+ * connecté ce compte ? » — sans avoir à faire défiler l'écran.
  *
  * Plusieurs comptes peuvent être enregistrés, y compris plusieurs comptes du même service : chacun
  * garde ses dossiers et ses abonnements. Un seul est « actif » : c'est lui qui sert de référence
@@ -92,96 +93,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // ---- Inoreader ---------------------------------------------------------------------
-        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
-            OutlinedButton(
-                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
-                Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
-            }
-            if (service == "inoreader") {
-                OutlinedTextField(
-                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                Button({
-                    scope.launch {
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
-                        onOAuth("inoreader")
-                    }
-                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
-                Text(
-                    "La page Inoreader s'ouvre ensuite dans l'application.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // ---- Instapaper --------------------------------------------------------------------
-        HorizontalDivider()
-        Text("Instapaper", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Pour envoyer un article vers Instapaper depuis le bouton de raccourci à droite " +
-                "de chaque article (Réglages). Le mot de passe ne sert qu'à valider le compte " +
-                "puis chaque envoi : il reste sur l'appareil et n'est jamais exporté.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (instaConnected.isNotBlank()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Bookmark, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "Instapaper · $instaConnected", modifier = Modifier.weight(1f),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                TextButton({
-                    vm.disconnectInstapaper()
-                    instaUser = ""; instaPass = ""
-                    toast(ctx, "Instapaper déconnecté")
-                }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
-            }
-        } else {
-            OutlinedTextField(
-                instaUser, { instaUser = it }, label = { Text("Identifiant Instapaper") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
-                    autoCorrect = false
-                )
-            )
-            OutlinedTextField(
-                instaPass, { instaPass = it }, label = { Text("Mot de passe") },
-                modifier = Modifier.fillMaxWidth(), singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                    autoCorrect = false
-                )
-            )
-            Button(
-                {
-                    instaBusy = true
-                    vm.connectInstapaper(instaUser, instaPass) {
-                        msg = it
-                        toast(ctx, it)
-                        if (it == "Compte Instapaper connecté") instaPass = ""
-                        instaBusy = false
-                    }
-                },
-                Modifier.fillMaxWidth(),
-                enabled = instaUser.isNotBlank() && instaPass.isNotEmpty() && !instaBusy
-            ) { Text(if (instaBusy) "Vérification…" else "Connecter Instapaper") }
-        }
+        // (Inoreader et Instapaper : voir « Comptes tiers », plus bas)
 
         // ---- flux RSS saisis à la main ------------------------------------------------------
         HorizontalDivider()
@@ -273,6 +185,104 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                     }
                 }
             }
+        }
+
+        // ---- comptes tiers ------------------------------------------------------------------
+        HorizontalDivider()
+        Text("Comptes tiers", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Services annexes : synchronisation Inoreader, envoi vers Instapaper.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // ---- Inoreader ---------------------------------------------------------------------
+        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
+            OutlinedButton(
+                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
+                Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
+            }
+            if (service == "inoreader") {
+                OutlinedTextField(
+                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                OutlinedTextField(
+                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                Button({
+                    scope.launch {
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
+                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
+                        onOAuth("inoreader")
+                    }
+                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
+                Text(
+                    "La page Inoreader s'ouvre ensuite dans l'application.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // ---- Instapaper --------------------------------------------------------------------
+        Text("Instapaper", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Pour envoyer un article vers Instapaper depuis le bouton de raccourci à droite " +
+                "de chaque article (Réglages). Le mot de passe ne sert qu'à valider le compte " +
+                "puis chaque envoi : il reste sur l'appareil et n'est jamais exporté.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (instaConnected.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Bookmark, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Instapaper · $instaConnected", modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                TextButton({
+                    vm.disconnectInstapaper()
+                    instaUser = ""; instaPass = ""
+                    toast(ctx, "Instapaper déconnecté")
+                }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
+            }
+        } else {
+            OutlinedTextField(
+                instaUser, { instaUser = it }, label = { Text("Identifiant Instapaper") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+                    autoCorrect = false
+                )
+            )
+            OutlinedTextField(
+                instaPass, { instaPass = it }, label = { Text("Mot de passe") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                    autoCorrect = false
+                )
+            )
+            Button(
+                {
+                    instaBusy = true
+                    vm.connectInstapaper(instaUser, instaPass) {
+                        msg = it
+                        toast(ctx, it)
+                        if (it == "Compte Instapaper connecté") instaPass = ""
+                        instaBusy = false
+                    }
+                },
+                Modifier.fillMaxWidth(),
+                enabled = instaUser.isNotBlank() && instaPass.isNotEmpty() && !instaBusy
+            ) { Text(if (instaBusy) "Vérification…" else "Connecter Instapaper") }
         }
 
         if (vm.authMsg?.isNotBlank() == true) {
