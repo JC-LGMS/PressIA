@@ -27,6 +27,12 @@ interface FeedProvider {
      */
     suspend fun unreadIds(token: String?, maxIds: Int = 5000): UnreadSet? = null
     /**
+     * Total des non-lus côté compte, en un appel léger : détecteur de changement pour la
+     * réconciliation (voir `reconcileUnchanged`). Null = non supporté → réconciliation
+     * complète à chaque fois.
+     */
+    suspend fun unreadTotal(token: String?): Int? = null
+    /**
      * Tableau « à lire plus tard » du compte, à distinguer des étoiles PressIA. Vide par défaut :
      * les flux RSS saisis à la main n'ont pas de compte, donc rien à y rattacher.
      */
@@ -68,6 +74,18 @@ fun publishedMs(published: Long): Long =
 
 /** Résultat de la réconciliation : IDs à passer en lus / à rouvrir localement. */
 data class ReadReconciliation(val markRead: Set<String>, val markUnread: Set<String>)
+
+/**
+ * Faut-il sauter la réconciliation ? Oui si la sync n'a rien apporté, qu'aucune action
+ * locale n'est en attente et que le total distant est identique au précédent : l'énumération
+ * complète (N pages) ne trouverait rien.
+ *
+ * Limite connue : un « lu ailleurs » exactement compensé par un « rouvert ailleurs » (total
+ * inchangé, deux vieux articles) passe inaperçu jusqu'au prochain changement — cas
+ * rarissime, et auto-réparé dès que le total bouge ou qu'un article arrive.
+ */
+fun reconcileUnchanged(added: Int, hasPending: Boolean, lastTotal: Int?, currentTotal: Int?): Boolean =
+    added == 0 && !hasPending && lastTotal != null && currentTotal != null && lastTotal == currentTotal
 
 /**
  * Partie pure de la réconciliation lu/non-lu distant (testable en JVM).

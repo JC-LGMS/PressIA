@@ -631,11 +631,20 @@ class PressRepository(
             // d'ailleurs plus anciens n'y figureraient jamais. On réconcilie donc avec les non-lus
             // du compte sur 30 jours (borné : au-delà, on ne fait que rouvrir, jamais passer en lu
             // à l'aveugle — de toute façon le local ne conserve que ça, et Feedly marque lu à 31 j).
-            runCatching { reconcileReadState(account) }
-                .onSuccess { (read, unread) ->
+            // Énumération sautée si la sync n'a rien apporté, sans action locale en attente et
+            // total distant inchangé : 1 appel léger au lieu de N pages (voir `reconcileUnchanged`).
+            runCatching {
+                val total = p.unreadTotal(account.token)
+                val pending = dao.pendingSync().isNotEmpty()
+                val last = reconcileTotals()[account.id]
+                if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, total)) {
+                    android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $total inchangé)")
+                } else {
+                    val (read, unread) = reconcileReadState(account)
+                    if (total != null) storeReconcileTotal(account.id, total)
                     if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
                 }
-                .onFailure { android.util.Log.e("PressIA", "reconcile ${account.id} failed", it) }
+            }.onFailure { android.util.Log.e("PressIA", "reconcile ${account.id} failed", it) }
             val cats = p.categories(account.token).map { it.copy(provider = account.id) }
             replaceCategories(account.id, cats)
             val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
@@ -648,6 +657,23 @@ class PressRepository(
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
         }
         return added
+    }
+
+    /**
+     * Derniers totaux de non-lus par compte (détecteur de changement de la réconciliation).
+     * Cache dérivé hors sauvegarde : une restauration refait une passe complète, sans danger.
+     */
+    private suspend fun reconcileTotals(): Map<String, Int> = runCatching {
+        val raw = prefs.data.first()[Prefs.RECONCILE_TOTALS].orEmpty()
+        if (raw.isBlank()) return@runCatching emptyMap<String, Int>()
+        val o = org.json.JSONObject(raw)
+        o.keys().asSequence().associateWith { o.optInt(it) }
+    }.getOrDefault(emptyMap())
+
+    private suspend fun storeReconcileTotal(accountId: String, total: Int) {
+        val o = org.json.JSONObject()
+        (reconcileTotals() + (accountId to total)).forEach { (k, v) -> o.put(k, v) }
+        prefs.set(Prefs.RECONCILE_TOTALS, o.toString())
     }
 
     /**

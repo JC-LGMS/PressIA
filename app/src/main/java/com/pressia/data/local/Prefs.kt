@@ -85,7 +85,12 @@ class Prefs(private val ctx: Context) {
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
         val FEEDLY_CLIENT_ID = stringPreferencesKey("feedly_client_id")
         val FEEDLY_CLIENT_SECRET = stringPreferencesKey("feedly_client_secret")
-        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
+        /**
+         * Derniers totaux de non-lus par compte (JSON `{id: total}`), pour sauter la
+         * réconciliation quand rien n'a changé. Cache dérivé, volontairement hors de
+         * [ENTRIES] : une restauration refait une réconciliation complète, sans danger.
+         */
+        val RECONCILE_TOTALS = stringPreferencesKey("reconcile_totals")        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
         val INSTAPAPER_USER = stringPreferencesKey("instapaper_user")
         /**
          * Mot de passe Instapaper, volontairement hors de [ENTRIES] : il ne doit jamais partir

@@ -32,6 +32,11 @@ import okhttp3.MediaType.Companion.toMediaType
 @Serializable data class FeedlyVisual(val url: String? = null)
 @Serializable data class FeedlyTag(val id: String, val label: String? = null)
 @Serializable data class FeedlyStream(val id: String, val items: List<FeedlyEntry> = emptyList(), val continuation: String? = null)
+/** IDs seuls d'un flux : ~20x moins de données que le contenu, suffit à la réconciliation. */
+@Serializable data class FeedlyIdList(val ids: List<String> = emptyList(), val continuation: String? = null)
+/** Compteurs de non-lus : 1 appel léger, détecteur de changement pour la réconciliation. */
+@Serializable data class FeedlyUnreadCount(val id: String = "", val count: Int = 0)
+@Serializable data class FeedlyUnreadCounts(val unreadcounts: List<FeedlyUnreadCount> = emptyList())
 @Serializable data class FeedlyMarkers(val action: String, val type: String, val entryIds: List<String>? = null, val feedIds: List<String>? = null, val categoryIds: List<String>? = null)
 @Serializable data class FeedlyProfile(
     val id: String? = null,
@@ -69,6 +74,21 @@ interface FeedlyService {
         @Query("query") q: String,
         @Query("count") c: Int = 50
     ): FeedlyStream
+    /**
+     * IDs seuls (`streams/ids?streamId=…`, forme query comme `contents`, compatible niveau
+     * gratuit — avec repli sur `contents` en cas de refus, voir `unreadIds`).
+     */
+    @GET("streams/ids")
+    suspend fun streamIds(
+        @Header("Authorization") h: String,
+        @Query("streamId") streamId: String,
+        @Query("count") count: Int = 1000,
+        @Query("unreadOnly") unreadOnly: Boolean = false,
+        @Query("continuation") cont: String? = null
+    ): FeedlyIdList
+    /** Total des non-lus du compte, en un appel. */
+    @GET("markers/counts")
+    suspend fun unreadCounts(@Header("Authorization") h: String): FeedlyUnreadCounts
     @POST("markers")
     suspend fun markers(@Header("Authorization") h: String, @Body b: FeedlyMarkers)
 
@@ -115,6 +135,13 @@ interface InoreaderService {
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
     suspend fun userInfo(@Header("Authorization") h: String): InoreaderUserInfo
+    /** Compteurs de non-lus : 1 appel léger, détecteur de changement pour la réconciliation. */
+    @GET("reader/api/0/unread-count")
+    suspend fun unreadCount(
+        @Header("Authorization") h: String,
+        @Query("output") o: String = "json",
+        @Query("all") all: Boolean = true
+    ): InoreaderUnreadCounts
 
     companion object {
         fun create(): InoreaderService {
@@ -150,3 +177,5 @@ interface InoreaderService {
 @Serializable data class InoreaderContent(val content: String? = null, val direction: String? = null)
 @Serializable data class InoreaderOrigin(val streamId: String? = null, val title: String? = null, val htmlUrl: String? = null)
 @Serializable data class InoreaderStream(val id: String? = null, val items: List<InoreaderItem> = emptyList(), val continuation: String? = null)
+@Serializable data class InoreaderUnreadItem(val id: String = "", val count: Int = 0)
+@Serializable data class InoreaderUnreadCounts(val unreadcounts: List<InoreaderUnreadItem> = emptyList())

@@ -4,6 +4,7 @@ import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
 import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.OAuth
+import com.pressia.data.remote.reconcileUnchanged
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
 import com.pressia.data.readability.Readability
@@ -22,6 +23,16 @@ class PressLogicTest {
     @Test fun `readCapped refuse au-dela du plafond`() {
         val data = ByteArray(3000) { it.toByte() }
         assertNull(ThumbStore.readCapped(java.io.ByteArrayInputStream(data), 1000))
+    }
+    @Test fun `reconcile sautee si rien n'a bouge`() {
+        assertTrue(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 42))
+    }
+    @Test fun `reconcile rejouee au moindre changement`() {
+        assertFalse(reconcileUnchanged(added = 1, hasPending = false, lastTotal = 42, currentTotal = 42))
+        assertFalse(reconcileUnchanged(added = 0, hasPending = true, lastTotal = 42, currentTotal = 42))
+        assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 41))
+        assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = null, currentTotal = 42))
+        assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = null))
     }
     @Test fun `dedup hash identique pour même titre`() {
         val h1 = dedupHash("Hello World!", "https://ex.com/a?x=1")

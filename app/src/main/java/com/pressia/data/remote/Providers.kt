@@ -77,13 +77,44 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     /**
      * Non-lus du compte sur 30 jours (flux global, `unreadOnly`, du plus récent au plus ancien) :
      * sert à propager les lus / non lus d'ailleurs, y compris hors de la fenêtre récente
-     * redescendue par la synchronisation. On ne retient que les articles que le serveur dit
-     * non-lus, au cas où le filtre serait ignoré ; on s'arrête dès qu'une page est entièrement
-     * plus vieille que la fenêtre.
+     * redescendue par la synchronisation. Voie légère d'abord (IDs seuls via `streams/ids`,
+     * ~20x moins de données), repli sur le contenu si l'endpoint est refusé.
      */
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
         val scope = userId(token)
         if (scope.isBlank()) return UnreadSet(emptySet(), true)
+        runCatching { unreadIdsViaIds(token, scope, maxIds) }
+            .onSuccess { android.util.Log.d("PressIA", "feedly unreadIds via ids (${it.ids.size})") }
+            .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }
+            .getOrNull()?.let { return it }
+        return unreadIdsViaContents(token, scope, maxIds)
+    }
+
+    /** Énumération par IDs seuls : pas de dates, donc jusqu'à épuisement ou plafond. */
+    private suspend fun unreadIdsViaIds(token: String?, scope: String, maxIds: Int): UnreadSet {
+        val ids = HashSet<String>()
+        var cont: String? = null
+        var complete = false
+        var stagnant = 0
+        while (ids.size < maxIds) {
+            val before = ids.size
+            val page = api.streamIds(auth(token), "user/$scope/category/global.all", count = 1000, unreadOnly = true, cont = cont)
+            if (page.ids.isEmpty()) { complete = true; break }
+            ids += page.ids
+            // Pages qui n'apportent rien de neuf : on sort au lieu de boucler.
+            stagnant = if (ids.size == before) stagnant + 1 else 0
+            val next = page.continuation
+            if (next.isNullOrBlank() || next == cont || stagnant >= 2) { complete = stagnant < 2; break }
+            cont = next
+        }
+        return UnreadSet(ids, complete)
+    }
+
+    /**
+     * Repli : on ne retient que les articles que le serveur dit non-lus, au cas où le filtre
+     * serait ignoré ; on s'arrête dès qu'une page est entièrement plus vieille que la fenêtre.
+     */
+    private suspend fun unreadIdsViaContents(token: String?, scope: String, maxIds: Int): UnreadSet? {
         val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
         val ids = HashSet<String>()
         var cont: String? = null
@@ -100,6 +131,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         }
         return UnreadSet(ids, complete)
     }
+
+    /** Total des non-lus en un appel (`markers/counts`), pour le détecteur de changement. */
+    override suspend fun unreadTotal(token: String?): Int? = runCatching {
+        api.unreadCounts(auth(token)).unreadcounts.sumOf { it.count }
+    }.getOrNull()
     override suspend fun profile(token: String?): String? {
         val p = api.profile(auth(token))
         return listOfNotNull(p.userName?.takeIf { it.isNotBlank() }, p.email?.takeIf { it.isNotBlank() })
@@ -157,6 +193,10 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
             .joinToString(" · ").takeIf { it.isNotBlank() }
     }
+    /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
+    override suspend fun unreadTotal(token: String?): Int? = runCatching {
+        api.unreadCount(auth(token)).unreadcounts.sumOf { it.count }
+    }.getOrNull()
     /** Étoiles du compte (« Starred items » chez Inoreader). */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
