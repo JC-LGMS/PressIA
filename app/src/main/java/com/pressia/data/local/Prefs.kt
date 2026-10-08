@@ -95,9 +95,10 @@ class Prefs(private val ctx: Context) {
         val RECONCILE_TOTALS = stringPreferencesKey("reconcile_totals")        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
         val INSTAPAPER_USER = stringPreferencesKey("instapaper_user")
         /**
-         * Mot de passe Instapaper, volontairement hors de [ENTRIES] : il ne doit jamais partir
-         * dans une sauvegarde exportée. Même niveau de protection que les jetons stockés en
-         * base (lisible sur l'appareil), mais au moins il ne voyage pas dans un fichier JSON.
+         * Mot de passe Instapaper, secret : exporté seulement si l'utilisateur coche les jetons,
+         * et restauré seulement dans ce cas. Même niveau de protection que les jetons stockés en
+         * base (lisible sur l'appareil), mais au moins il ne voyage pas dans un fichier JSON
+         * sauf demande explicite.
          */
         val INSTAPAPER_PASS = stringPreferencesKey("instapaper_pass")
 
@@ -136,7 +137,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
-            PrefEntry.Str("instapaper_user", INSTAPAPER_USER)
+            PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS)
         )
     }
 

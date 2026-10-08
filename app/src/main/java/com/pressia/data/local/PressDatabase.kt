@@ -343,6 +343,15 @@ interface PressDao {
     @Query("DELETE FROM extract_events")
     suspend fun clearExtractEvents()
     /**
+     * Clés naturelles des évènements déjà connus : une réimport du même fichier ne doit pas
+     * dupliquer les stats (les lignes portent un identifiant auto-incrémenté, l'IGNORE seul
+     * ne dédupliquerait jamais).
+     */
+    @Query("SELECT articleId, openedAt FROM reading_events")
+    suspend fun readingKeys(): List<ReadingKey>
+    @Query("SELECT articleId, createdAt FROM extract_events")
+    suspend fun extractKeys(): List<ExtractKey>
+    /**
      * Sauvegarde des favoris.
      *
      * L'étoile PressIA étant un état local pour **tous** les flux (Feedly et Inoreader compris,
@@ -358,12 +367,15 @@ interface PressDao {
     suspend fun existingIds(ids: List<String>): List<String>
 }
 
-data class FeedUnread(val feedId: String, val c: Int)
-data class LocalDayCount(val day: String, val c: Int)
+data class FeedUnread(val feedId: String, val c: Int)data class LocalDayCount(val day: String, val c: Int)
 data class CategorySeconds(val categoryId: String?, val secs: Int)
 data class FeedSeconds(val feedId: String, val secs: Int, val c: Int)
 data class ExtractCount(val ok: Boolean, val c: Int)
 data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolean, val readAt: Long?)
+/** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */
+data class ReadingKey(val articleId: String, val openedAt: Long)
+/** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
+data class ExtractKey(val articleId: String, val createdAt: Long)
 
 /** Drapeaux de favoris d'un article déjà en base (voir [PressDao.favFlagsOf]). */
 data class FavFlags(val id: String, val starred: Boolean, val laterSaved: Boolean)

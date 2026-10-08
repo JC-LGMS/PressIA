@@ -34,13 +34,14 @@ const val BACKUP_VERSION = 1
  * Préférences tenant un secret (mots de passe d'API) : jamais exportées / restaurées
  * automatiquement, seulement si l'utilisateur coche explicitement les jetons.
  */
-val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key")
+val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key", "instapaper_pass")
 
 /**
  * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file
- * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration.
+ * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration,
+ * et les derniers totaux de non-lus sont un cache dérivé qu'une restauration recalcule.
  */
-val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name)
+val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name, Prefs.RECONCILE_TOTALS.name)
 
 /** Résultat d'un import, pour l'affichage utilisateur. */
 data class ImportReport(
@@ -91,7 +92,7 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
                     JSONObject()
                         .put("id", s.id).put("title", s.title).put("url", s.url).put("siteUrl", s.siteUrl)
                         .put("categoryId", s.categoryId ?: JSONObject.NULL).put("iconUrl", s.iconUrl ?: JSONObject.NULL)
-                        .put("provider", s.provider).put("sortOrder", s.sortOrder)
+                        .put("provider", s.provider).put("sortOrder", s.sortOrder).put("unreadCount", s.unreadCount)
                 )
             }
         })
@@ -182,9 +183,18 @@ suspend fun PressRepository.importJson(
             val reading = o.optJSONArray("reading")?.toReadingList().orEmpty()
             val extract = o.optJSONArray("extract")?.toExtractList().orEmpty()
             if (replaceStats) { dao.clearReadingEvents(); dao.clearExtractEvents() }
-            if (reading.isNotEmpty()) dao.insertReadingEvents(reading)
-            if (extract.isNotEmpty()) dao.insertExtractEvents(extract)
-            report = report.copy(stats = reading.size + extract.size)
+            // En fusion on ne garde que l'inédit : réimporter le même fichier ne duplique rien.
+            // Les clés sont lues une fois (le fichier et la base peuvent contenir des milliers
+            // d'évènements, une requête par ligne coûterait trop cher).
+            val knownReading = if (replaceStats) emptySet() else dao.readingKeys().mapTo(HashSet()) { it.articleId to it.openedAt }
+            val knownExtract = if (replaceStats) emptySet() else dao.extractKeys().mapTo(HashSet()) { it.articleId to it.createdAt }
+            val freshReading = reading.filter { e -> (e.articleId to e.openedAt) !in knownReading }
+                .distinctBy { e -> e.articleId to e.openedAt }
+            val freshExtract = extract.filter { e -> (e.articleId to e.createdAt) !in knownExtract }
+                .distinctBy { e -> e.articleId to e.createdAt }
+            if (freshReading.isNotEmpty()) dao.insertReadingEvents(freshReading)
+            if (freshExtract.isNotEmpty()) dao.insertExtractEvents(freshExtract)
+            report = report.copy(stats = freshReading.size + freshExtract.size)
         }
     }
 
@@ -244,7 +254,9 @@ private fun JSONArray.toSubscriptionList(): List<SubscriptionEntity> = (0 until 
             categoryId = it.optString("categoryId").takeIf { s -> s.isNotBlank() && s != "null" },
             iconUrl = it.optString("iconUrl").takeIf { s -> s.isNotBlank() && s != "null" },
             provider = it.optString("provider", "local"),
-            sortOrder = it.optInt("sortOrder")
+            sortOrder = it.optInt("sortOrder"),
+            // Absent des sauvegardes antérieures : repli sur 0, la prochaine synchro recalcule.
+            unreadCount = it.optInt("unreadCount")
         )
     }
 }

@@ -28,13 +28,14 @@ const val MERGED_PREFIX = "merged:"
  * Convertit le jeu de favoris choisi dans l'UI en valeur attendue par les requêtes de favoris.
  *
  * L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
- * Sans cette conversion, « Favoris PressIA » ne correspondait à aucun prédicat et l'écran
- * Favoris restait vide.
+ * Sans cette conversion, « Favoris PressIA » retombait sur « aucun filtre » et l'écran
+ * Favoris affichait tous les articles au lieu des seuls étoilés.
  */
 fun favScopeArg(set: String): String = when (set) {
     "later" -> "later"
     "all" -> "all"
-    "starred" -> "starred"
+    // L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
+    "app", "starred" -> "starred"
     // "" = écran de flux ordinaire : aucun filtre de favori. Sans ce cas, la valeur retombait sur
     // "starred" et le flux de lecture n'affichait plus que les articles étoilés.
     else -> ""

@@ -1,5 +1,6 @@
 package com.pressia
 
+import com.pressia.data.favScopeArg
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
 import com.pressia.data.local.ThumbStore
@@ -33,6 +34,14 @@ class PressLogicTest {
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 41))
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = null, currentTotal = 42))
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = null))
+    }
+    @Test fun `jeu favoris app mappe sur starred`() {
+        assertEquals("starred", favScopeArg("app"))
+        assertEquals("starred", favScopeArg("starred"))
+        assertEquals("later", favScopeArg("later"))
+        assertEquals("all", favScopeArg("all"))
+        assertEquals("", favScopeArg(""))
+        assertEquals("", favScopeArg("nimporte-quoi"))
     }
     @Test fun `dedup hash identique pour même titre`() {
         val h1 = dedupHash("Hello World!", "https://ex.com/a?x=1")
