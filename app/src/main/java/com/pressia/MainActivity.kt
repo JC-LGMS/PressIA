@@ -209,38 +209,38 @@ class MainActivity : ComponentActivity() {
                             }
                             composable("search") {
                                 BackRule()
-                                ScaffoldWithMenu("Recherche", { openDrawer() }) {
+                                ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search")) {
                                     SearchScreen(vm, onOpen = { openArticle(it.id) })
                                 }
                             }
                             composable("dedup") {
                                 BackRule()
-                                ScaffoldWithMenu("Doublons", { openDrawer() }) {
+                                ScaffoldWithMenu("Doublons", { openDrawer() }, drawerIconFor("dedup")) {
                                     DedupScreen(vm, onOpen = { openArticle(it.id) })
                                 }
                             }
                             composable("stats") {
                                 BackRule()
-                                ScaffoldWithMenu("Stats", { openDrawer() }) {
+                                ScaffoldWithMenu("Stats", { openDrawer() }, drawerIconFor("stats")) {
                                     StatsScreen(vm)
                                 }
                             }
                             composable("settings") {
                                 BackRule()
-                                ScaffoldWithMenu("Réglages", { openDrawer() }) {
+                                ScaffoldWithMenu("Réglages", { openDrawer() }, drawerIconFor("settings")) {
                                     SettingsScreen(vm)
                                 }
                             }
                             composable("login") {
                                 BackRule()
-                                ScaffoldWithMenu("Comptes", { openDrawer() }) {
+                                ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login")) {
                                     LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
                                         onFeedlySignIn = { nav.navigate("feedly-signin") })
                                 }
                             }
                             composable("about") {
                                 BackRule()
-                                ScaffoldWithMenu("À propos", { openDrawer() }) {
+                                ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about")) {
                                     AboutScreen()
                                 }
                             }
@@ -287,9 +287,14 @@ private val UTILITY_ROUTES = setOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScaffoldWithMenu(title: String, onMenu: () -> Unit, content: @Composable () -> Unit) {
+fun ScaffoldWithMenu(
+    title: String,
+    onMenu: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    content: @Composable () -> Unit
+) {
     Scaffold(topBar = {
-        TopAppBar(title = { Text(title) },
+        TopAppBar(title = { ViewTitle(icon, title) },
             navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } })
     }) { pad ->
         Box(Modifier.padding(pad)) { content() }

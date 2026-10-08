@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -514,8 +515,36 @@ fun prettyFeedTitle(title: String?): String {
     } catch (_: Exception) { t }
 }
 
-/** Deux petits boutons en surimpression, en bas au centre : haut / bas de liste. */
+/**
+ * Icône du drawer pour chaque menu, réaffichée à gauche du titre de la vue.
+ * « Tous les articles » et les dossiers n'en ont pas (titre seul) ; un flux précis garde
+ * uniquement son favicon ([FeedAvatar], géré par chaque écran).
+ */
+fun drawerIconFor(route: String): ImageVector? = when (route) {
+    "home" -> Icons.Filled.Home
+    "starred" -> Icons.Filled.Star
+    "dedup" -> Icons.Filled.ContentCopy
+    "search" -> Icons.Filled.Search
+    "stats" -> Icons.Filled.BarChart
+    "settings" -> Icons.Filled.Settings
+    "login" -> Icons.Filled.AccountCircle
+    "about" -> Icons.Filled.Info
+    else -> null
+}
+
+/** Titre de vue : icône du menu à gauche, libellé elliptique. */
 @Composable
+fun ViewTitle(icon: ImageVector?, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (icon != null) {
+            Icon(icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Deux petits boutons en surimpression, en bas au centre : haut / bas de liste. */@Composable
 fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier.fillMaxWidth().padding(bottom = 16.dp),

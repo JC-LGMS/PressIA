@@ -137,6 +137,10 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        drawerIconFor("starred")?.let {
+                            Icon(it, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(8.dp))
+                        }
                         if (feed != null) {
                             FeedAvatar(feed, 28)
                             Spacer(Modifier.width(8.dp))
