@@ -89,8 +89,16 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     )
                 }
             } else {
-                // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+                // Tirer la liste vers le bas synchronise, comme le bouton d'en haut : l'indicateur
+                // suit la synchronisation en cours, et son message arrive dans le bandeau ci-dessus.
+                androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                    isRefreshing = vm.syncing,
+                    onRefresh = { if (!vm.syncing) vm.sync() },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
+                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+                }
             }
         }
     }
