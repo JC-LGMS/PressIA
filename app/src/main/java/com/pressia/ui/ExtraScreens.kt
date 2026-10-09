@@ -465,6 +465,7 @@ fun SettingsScreen(vm: PressVM) {
     var cacheInfo by remember { mutableStateOf("calcul…") }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var showArticleActions by remember { mutableStateOf(false) }
     var backupMsg by remember { mutableStateOf("") }
     var exportSel by remember { mutableStateOf(Sections.ALL) }
     var exportTokens by remember { mutableStateOf(false) }
@@ -713,41 +714,27 @@ fun SettingsScreen(vm: PressVM) {
             label = "Action du glissement",
             onSelect = { swipeRight = it; save() }
         )
-        Text("Icônes d'action de l'écran article")
-        Text(
-            "Cochez celles à afficher, dans l'ordre voulu avec les flèches. Le menu reste toujours en dernier.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        // Les décochées suivent dans l'ordre canonique : les cocher les ajoute en fin de liste,
-        // d'où on les remonte avec les flèches.
-        val orderedIds = articleActions + (ARTICLE_ACTION_IDS - articleActions.toSet())
-        fun move(id: String, delta: Int) {
-            val cur = articleActions.toMutableList()
-            val from = cur.indexOf(id)
-            val to = (from + delta).coerceIn(0, cur.lastIndex)
-            if (from != to) {
-                cur.add(to, cur.removeAt(from))
-                articleActions = cur
-                save()
+        Row(
+            Modifier.fillMaxWidth().clickable { showArticleActions = true },
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Icônes d'action de l'écran article")
+                Text(
+                    if (articleActions.isEmpty()) "Aucune (menu seul)"
+                    else articleActions.joinToString(" · ") { articleActionLabel(it) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
+            Icon(Icons.Filled.ChevronRight, "modifier")
         }
-        orderedIds.forEach { id ->
-            val enabled = id in articleActions
-            val pos = articleActions.indexOf(id)
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Checkbox(enabled, {
-                    articleActions = if (enabled) articleActions - id else articleActions + id
-                    save()
-                })
-                Text(articleActionLabel(id), Modifier.weight(1f))
-                IconButton({ move(id, -1) }, enabled = enabled && pos > 0) {
-                    Icon(Icons.Filled.KeyboardArrowUp, "monter")
-                }
-                IconButton({ move(id, 1) }, enabled = enabled && pos < articleActions.lastIndex) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "descendre")
-                }
-            }
+        if (showArticleActions) {
+            ArticleActionsDialog(
+                selected = articleActions,
+                onDismiss = { showArticleActions = false },
+                onChange = { articleActions = it; save() }
+            )
         }
         val tapFav by vm.tapFaviconRead.collectAsState()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -868,6 +855,58 @@ fun SettingsScreen(vm: PressVM) {
                 importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
             }
         )
+    }
+}
+
+/** Modale de choix des icônes d'action de l'écran article : visibilité + ordre. */
+@Composable
+private fun ArticleActionsDialog(
+    selected: List<String>,
+    onDismiss: () -> Unit,
+    onChange: (List<String>) -> Unit
+) {
+    fun move(id: String, delta: Int) {
+        val cur = selected.toMutableList()
+        val from = cur.indexOf(id)
+        val to = (from + delta).coerceIn(0, cur.lastIndex)
+        if (from != to) {
+            cur.add(to, cur.removeAt(from))
+            onChange(cur)
+        }
+    }
+    // Les décochées suivent dans l'ordre canonique : les cocher les ajoute en fin de liste,
+    // d'où on les remonte avec les flèches.
+    val orderedIds = selected + (ARTICLE_ACTION_IDS - selected.toSet())
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Icônes d'action", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Cochez celles à afficher, dans l'ordre voulu avec les flèches. Le menu reste toujours en dernier.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                orderedIds.forEach { id ->
+                    val enabled = id in selected
+                    val pos = selected.indexOf(id)
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(enabled, {
+                            onChange(if (enabled) selected - id else selected + id)
+                        })
+                        Text(articleActionLabel(id), Modifier.weight(1f))
+                        IconButton({ move(id, -1) }, enabled = enabled && pos > 0) {
+                            Icon(Icons.Filled.KeyboardArrowUp, "monter")
+                        }
+                        IconButton({ move(id, 1) }, enabled = enabled && pos < selected.lastIndex) {
+                            Icon(Icons.Filled.KeyboardArrowDown, "descendre")
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onDismiss) { Text("Fermer") }
+                }
+            }
+        }
     }
 }
 
