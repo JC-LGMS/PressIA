@@ -376,22 +376,26 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Synchronisation au démarrage, si l'option est active et qu'aucune synchro bien finie
      * ne date de moins de X minutes (X = réglage « Fréquence de synchronisation »).
      *
-     * La file d'attente locale est toujours vidée : elle ne coûte aucune requête réseau et
-     * ne dépend que des actions de lecture en attente depuis la dernière visite.
+     * Sautée, elle est totalement silencieuse : ni verrou (donc aucune animation de synchro),
+     * ni réseau, ni rafraîchissement — le [refresh] qui suit dans MainActivity suffit à remplir
+     * les listes.
      */
     fun syncOnLaunch() = viewModelScope.launch {
+        val prefs = repo.prefs
+        val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
+        val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
+        val now = System.currentTimeMillis()
+        val ageMin = if (last > 0L) (now - last) / 60_000L else -1L
+        if (syncOnLaunch.value && isSyncFresh(last, now, windowMin)) {
+            android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
+            return@launch
+        }
         lockSync()
         try {
-            val prefs = repo.prefs
-            val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
-            val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
-            val ageMin = if (last > 0L) (System.currentTimeMillis() - last) / 60_000L else -1L
-            if (syncOnLaunch.value && !isSyncFresh(last, System.currentTimeMillis(), windowMin)) {
+            if (syncOnLaunch.value) {
                 android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
                 repo.pushQueue().also { repo.syncDown() }
                 prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
-            } else if (syncOnLaunch.value) {
-                android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
             }
             repo.syncReadLater()
             refreshNow()
