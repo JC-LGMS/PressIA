@@ -42,6 +42,15 @@ fun favScopeArg(set: String): String = when (set) {
 }
 
 /**
+ * Vrai si une synchronisation finie à [lastMs] suffit encore : moins de [windowMin] minutes.
+ * Fenêtre nulle ou négative (fréquence « manuelle ») : jamais frais, on synchronise dès que
+ * l'option de lancement est active. Utilisée au lancement comme par la tâche planifiée : une
+ * synchro récente suffit partout, on ne refait pas le travail deux fois.
+ */
+fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
+    lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
+
+/**
  * Repository offline-first façon Press :
  * - lecture depuis Room (hors-ligne OK)
  * - sync descendante : cloud/RSS → Room (limitée par taille max)

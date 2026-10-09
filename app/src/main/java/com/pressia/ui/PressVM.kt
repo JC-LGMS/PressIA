@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
+import com.pressia.data.isSyncFresh
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
 import com.pressia.data.isLocalProvider
@@ -36,14 +37,6 @@ fun favSetLabel(set: String): String = when (set) {
     "all" -> "Tous les favoris"
     else -> "Favoris PressIA"
 }
-
-/**
- * Vrai si une synchronisation finie à [lastMs] suffit encore : moins de [windowMin] minutes.
- * Fenêtre nulle ou négative (fréquence « manuelle ») : jamais frais, on synchronise dès que
- * l'option de lancement est active.
- */
-fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
-    lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
 
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
 val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "instapaper")

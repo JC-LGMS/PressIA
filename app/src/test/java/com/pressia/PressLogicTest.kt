@@ -1,7 +1,7 @@
 package com.pressia
 
 import com.pressia.data.favScopeArg
-import com.pressia.ui.isSyncFresh
+import com.pressia.data.isSyncFresh
 import com.pressia.ui.parseArticleActions
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs

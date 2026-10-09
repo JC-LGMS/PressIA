@@ -5,21 +5,37 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.work.*
 import com.pressia.data.PressRepository
+import com.pressia.data.isSyncFresh
+import com.pressia.data.local.Prefs
 import com.pressia.di.Locator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
-/** Sync périodique façon Press : planifiée, Wi-Fi only en option, pousse la file puis tire le flux. */
+/**
+ * Sync périodique façon Press : planifiée, Wi-Fi only en option, pousse la file puis tire le flux.
+ *
+ * Même règle anti-doublon qu'au lancement : si une synchro s'est bien finie il y a moins de
+ * X minutes (X = « Fréquence de synchronisation »), la tâche se termine sans rien faire — la
+ * flèche ne tourne pas pour rien. Un saut est un succès, jamais un nouvel essai.
+ */
 class SyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWorker(appCtx, p) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         return@withContext try {
             val repo: PressRepository = Locator.repo(applicationContext)
+            val last = repo.prefs.data.first()[Prefs.LAST_SYNC_AT] ?: 0L
+            val windowMin = repo.prefs.data.first()[Prefs.SYNC_INTERVAL_MIN] ?: Prefs.SYNC_INTERVAL_DEFAULT
+            if (isSyncFresh(last, System.currentTimeMillis(), windowMin)) {
+                android.util.Log.i("PressIA", "sync planifiée sautée (dernière synchro récente)")
+                return@withContext Result.success()
+            }
             repo.pushQueue()
             repo.syncDown()
             // Le tableau « Read later » fait partie des favoris affichés : il suit la même rotation.
             // syncDown et syncReadLater téléchargent déjà les miniatures manquantes (syncThumbs).
             repo.syncReadLater()
+            repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
             Result.success()
         } catch (e: Exception) { Result.retry() }
     }
