@@ -141,6 +141,38 @@ class PressLogicTest {
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
     }
+    @Test fun `url oauth instapaper v2 bien formee`() {
+        val u = OAuth.instapaperAuthUrl("CID", "pressia://oauth/instapaper")
+        assertTrue(u.contains("instapaper.com/oauth2/authorize") && u.contains("client_id=CID"))
+        assertTrue(u.contains("response_type=code") && u.contains("state=instapaper"))
+        val ok = OAuth.parseRedirect("pressia://oauth/instapaper?code=XYZ&state=instapaper", "pressia://oauth/instapaper")
+        assertEquals("XYZ", ok?.code)
+    }
+    @Test fun `parse dossiers et tags instapaper v2`() {
+        val folders = com.pressia.data.remote.InstapaperV2.parseFolders(
+            """{"folders":[{"id":0,"title":"Home"},{"id":99,"title":"Recettes"},{"title":"sans id"}]}"""
+        )
+        assertEquals(listOf(com.pressia.data.remote.InstapaperV2.Folder(99, "Recettes")), folders)
+        assertTrue(com.pressia.data.remote.InstapaperV2.parseFolders("pas du json").isEmpty())
+        val tags = com.pressia.data.remote.InstapaperV2.parseTags(
+            """{"tags":[{"id":7,"name":"Cuisine","count":3},{"id":8,"name":"","count":1}]}"""
+        )
+        assertEquals(listOf(com.pressia.data.remote.InstapaperV2.Tag(7, "Cuisine", 3)), tags)
+    }
+    @Test fun `corps d'enregistrement instapaper v2`() {
+        val b = com.pressia.data.remote.InstapaperV2.saveBody("https://x/y", "T", 99, listOf("A", "B"))
+        assertTrue(b.contains("\"folder_id\":99") && b.contains("\"name\":\"A\"") && b.contains("\"name\":\"B\""))
+        // Sans dossier ni tag : accueil, aucun champ superflu.
+        val home = com.pressia.data.remote.InstapaperV2.saveBody("https://x/y", "T", null, emptyList())
+        assertTrue(!home.contains("folder_id") && !home.contains("tags"))
+    }
+    @Test fun `mode instapaper persiste et secrets proteges`() {
+        assertTrue("instapaper_mode" in entryNames())
+        assertTrue("instapaper_token" in entryNames())
+        assertTrue("instapaper_token" in com.pressia.data.SECRET_PREFS)
+        assertTrue("instapaper_client_secret" in com.pressia.data.SECRET_PREFS)
+        assertTrue("instapaper_mode" !in com.pressia.data.SECRET_PREFS)
+    }
     @Test fun `pkce verificateur et defi bien formes`() {
         val v1 = OAuth.pkceVerifier()
         val v2 = OAuth.pkceVerifier()

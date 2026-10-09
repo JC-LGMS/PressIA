@@ -107,6 +107,16 @@ class Prefs(private val ctx: Context) {
          * sauf demande explicite.
          */
         val INSTAPAPER_PASS = stringPreferencesKey("instapaper_pass")
+        /**
+         * Envoi vers Instapaper : "direct" (API simple, sans dossier ni tag) ou "choose"
+         * (dialogue dossier + tags à chaque envoi, via l'API v2).
+         */
+        val INSTAPAPER_MODE = stringPreferencesKey("instapaper_mode")
+        /** Jeton d'accès Instapaper API v2 (OAuth2), secret : même protection que les jetons. */
+        val INSTAPAPER_TOKEN = stringPreferencesKey("instapaper_token")
+        /** Identifiants d'application Instapaper (API v2), surchargeables comme Feedly/Inoreader. */
+        val INSTAPAPER_CLIENT_ID = stringPreferencesKey("instapaper_client_id")
+        val INSTAPAPER_CLIENT_SECRET = stringPreferencesKey("instapaper_client_secret")
 
         /**
          * Identifiants d'articles mis en favori par une restauration de sauvegarde, rejoués à chaque
@@ -143,7 +153,9 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
-            PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS)
+            PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),
+            PrefEntry.Str("instapaper_mode", INSTAPAPER_MODE), PrefEntry.Str("instapaper_token", INSTAPAPER_TOKEN),
+            PrefEntry.Str("instapaper_client_id", INSTAPAPER_CLIENT_ID), PrefEntry.Str("instapaper_client_secret", INSTAPAPER_CLIENT_SECRET)
         )
     }
 

@@ -40,8 +40,11 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
 
     fun authUrl(): String? {
         if (clientId.isBlank() || redirect.isBlank()) return null
-        return if (provider == "feedly") OAuth.feedlyAuthUrl(clientId, redirect)
-        else OAuth.inoreaderAuthUrl(clientId, redirect)
+        return when (provider) {
+            "feedly" -> OAuth.feedlyAuthUrl(clientId, redirect)
+            "instapaper" -> OAuth.instapaperAuthUrl(clientId, redirect)
+            else -> OAuth.inoreaderAuthUrl(clientId, redirect)
+        }
     }
 
     LaunchedEffect(provider) {
@@ -50,6 +53,10 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
             clientId = d[Prefs.FEEDLY_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_ID
             clientSecret = d[Prefs.FEEDLY_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_SECRET
             redirect = BuildConfig.FEEDLY_REDIRECT_URI
+        } else if (provider == "instapaper") {
+            clientId = d[Prefs.INSTAPAPER_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INSTAPAPER_CLIENT_ID
+            clientSecret = d[Prefs.INSTAPAPER_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: BuildConfig.INSTAPAPER_CLIENT_SECRET
+            redirect = BuildConfig.INSTAPAPER_REDIRECT_URI
         } else {
             clientId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
             clientSecret = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
@@ -58,7 +65,7 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
         loaded = true
         // Page d'authentification chargée automatiquement : rien à saisir au préalable.
         if (authUrl() != null) started = true
-        else error = "Identifiant d'application manquant (FEEDLY_CLIENT_ID / INOREADER_APP_ID dans local.properties)."
+        else error = "Identifiant d'application manquant (FEEDLY_CLIENT_ID / INOREADER_APP_ID / INSTAPAPER_CLIENT_ID dans local.properties)."
     }
 
     fun finishWith(msg: String) {
@@ -72,6 +79,21 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
         error = null
         scope.launch {
             try {
+                vm.repo.prefs.set(
+                    if (provider == "feedly") Prefs.FEEDLY_CLIENT_ID else Prefs.INOREADER_APP_ID, clientId
+                )
+                vm.repo.prefs.set(
+                    if (provider == "feedly") Prefs.FEEDLY_CLIENT_SECRET else Prefs.INOREADER_APP_KEY, clientSecret
+                )
+                if (provider == "instapaper") {
+                    val msg = vm.connectInstapaperV2Now(code)
+                    if (msg == "Instapaper connecté (dossiers + tags)") finishWith(msg)
+                    else {
+                        error = "$msg (URL de retour : $redirect)."
+                        busy = false
+                    }
+                    return@launch
+                }
                 vm.repo.prefs.set(
                     if (provider == "feedly") Prefs.FEEDLY_CLIENT_ID else Prefs.INOREADER_APP_ID, clientId
                 )
@@ -113,7 +135,7 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (provider == "feedly") "Connexion Feedly" else "Connexion Inoreader") },
+                title = { Text(when (provider) { "feedly" -> "Connexion Feedly"; "instapaper" -> "Connexion Instapaper"; else -> "Connexion Inoreader" }) },
                 navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
                 actions = {
                     IconButton({ webView?.reload() }) { Icon(Icons.Filled.Refresh, "recharger") }

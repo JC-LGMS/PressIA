@@ -265,6 +265,12 @@ class MainActivity : ComponentActivity() {
                                 OAuthWebViewScreen(vm, p, onBack = { nav.popBackStack() })
                             }
                         }
+                        // Destination Instapaper (mode « choisir à chaque envoi »), au-dessus de
+                        // tout écran : listes, swipes et écran article y aboutissent.
+                        val pending = vm.instapaperPickerFor
+                        if (pending != null) {
+                            InstapaperTargetDialog(vm, pending.id, pending.title) { toast(ctx, it) }
+                        }
                     }
                 }
             }

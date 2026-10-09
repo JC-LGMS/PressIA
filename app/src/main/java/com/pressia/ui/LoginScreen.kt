@@ -48,6 +48,8 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     var instaPass by remember { mutableStateOf("") }
     var instaBusy by remember { mutableStateOf(false) }
     val instaConnected by vm.instapaperUser.collectAsState()
+    val instaMode by vm.instapaperMode.collectAsState()
+    val instaV2 by vm.instapaperV2.collectAsState()
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
 
@@ -288,6 +290,43 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                 enabled = instaUser.isNotBlank() && instaPass.isNotEmpty() && !instaBusy
             ) { Text(if (instaBusy) "Vérification…" else "Connecter Instapaper") }
         }
+        // ---- Mode d'envoi : direct, ou dossier + tags choisis à chaque fois (API v2) ----
+        Text("Envoi vers Instapaper", style = MaterialTheme.typography.titleSmall)
+        InstaModeRow(instaMode == "direct", "Envoyer directement",
+            "Sans dossier ni tag, avec le compte ci-dessus (aucune clé d'application requise).",
+            { vm.setInstapaperMode("direct") })
+        InstaModeRow(instaMode == "choose", "Choisir le dossier et les tags à chaque envoi",
+            "Demande la destination avant chaque envoi (connexion Instapaper « dossiers + tags » requise).",
+            { vm.setInstapaperMode("choose") })
+        if (instaMode == "choose") {
+            if (instaV2) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Dossiers + tags connectés", modifier = Modifier.weight(1f),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton({
+                        vm.disconnectInstapaperV2()
+                        toast(ctx, "Instapaper (dossiers + tags) déconnecté")
+                    }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
+                }
+            } else {
+                OutlinedButton({ onOAuth("instapaper") }, Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Folder, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Connecter Instapaper (dossiers + tags)")
+                }
+                Text(
+                    "Connexion OAuth dans l'application. Nécessite une clé d'application Instapaper " +
+                        "(INSTAPAPER_CLIENT_ID / INSTAPAPER_CLIENT_SECRET dans local.properties) et " +
+                        "l'URL de retour « pressia://oauth/instapaper » déclarée côté Instapaper.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
         if (vm.authMsg?.isNotBlank() == true) {
             Text(vm.authMsg!!, color = MaterialTheme.colorScheme.primary)
@@ -353,6 +392,23 @@ private fun AccountRow(
 }
 
 /**
+ * Choix du mode d'envoi Instapaper (bouton radio + aide) dans l'écran Comptes.
+ */
+@Composable
+private fun InstaModeRow(selected: Boolean, title: String, help: String, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onSelect).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
  * Traite un retour OAuth reçu par deep link (`pressia://oauth/feedly?code=…`), c'est-à-dire quand
  * le système relance l'application sur l'URL de redirection.
  *
@@ -363,11 +419,17 @@ suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
     val service = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
         ?: uri.getQueryParameter("provider")
         ?: "feedly"
-    val redirect = if (service == "feedly") BuildConfig.FEEDLY_REDIRECT_URI else BuildConfig.INOREADER_REDIRECT_URI
+    val redirect = when (service) {
+        "feedly" -> BuildConfig.FEEDLY_REDIRECT_URI
+        "instapaper" -> BuildConfig.INSTAPAPER_REDIRECT_URI
+        else -> BuildConfig.INOREADER_REDIRECT_URI
+    }
     val res = OAuth.parseRedirect(uri.toString(), "pressia://oauth")
     if (res == null) return "Retour OAuth illisible"
     res.error?.let { return "Connexion refusée : $it" }
     val code = res.code?.takeIf { it.isNotBlank() } ?: return "Retour OAuth sans code d'autorisation"
+
+    if (service == "instapaper") return vm.connectInstapaperV2Now(code)
 
     val d = vm.repo.prefs.data.first()
     val token = if (service == "feedly") {

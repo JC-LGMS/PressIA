@@ -138,6 +138,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val swipeRightAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_RIGHT_ACTION, "read").stateIn(viewModelScope, SharingStarted.Eagerly, "read")
     /** Identifiant Instapaper connecté, vide si aucun (le mot de passe reste dans les prefs). */
     val instapaperUser: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_USER, "").stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    /** Envoi Instapaper : "direct" (API simple) ou "choose" (dossier + tags via API v2). */
+    val instapaperMode: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_MODE, "direct").stateIn(viewModelScope, SharingStarted.Eagerly, "direct")
+    /** Jeton Instapaper API v2 présent (OAuth2 fait) — le jeton lui-même ne sort jamais du stockage. */
+    val instapaperV2: StateFlow<Boolean> = prefs.flow(Prefs.INSTAPAPER_TOKEN, "").map { it.isNotBlank() }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /**
+     * Article en attente de sa destination Instapaper (mode « choose ») : tant qu'il est non nul,
+     * le dialogue dossier + tags est affiché. Positionné par [askInstapaperTarget], effacé à
+     * l'envoi ou à l'annulation.
+     */
+    var instapaperPickerFor by mutableStateOf<ArticleEntity?>(null)
     val homeScreen: StateFlow<String> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, "subs")
     val justify: StateFlow<Boolean> = prefs.flow(Prefs.JUSTIFY, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val unreadOnly: StateFlow<Boolean> = prefs.flow(Prefs.SHOW_UNREAD_ONLY, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -541,6 +551,116 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                 com.pressia.data.remote.Instapaper.AddResult.InvalidCredentials -> "Instapaper : identifiants invalides"
                 com.pressia.data.remote.Instapaper.AddResult.ServerError -> "Instapaper indisponible, réessayez"
                 com.pressia.data.remote.Instapaper.AddResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
+            }
+        )
+    }
+
+    /** Mémorise le mode d'envoi Instapaper : "direct" (sans dossier ni tag) ou "choose" (à chaque fois). */
+    fun setInstapaperMode(mode: String) = viewModelScope.launch {
+        prefs.set(Prefs.INSTAPAPER_MODE, if (mode == "choose") "choose" else "direct")
+    }
+
+    /**
+     * Point d'entrée unique des boutons / swipes Instapaper : envoi direct en mode « direct »,
+     * ouverture du dialogue dossier + tags en mode « choose » ([instapaperPickerFor]).
+     */
+    fun sendOrAskInstapaper(article: ArticleEntity, done: (String) -> Unit) {
+        if (instapaperMode.value == "choose") instapaperPickerFor = article
+        else sendToInstapaper(article, done)
+    }
+
+    /** Ferme le dialogue dossier + tags sans envoyer. */
+    fun cancelInstapaperPicker() { instapaperPickerFor = null }
+
+    /** Identifiants d'application Instapaper v2 : réglage saisi, sinon valeur compilée. */
+    suspend fun instapaperClient(): Pair<String, String> {
+        val d = prefs.data.first()
+        val id = d[Prefs.INSTAPAPER_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: com.pressia.BuildConfig.INSTAPAPER_CLIENT_ID
+        val secret = d[Prefs.INSTAPAPER_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: com.pressia.BuildConfig.INSTAPAPER_CLIENT_SECRET
+        return id to secret
+    }
+
+    /** L'API v2 est utilisable : clé d'application renseignée et compte OAuth connecté. */
+    suspend fun instapaperV2Ready(): Boolean {
+        val (id, secret) = instapaperClient()
+        if (id.isBlank() || secret.isBlank()) return false
+        return prefs.data.first()[Prefs.INSTAPAPER_TOKEN]?.isNotBlank() == true
+    }
+
+    /**
+     * Termine la connexion Instapaper v2 après retour OAuth : échange le code contre un jeton
+     * (stocké, il n'expire pas) et mémorise la clé utilisée. Version suspendue, pour la WebView OAuth.
+     */
+    suspend fun connectInstapaperV2Now(code: String): String {
+        val (id, secret) = instapaperClient()
+        if (id.isBlank() || secret.isBlank()) {
+            return "Clé d'application manquante (INSTAPAPER_CLIENT_ID dans local.properties)"
+        }
+        val tok = try {
+            com.pressia.data.remote.OAuth.instapaperToken(code, id, secret)
+        } catch (_: Exception) { null }
+        if (tok.isNullOrBlank()) {
+            return "Échange code→jeton refusé : vérifiez la clé et l'URL de retour déclarée"
+        }
+        prefs.set(Prefs.INSTAPAPER_CLIENT_ID, id)
+        prefs.set(Prefs.INSTAPAPER_CLIENT_SECRET, secret)
+        prefs.set(Prefs.INSTAPAPER_TOKEN, tok)
+        return "Instapaper connecté (dossiers + tags)"
+    }
+
+    /** Même chose en rappel, pour les appelants hors coroutine. */
+    fun connectInstapaperV2(code: String, done: (String) -> Unit) = viewModelScope.launch {
+        done(connectInstapaperV2Now(code))
+    }
+
+    /** Déconnecte l'API v2 (le compte simple et le mode d'envoi sont conservés). */
+    fun disconnectInstapaperV2() = viewModelScope.launch { prefs.set(Prefs.INSTAPAPER_TOKEN, "") }
+
+    /** Dossiers du compte Instapaper (liste d'accueil exclue : c'est le choix « Accueil »). */
+    suspend fun instapaperFolders(): List<com.pressia.data.remote.InstapaperV2.Folder> {
+        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
+        if (tok.isBlank()) return emptyList()
+        return try { com.pressia.data.remote.InstapaperV2.folders(tok) } catch (_: Exception) { emptyList() }
+    }
+
+    /** Tags du compte, les plus utilisés d'abord. */
+    suspend fun instapaperTags(): List<com.pressia.data.remote.InstapaperV2.Tag> {
+        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
+        if (tok.isBlank()) return emptyList()
+        return try { com.pressia.data.remote.InstapaperV2.tags(tok) } catch (_: Exception) { emptyList() }
+    }
+
+    /** Crée un dossier Instapaper, null si refusé (titre déjà pris). */
+    suspend fun createInstapaperFolder(title: String): com.pressia.data.remote.InstapaperV2.Folder? {
+        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
+        if (tok.isBlank() || title.isBlank()) return null
+        return try { com.pressia.data.remote.InstapaperV2.createFolder(tok, title.trim()) } catch (_: Exception) { null }
+    }
+
+    /**
+     * Envoie un article vers Instapaper v2, dans un dossier et avec des tags (créés si besoin).
+     * Sans jeton, le message renvoie vers l'écran Comptes.
+     */
+    fun sendToInstapaperTarget(article: ArticleEntity, folderId: Long?, tags: List<String>, done: (String) -> Unit) = viewModelScope.launch {
+        instapaperPickerFor = null
+        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
+        if (tok.isBlank()) {
+            done("Instapaper (dossiers + tags) non connecté : voyez l'écran Comptes")
+            return@launch
+        }
+        val url = article.url
+        if (url.isBlank()) {
+            done("Cet article n'a pas de lien à envoyer")
+            return@launch
+        }
+        val title = com.pressia.data.remote.cleanTitle(article.title).ifBlank { "(sans titre)" }
+        done(
+            when (com.pressia.data.remote.InstapaperV2.save(tok, url, title, folderId, tags)) {
+                com.pressia.data.remote.InstapaperV2.SaveResult.Ok -> "Envoyé vers Instapaper"
+                com.pressia.data.remote.InstapaperV2.SaveResult.BadRequest -> "Envoi refusé par Instapaper"
+                com.pressia.data.remote.InstapaperV2.SaveResult.Unauthorized -> "Instapaper : reconnectez le compte (Comptes)"
+                com.pressia.data.remote.InstapaperV2.SaveResult.ServerError -> "Instapaper indisponible, réessayez"
+                com.pressia.data.remote.InstapaperV2.SaveResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
             }
         )
     }

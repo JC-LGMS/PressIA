@@ -28,6 +28,13 @@ android {
         buildConfigField("String", "INOREADER_APP_ID", "\"${project.findProperty("INOREADER_APP_ID") ?: System.getenv("INOREADER_APP_ID") ?: ""}\"")
         buildConfigField("String", "INOREADER_APP_KEY", "\"${project.findProperty("INOREADER_APP_KEY") ?: System.getenv("INOREADER_APP_KEY") ?: ""}\"")
         buildConfigField("String", "INOREADER_REDIRECT_URI", "\"pressia://oauth/inoreader\"")
+        // Instapaper API v2 (dossiers + tags) : https://www.instapaper.com/developers — créez une
+        // application, ajoutez « pressia://oauth/instapaper » à ses URL de retour, puis renseignez
+        // INSTAPAPER_CLIENT_ID / INSTAPAPER_CLIENT_SECRET. Sans clé, seul l'envoi direct (API simple)
+        // fonctionne.
+        buildConfigField("String", "INSTAPAPER_CLIENT_ID", "\"${project.findProperty("INSTAPAPER_CLIENT_ID") ?: System.getenv("INSTAPAPER_CLIENT_ID") ?: ""}\"")
+        buildConfigField("String", "INSTAPAPER_CLIENT_SECRET", "\"${project.findProperty("INSTAPAPER_CLIENT_SECRET") ?: System.getenv("INSTAPAPER_CLIENT_SECRET") ?: ""}\"")
+        buildConfigField("String", "INSTAPAPER_REDIRECT_URI", "\"pressia://oauth/instapaper\"")
     }
 
     buildFeatures {

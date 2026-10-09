@@ -685,7 +685,7 @@ fun ArticleList(
         ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
             showSource = showSource,
-            onInstapaper = { sendScope.launch { vm.sendToInstapaper(a) { toast(ctx, it) } } },
+            onInstapaper = { sendScope.launch { vm.sendOrAskInstapaper(a) { toast(ctx, it) } } },
             swipe = swipe, swipeRight = swipeRight)
     }
     if (mode == "magazine") {

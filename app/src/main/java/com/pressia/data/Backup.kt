@@ -34,7 +34,7 @@ const val BACKUP_VERSION = 1
  * Préférences tenant un secret (mots de passe d'API) : jamais exportées / restaurées
  * automatiquement, seulement si l'utilisateur coche explicitement les jetons.
  */
-val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key", "instapaper_pass")
+val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key", "instapaper_pass", "instapaper_token", "instapaper_client_id", "instapaper_client_secret")
 
 /**
  * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file

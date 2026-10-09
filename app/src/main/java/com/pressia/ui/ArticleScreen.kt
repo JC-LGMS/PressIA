@@ -128,7 +128,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                 actions = {
                     topActions.forEach { id ->
                         when (id) {
-                            "instapaper" -> IconButton({ article?.let { vm.sendToInstapaper(it) { toast(ctx, it) } } }) {
+                            "instapaper" -> IconButton({ article?.let { vm.sendOrAskInstapaper(it) { toast(ctx, it) } } }) {
                                 Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
                             }
                             "star" -> IconButton({ article?.let {
