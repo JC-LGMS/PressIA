@@ -252,8 +252,8 @@ fun ArticleRow(
  *
  * Même fonctionnement des deux côtés : le bouton de fin disparaît dès le début du
  * glissement et laisse place à l'icône de l'action du sens en cours, qui reflète l'état
- * actuel ; dès que le seuil est franchi l'action bascule (une seule fois par geste et par
- * sens), et le bouton revient au relâchement. L'état du geste est stable (clé sur l'id
+ * actuel ; dès que le seuil est franchi (144 px, course max 320 px) l'action bascule (une
+ * seule fois par geste et par sens), et le bouton revient au relâchement. L'état du geste est stable (clé sur l'id
  * seul) pour que deux balayages d'affilée fonctionnent.
  *
  * [iconAtStart] place l'icône du côté du rond lu/non-lu, qui n'est pas toujours le même selon
@@ -292,8 +292,8 @@ private fun SwipeAction(
     var swiping by remember(a.id, action, actionRight) { mutableStateOf(false) }
     // Sens du geste qui a basculé : -1 gauche, +1 droite, 0 aucun (remis si on revient en arrière).
     var fired by remember(a.id, action, actionRight) { mutableIntStateOf(0) }
-    val lo = if (action == "none") 0f else -160f
-    val hi = if (actionRight == "none") 0f else 160f
+    val lo = if (action == "none") 0f else -320f
+    val hi = if (actionRight == "none") 0f else 320f
     Box(
         Modifier.fillMaxWidth().pointerInput(a.id, action, actionRight) {
             detectHorizontalDragGestures(
@@ -305,10 +305,10 @@ private fun SwipeAction(
                     // fois par geste et par sens : le drapeau est remis si l'utilisateur revient
                     // en arrière, ce qui autorise l'autre sens dans le même geste.
                     if (fired == 0) {
-                        if (dx <= -72f) { fired = -1; toggleLeft() }
-                        else if (dx >= 72f) { fired = 1; toggleRight() }
-                    } else if (fired == -1 && dx > -72f) fired = 0
-                    else if (fired == 1 && dx < 72f) fired = 0
+                        if (dx <= -144f) { fired = -1; toggleLeft() }
+                        else if (dx >= 144f) { fired = 1; toggleRight() }
+                    } else if (fired == -1 && dx > -144f) fired = 0
+                    else if (fired == 1 && dx < 144f) fired = 0
                 },
                 onDragEnd = { dx = 0f; swiping = false; fired = 0 },
                 onDragCancel = { dx = 0f; swiping = false; fired = 0 }
