@@ -383,6 +383,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Synchronisation au démarrage, si l'option est active et qu'aucune synchro bien finie
      * ne date de moins de X minutes (X = réglage « Fréquence de synchronisation »).
      *
+     * Quand elle a lieu, elle affiche le même message que la synchro manuelle ([syncNow]).
      * Sautée, elle est totalement silencieuse : ni verrou (donc aucune animation de synchro),
      * ni réseau, ni rafraîchissement — le [refresh] qui suit dans MainActivity suffit à remplir
      * les listes.
@@ -401,11 +402,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             if (syncOnLaunch.value) {
                 android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
-                repo.pushQueue().also { repo.syncDown() }
-                prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+                // Même message que la synchro manuelle (nouveautés, fin ou échec).
+                syncMsg = syncNow()
+                repo.syncReadLater()
+                refreshNow()
+            } else {
+                repo.syncReadLater()
+                refreshNow()
             }
-            repo.syncReadLater()
-            refreshNow()
         } finally {
             unlockSync()
         }
