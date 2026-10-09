@@ -1,5 +1,6 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -9,7 +10,6 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -50,6 +50,9 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
     var offsetX by remember(articleId) { mutableFloatStateOf(0f) }
     var dragging by remember(articleId) { mutableStateOf(false) }
+    // Le défilement repart du haut à chaque article : sans clé, le voisin ouvert par balayage
+    // s'affichait à la position de l'article quitté.
+    val scrollState = remember(articleId) { ScrollState(0) }
 
     /** Contenu RSS d'origine (jamais le HTML complet, pour éviter les allers-retours dégradés). */
     fun rssHtml(a: ArticleEntity?): String? = a?.summary?.takeIf { it.isNotBlank() } ?: a?.content
@@ -184,7 +187,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                 }
         ) {
         Column(
-            Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())
+            Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)
                 .graphicsLayer { translationX = offsetX }
                 .pointerInput(Unit) {
                     detectTapGestures(onDoubleTap = { scope.launch { toggleMode() } })
