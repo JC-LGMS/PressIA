@@ -41,6 +41,8 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val fontSize by vm.fontSize.collectAsState()
     val justify by vm.justify.collectAsState()
     val titleSp by vm.articleTitle.collectAsState()
+    // Icônes configurées en Réglages, dans l'ordre choisi (le menu reste toujours en dernier).
+    val topActions by vm.articleActions.collectAsState()
 
     // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
     // horizontal navigue vers eux. Hors liste (recherche, favoris), pas de voisin.
@@ -124,33 +126,37 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     }
                 },
                 actions = {
-                    IconButton({ article?.let { vm.sendToInstapaper(it) { toast(ctx, it) } } }) {
-                        Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
+                    topActions.forEach { id ->
+                        when (id) {
+                            "instapaper" -> IconButton({ article?.let { vm.sendToInstapaper(it) { toast(ctx, it) } } }) {
+                                Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
+                            }
+                            "star" -> IconButton({ article?.let {
+                                vm.setStar(it.id, !it.starred); article = article?.copy(starred = !it.starred)
+                                toast(ctx, if (!it.starred) "Ajouté aux favoris" else "Retiré des favoris")
+                            } }) {
+                                // Favori dans la couleur dominante de l'application.
+                                Icon(
+                                    if (article?.starred == true) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    "favori", tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            "read" -> IconButton({ article?.let {
+                                vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
+                                toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
+                            } }) {
+                                Icon(
+                                    // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
+                                    // rond des listes) : c'est un bouton d'action, pas un indicateur.
+                                    if (article?.unread == true) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
+                                    if (article?.unread == true) "marquer lu" else "marquer non lu",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
+                        }
                     }
-                    IconButton({ article?.let {
-                        vm.setStar(it.id, !it.starred); article = article?.copy(starred = !it.starred)
-                        toast(ctx, if (!it.starred) "Ajouté aux favoris" else "Retiré des favoris")
-                    } }) {
-                        // Favori dans la couleur dominante de l'application.
-                        Icon(
-                            if (article?.starred == true) Icons.Filled.Star else Icons.Filled.StarBorder,
-                            "favori", tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    IconButton({ article?.let {
-                        vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
-                        toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
-                    } }) {
-                        Icon(
-                            // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
-                            // rond des listes) : c'est un bouton d'action, pas un indicateur.
-                            if (article?.unread == true) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
-                            if (article?.unread == true) "marquer lu" else "marquer non lu",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
                     IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") }
                 }
             )

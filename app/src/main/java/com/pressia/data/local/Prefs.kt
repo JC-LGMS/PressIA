@@ -44,7 +44,11 @@ class Prefs(private val ctx: Context) {
         val ARTICLE_TITLE_SIZE = intPreferencesKey("article_title_size") // titre écran article, sp 12..28
         val DATE_FONT_SIZE = intPreferencesKey("date_font_size") // dates de liste, sp 10..16
         val TRAILING_ACTION = stringPreferencesKey("trailing_action") // "star"|"read"|"share"|"instapaper"|"none"
-        /** Glissement d'un article vers la gauche : "star"|"read"|"share"|"instapaper"|"none". */
+        /**
+         * Icônes d'action de l'écran article, dans l'ordre d'affichage : identifiants séparés par
+         * des virgules parmi "star"|"read"|"share"|"instapaper". Défaut : favoris, lu/non-lu, partage.
+         */
+        val ARTICLE_ACTIONS = stringPreferencesKey("article_actions")        /** Glissement d'un article vers la gauche : "star"|"read"|"share"|"instapaper"|"none". */
         val SWIPE_ACTION = stringPreferencesKey("swipe_action")
         /** Glissement d'un article vers la droite : mêmes options, défaut "read". */
         val SWIPE_RIGHT_ACTION = stringPreferencesKey("swipe_right_action")
@@ -122,7 +126,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("background", BG), PrefEntry.Str("view_mode", VIEW_MODE),
             PrefEntry.IntPref("font_size", FONT_SIZE), PrefEntry.IntPref("title_font_size", TITLE_FONT_SIZE),
             PrefEntry.IntPref("article_title_size", ARTICLE_TITLE_SIZE), PrefEntry.IntPref("date_font_size", DATE_FONT_SIZE),
-            PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("swipe_action", SWIPE_ACTION),
+            PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("article_actions", ARTICLE_ACTIONS), PrefEntry.Str("swipe_action", SWIPE_ACTION),
             PrefEntry.Str("swipe_right_action", SWIPE_RIGHT_ACTION),
             PrefEntry.Str("home_screen", HOME_SCREEN),
             PrefEntry.Bool("justify", JUSTIFY), PrefEntry.Bool("wifi_only", WIFI_ONLY),

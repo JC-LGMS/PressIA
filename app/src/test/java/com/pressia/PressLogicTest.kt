@@ -1,6 +1,7 @@
 package com.pressia
 
 import com.pressia.data.favScopeArg
+import com.pressia.ui.parseArticleActions
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
 import com.pressia.data.local.ThumbStore
@@ -42,6 +43,12 @@ class PressLogicTest {
         assertEquals("all", favScopeArg("all"))
         assertEquals("", favScopeArg(""))
         assertEquals("", favScopeArg("nimporte-quoi"))
+    }
+    @Test fun `icones article gardees en ordre sans doublons ni inconnus`() {
+        assertEquals(listOf("star", "read", "share"), parseArticleActions("star,read,share"))
+        assertEquals(listOf("share", "star"), parseArticleActions("share,star,share"))
+        assertEquals(emptyList<String>(), parseArticleActions(""))
+        assertEquals(listOf("read"), parseArticleActions("bazar,read"))
     }
     @Test fun `dedup hash identique pour même titre`() {
         val h1 = dedupHash("Hello World!", "https://ex.com/a?x=1")

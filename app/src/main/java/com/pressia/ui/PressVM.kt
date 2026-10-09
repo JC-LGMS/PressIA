@@ -37,6 +37,28 @@ fun favSetLabel(set: String): String = when (set) {
     else -> "Favoris PressIA"
 }
 
+/** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
+val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "instapaper")
+
+/** Icônes affichées par défaut : favoris, lu/non-lu, partage. */
+const val ARTICLE_ACTIONS_DEFAULT = "star,read,share"
+
+/** Libellé d'une icône d'action d'article, pour les réglages. */
+fun articleActionLabel(id: String): String = when (id) {
+    "star" -> "Favoris"
+    "read" -> "Lu/non-lu"
+    "share" -> "Partager"
+    "instapaper" -> "Instapaper"
+    else -> id
+}
+
+/**
+ * Icônes activées, dans l'ordre d'affichage : inconnus et doublons ignorés (une sauvegarde
+ * extérieure ne doit jamais faire tomber la barre d'actions).
+ */
+fun parseArticleActions(raw: String): List<String> =
+    raw.split(",").map { it.trim() }.filter { it in ARTICLE_ACTION_IDS }.distinct()
+
 class PressVM(val repo: PressRepository) : ViewModel() {
     val prefs = repo.prefs
     var scope by mutableStateOf(Scope())
@@ -106,6 +128,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val articleTitle: StateFlow<Int> = prefs.flow(Prefs.ARTICLE_TITLE_SIZE, 20).stateIn(viewModelScope, SharingStarted.Eagerly, 20)
     val dateFont: StateFlow<Int> = prefs.flow(Prefs.DATE_FONT_SIZE, 12).stateIn(viewModelScope, SharingStarted.Eagerly, 12)
     val trailingAction: StateFlow<String> = prefs.flow(Prefs.TRAILING_ACTION, "read").stateIn(viewModelScope, SharingStarted.Eagerly, "read")
+    /** Icônes d'action de l'écran article, dans l'ordre d'affichage (menu toujours en dernier). */
+    val articleActions: StateFlow<List<String>> = prefs.flow(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT)
+        .map { parseArticleActions(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, parseArticleActions(ARTICLE_ACTIONS_DEFAULT))
     /** Glissement d'un article vers la gauche : "star" (défaut) | "read" | "share" | "instapaper" | "none". */
     val swipeAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_ACTION, "star").stateIn(viewModelScope, SharingStarted.Eagerly, "star")
     /** Glissement d'un article vers la droite : mêmes options, "read" par défaut. */

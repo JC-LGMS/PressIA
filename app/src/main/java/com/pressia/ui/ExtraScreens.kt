@@ -445,6 +445,7 @@ fun SettingsScreen(vm: PressVM) {
     var trailing by remember { mutableStateOf("read") }
     var swipe by remember { mutableStateOf("star") }
     var swipeRight by remember { mutableStateOf("read") }
+    var articleActions by remember { mutableStateOf(parseArticleActions(ARTICLE_ACTIONS_DEFAULT)) }
     var fontSize by remember { mutableStateOf(16) }
     var articleTitle by remember { mutableStateOf(20) }
     var titleFont by remember { mutableStateOf(16) }
@@ -484,6 +485,7 @@ fun SettingsScreen(vm: PressVM) {
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
         swipe = get(Prefs.SWIPE_ACTION, "star")
         swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
+        articleActions = parseArticleActions(get(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT))
         fontSize = get(Prefs.FONT_SIZE, 16); articleTitle = get(Prefs.ARTICLE_TITLE_SIZE, 20)
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
@@ -548,6 +550,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
         vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
         vm.repo.prefs.set(Prefs.SWIPE_RIGHT_ACTION, swipeRight)
+        vm.repo.prefs.set(Prefs.ARTICLE_ACTIONS, articleActions.joinToString(","))
         vm.repo.prefs.set(Prefs.FONT_SIZE, fontSize); vm.repo.prefs.set(Prefs.ARTICLE_TITLE_SIZE, articleTitle)
         vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
         vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
@@ -710,6 +713,42 @@ fun SettingsScreen(vm: PressVM) {
             label = "Action du glissement",
             onSelect = { swipeRight = it; save() }
         )
+        Text("Icônes d'action de l'écran article")
+        Text(
+            "Cochez celles à afficher, dans l'ordre voulu avec les flèches. Le menu reste toujours en dernier.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // Les décochées suivent dans l'ordre canonique : les cocher les ajoute en fin de liste,
+        // d'où on les remonte avec les flèches.
+        val orderedIds = articleActions + (ARTICLE_ACTION_IDS - articleActions.toSet())
+        fun move(id: String, delta: Int) {
+            val cur = articleActions.toMutableList()
+            val from = cur.indexOf(id)
+            val to = (from + delta).coerceIn(0, cur.lastIndex)
+            if (from != to) {
+                cur.add(to, cur.removeAt(from))
+                articleActions = cur
+                save()
+            }
+        }
+        orderedIds.forEach { id ->
+            val enabled = id in articleActions
+            val pos = articleActions.indexOf(id)
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Checkbox(enabled, {
+                    articleActions = if (enabled) articleActions - id else articleActions + id
+                    save()
+                })
+                Text(articleActionLabel(id), Modifier.weight(1f))
+                IconButton({ move(id, -1) }, enabled = enabled && pos > 0) {
+                    Icon(Icons.Filled.KeyboardArrowUp, "monter")
+                }
+                IconButton({ move(id, 1) }, enabled = enabled && pos < articleActions.lastIndex) {
+                    Icon(Icons.Filled.KeyboardArrowDown, "descendre")
+                }
+            }
+        }
         val tapFav by vm.tapFaviconRead.collectAsState()
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
