@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Unit) {
-    LaunchedEffect(Unit) { vm.refresh() }
+    LaunchedEffect(Unit) { vm.refreshQuiet() }
     val ctx = LocalContext.current
     val totalUnread = vm.unreads.values.sum()
     val hiddenEmpty by vm.hideEmptySubs.collectAsState()
@@ -89,7 +89,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
         val jumpScope = rememberCoroutineScope()
         Box(Modifier.padding(pad).fillMaxSize()) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            if (vm.subs.isEmpty() && !vm.syncing) {
+            if (vm.subs.isEmpty() && vm.loaded && !vm.syncing) {
                 item {
                     Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Aucun abonnement.")

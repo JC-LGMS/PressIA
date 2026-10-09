@@ -80,7 +80,7 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            if (localArticles.isEmpty() && !vm.syncing) {
+            if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
                 Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                     Text(
                         if (!unreadOnly) "Rien ici — synchronisez."
@@ -209,7 +209,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                 }
             }
             when {
-                articles.isEmpty() && !vm.syncing -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                articles.isEmpty() && vm.loaded && !vm.syncing -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                     Text(
                         when (set) {
                             "later" -> "Rien dans le tableau « Read later » — touchez l'actualisation pour le recharger."

@@ -258,8 +258,19 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try { refreshNow() } finally { unlockSync() }
     }
 
+    /**
+     * Rechargement silencieux (lancement) : remplit l'état sans allumer l'indicateur de
+     * synchronisation. Les listes se remplissent dès que la base répond, sans animation.
+     */
+    fun refreshQuiet() = viewModelScope.launch { refreshNow() }
+
+    /** Vrai une fois le premier remplissage terminé : avant, vide = « pas encore chargé ». */
+    var loaded by mutableStateOf(false)
+        private set
+
     /** Remplit l'état local depuis la base (version suspendable de [refresh]). */
     private suspend fun refreshNow() {
+        try {
         // Un compte connecté avant la version multi-comptes doit être repris avant d'être listé.
         repo.migrateLegacyAccount()
         categories = repo.categories()
@@ -270,6 +281,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         articles = repo.stream(scope.feedId, scope.categoryId, unreadOnly.value)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
+        } finally {
+            loaded = true
+        }
     }
 
     /** Bascule « masquer les flux sans dossier », pour l'écran Accueil. */

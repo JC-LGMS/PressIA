@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 vm.syncOnLaunch()
-                vm.refresh()
+                vm.refreshQuiet()
             }
             PressIATheme(theme, accent, bg) {
                 val nav = rememberNavController()
