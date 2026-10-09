@@ -37,6 +37,14 @@ fun favSetLabel(set: String): String = when (set) {
     else -> "Favoris PressIA"
 }
 
+/**
+ * Vrai si une synchronisation finie à [lastMs] suffit encore : moins de [windowMin] minutes.
+ * Fenêtre nulle ou négative (fréquence « manuelle ») : jamais frais, on synchronise dès que
+ * l'option de lancement est active.
+ */
+fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
+    lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
+
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
 val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "instapaper")
 
@@ -346,6 +354,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             val pushed = repo.pushQueue()
             val n = repo.syncDown()
+            // Toute synchro bien finie (manuelle, lancement, tâche planifiée) recule le garde-fou :
+            // le lancement suivant saute si elle date de moins de X minutes (voir syncOnLaunch).
+            repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
             // Refresh en attente, et non lancé en arrière-plan : sans cela on pouvait annoncer
             // « connecté » en revenant sur des listes encore vides.
             refreshNow()
@@ -362,18 +373,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun sync() = viewModelScope.launch { syncMsg = syncNow() }
 
     /**
-     * Durée minimale entre deux synchronisations automatiques au lancement.
-     *
-     * Sans ce délai, ouvrir l'application cinq fois dans la matinée coûtait cinq requêtes
-     * complètes alors que la première avait déjà tout apporté. Dix minutes est assez court pour
-     * que « j'ouvre l'app, je lis » reste frais, et assez long pour que les ouvertures enchaînées
-     * ne se multiplient pas.
-     */
-    private val launchSyncDelayMs = 10L * 60L * 1000L
-
-    /**
-     * Synchronisation au démarrage, si l'option est active et que [Prefs.LAST_SYNC_AT] est
-     * plus vieux que [launchSyncDelayMs].
+     * Synchronisation au démarrage, si l'option est active et qu'aucune synchro bien finie
+     * ne date de moins de X minutes (X = réglage « Fréquence de synchronisation »).
      *
      * La file d'attente locale est toujours vidée : elle ne coûte aucune requête réseau et
      * ne dépend que des actions de lecture en attente depuis la dernière visite.
@@ -383,10 +384,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             val prefs = repo.prefs
             val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
-            val fresh = last > 0L && System.currentTimeMillis() - last < launchSyncDelayMs
-            if (syncOnLaunch.value && !fresh) {
+            val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
+            val ageMin = if (last > 0L) (System.currentTimeMillis() - last) / 60_000L else -1L
+            if (syncOnLaunch.value && !isSyncFresh(last, System.currentTimeMillis(), windowMin)) {
+                android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
                 repo.pushQueue().also { repo.syncDown() }
                 prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+            } else if (syncOnLaunch.value) {
+                android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
             }
             repo.syncReadLater()
             refreshNow()

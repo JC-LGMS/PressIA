@@ -454,7 +454,7 @@ fun SettingsScreen(vm: PressVM) {
     var wifiOnly by remember { mutableStateOf(true) }
     var maxItems by remember { mutableStateOf(1000) }
     var imagesOffline by remember { mutableStateOf(true) }
-    var interval by remember { mutableStateOf(120) }
+    var interval by remember { mutableStateOf(Prefs.SYNC_INTERVAL_DEFAULT) }
     var openMode by remember { mutableStateOf("internal") }
     var mergeFolders by remember { mutableStateOf(true) }
     var drawerScale by remember { mutableStateOf(100) }
@@ -491,7 +491,7 @@ fun SettingsScreen(vm: PressVM) {
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
         wifiOnly = get(Prefs.WIFI_ONLY, true); maxItems = get(Prefs.MAX_ITEMS, 1000)
-        imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, 120)
+        imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
@@ -781,13 +781,14 @@ fun SettingsScreen(vm: PressVM) {
         }
         Text(
             "Au démarrage, PressIA récupère les nouveaux articles de tous vos comptes ainsi que le tableau " +
-                "« Read later », sans attendre la première ouverture d'un flux. Si vous rouvrez l'application " +
-                "dans les dix minutes qui suivent, la synchronisation est sautée : les données sont déjà là. " +
+                "« Read later », sans attendre la première ouverture d'un flux. Mais pas si une synchronisation " +
+                "s'est bien finie il y a moins longtemps que la « Fréquence de synchronisation » ci-dessous " +
+                "(10 minutes par défaut) : les données sont déjà là. " +
                 "Le bouton d'actualisation, lui, marche toujours.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text("Un seul réglage de volume : le nombre d'articles conservés. La fréquence ne change que la planification.",
+        Text("Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la planification en arrière-plan, et la fenêtre pendant laquelle le lancement ne resynchronise pas.",
             style = MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Wi-Fi uniquement"); Spacer(Modifier.weight(1f)); Switch(wifiOnly, { wifiOnly = it; save() })
@@ -801,7 +802,8 @@ fun SettingsScreen(vm: PressVM) {
             if (interval <= 0) "Fréquence de synchronisation : manuelle"
             else "Fréquence de synchronisation : toutes les $interval min"
         )
-        Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 24)
+        // 73 crans de 10 min sur 0..720 : le défaut de 10 min est sélectionnable au cran près.
+        Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 71)
         Text("Cache utilisé : $cacheInfo")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }

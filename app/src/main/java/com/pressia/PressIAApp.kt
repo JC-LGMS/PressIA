@@ -22,7 +22,7 @@ class PressIAApp : Application() {
         }
         CoroutineScope(Dispatchers.IO).launch {
             val p = Prefs(this@PressIAApp)
-            val interval = p.data.first()[Prefs.SYNC_INTERVAL_MIN] ?: 120
+            val interval = p.data.first()[Prefs.SYNC_INTERVAL_MIN] ?: Prefs.SYNC_INTERVAL_DEFAULT
             val wifi = p.data.first()[Prefs.WIFI_ONLY] ?: true
             SyncWorker.schedule(this@PressIAApp, interval, wifi)
         }

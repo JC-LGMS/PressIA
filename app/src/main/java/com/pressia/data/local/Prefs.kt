@@ -65,6 +65,8 @@ class Prefs(private val ctx: Context) {
         val MAX_ITEMS = intPreferencesKey("max_items") // taille max cache par flux
         val IMAGES_OFFLINE = booleanPreferencesKey("images_offline")
         val SYNC_INTERVAL_MIN = intPreferencesKey("sync_interval_min") // 0 = manuel
+        /** Fréquence de synchronisation par défaut, en minutes (fenêtre anti-doublon au lancement). */
+        const val SYNC_INTERVAL_DEFAULT = 10
         val SHOW_UNREAD_ONLY = booleanPreferencesKey("show_unread_only")
 
         /** Synchronisation automatique au lancement de l'application. */

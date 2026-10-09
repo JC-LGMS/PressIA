@@ -1,6 +1,7 @@
 package com.pressia
 
 import com.pressia.data.favScopeArg
+import com.pressia.ui.isSyncFresh
 import com.pressia.ui.parseArticleActions
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
@@ -35,6 +36,14 @@ class PressLogicTest {
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 41))
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = null, currentTotal = 42))
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = null))
+    }
+    @Test fun `lancement saute si synchro recente`() {
+        // Fenêtre de 10 min : 5 min après, frais ; 15 min après, à refaire.
+        assertTrue(isSyncFresh(lastMs = 1000L, nowMs = 1000L + 5 * 60_000L, windowMin = 10))
+        assertFalse(isSyncFresh(lastMs = 1000L, nowMs = 1000L + 15 * 60_000L, windowMin = 10))
+        // Jamais synchronisé : à faire. Fréquence manuelle (0) : toujours à faire.
+        assertFalse(isSyncFresh(lastMs = 0L, nowMs = 1000L, windowMin = 10))
+        assertFalse(isSyncFresh(lastMs = 1000L, nowMs = 1000L + 60_000L, windowMin = 0))
     }
     @Test fun `jeu favoris app mappe sur starred`() {
         assertEquals("starred", favScopeArg("app"))
