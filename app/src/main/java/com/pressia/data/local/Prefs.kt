@@ -113,6 +113,13 @@ class Prefs(private val ctx: Context) {
          */
         val INSTAPAPER_MODE = stringPreferencesKey("instapaper_mode")
         /**
+         * Comptes à la session expirée (virgules, voir `encodeExpired`) : jeton révoqué côté
+         * Feedly/Inoreader (401/403), identifiants Instapaper refusés. Posé à la détection,
+         * retiré dès qu'un appel authentifié du compte réussit ou qu'il est reconnecté /
+         * supprimé — jamais périmé, et auto-réparé par la prochaine synchronisation.
+         */
+        val EXPIRED_ACCOUNTS = stringPreferencesKey("expired_accounts")
+        /**
          * Session web Instapaper active (dossiers + tags disponibles) : les cookies vivent dans la
          * WebView, ce drapeau ne fait que mémoriser le dernier état vérifié. À la moindre
          * expiration (401/403), une reconnexion silencieuse est tentée avec les identifiants
@@ -156,7 +163,8 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),
-            PrefEntry.Str("instapaper_mode", INSTAPAPER_MODE), PrefEntry.Bool("instapaper_web", INSTAPAPER_WEB)
+            PrefEntry.Str("instapaper_mode", INSTAPAPER_MODE), PrefEntry.Bool("instapaper_web", INSTAPAPER_WEB),
+            PrefEntry.Str("expired_accounts", EXPIRED_ACCOUNTS)
         )
     }
 

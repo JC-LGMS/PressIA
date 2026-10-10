@@ -61,6 +61,30 @@ fun accountIdOf(service: String, token: String): String =
     "${service.lowercase()}#${accountFingerprint(token)}"
 
 /**
+ * Échec d'authentification (jeton révoqué / expiré, identifiants refusés) ? Les appels cloud
+ * (Retrofit) lèvent [retrofit2.HttpException] avec le code HTTP ; 401 et 403 signifient que la
+ * session est morte, tout le reste (500, réseau…) est transitoire. Remonte la chaîne des causes,
+ * Retrofit et OkHttp enveloppant souvent l'erreur d'origine.
+ */
+fun isAuthFailure(t: Throwable): Boolean {
+    var c: Throwable? = t
+    while (c != null) {
+        if (c is retrofit2.HttpException && (c.code() == 401 || c.code() == 403)) return true
+        val next = c.cause
+        if (next == null || next === c) break
+        c = next
+    }
+    return false
+}
+
+/** Comptes à la session expirée, sérialisés (virgules, triés) pour [com.pressia.data.local.Prefs]. */
+fun encodeExpired(ids: Set<String>): String = ids.map { it.trim() }.filter { it.isNotEmpty() }.sorted().joinToString(",")
+
+/** Parse [encodeExpired], tolérant (vide, doublons, espaces). */
+fun parseExpired(raw: String?): Set<String> =
+    raw.orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+/**
  * Lecture / écriture du registre de comptes. Volontairement sans dépendance Android : le format
  * est couvert par les tests unitaires.
  */

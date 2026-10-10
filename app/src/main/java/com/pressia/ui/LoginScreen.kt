@@ -55,6 +55,8 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
 
     val accounts = vm.accounts
     val activeId by vm.activeAccountId.collectAsState()
+    // Comptes à la session expirée : avertis avec réinvite (boutons de connexion existants).
+    val expired by vm.expiredAccounts.collectAsState()
     // [AccountInfo.provider] porte l'identifiant du compte actif : c'est le repli quand la
     // préférence n'a pas encore été lue, pour que la ligne du compte actif soit cochée d'emblée.
     val active = activeId ?: vm.account?.provider
@@ -140,6 +142,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                     account = acc,
                     feeds = vm.subs.count { it.provider == acc.id },
                     active = acc.id == active,
+                    expired = acc.id in expired,
                     onSelect = { vm.useAccount(acc); toast(ctx, "Compte ${acc.label} actif") },
                     onRemove = { removing = acc }
                 )
@@ -258,6 +261,13 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                     toast(ctx, "Instapaper déconnecté")
                 }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
             }
+            if ("instapaper" in expired) {
+                Text(
+                    "Identifiants refusés — vérifiez le mot de passe (ou reconnectez le compte)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         } else {
             OutlinedTextField(
                 instaUser, { instaUser = it }, label = { Text("Identifiant Instapaper") },
@@ -304,18 +314,23 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
         // La session web se connecte toute seule (à la connexion du compte, puis à chaque
         // besoin) : aucun bouton, juste un état.
         if (instaMode == "choose") {
+            val webExpired = "instapaper_web" in expired
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     if (instaWeb) Icons.Filled.Folder else Icons.Filled.FolderOpen,
-                    null, tint = MaterialTheme.colorScheme.primary
+                    null, tint = if (webExpired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (instaWeb) "Dossiers + tags connectés"
-                    else "Dossiers + tags : connexion automatique au premier envoi",
+                    when {
+                        webExpired -> "Session expirée : vérifiez l'identifiant et le mot de passe ci-dessus"
+                        instaWeb -> "Dossiers + tags connectés"
+                        else -> "Dossiers + tags : connexion automatique au premier envoi"
+                    },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (instaWeb) MaterialTheme.colorScheme.onSurface
+                    color = if (webExpired) MaterialTheme.colorScheme.error
+                    else if (instaWeb) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -359,6 +374,7 @@ private fun AccountRow(
     account: CloudAccount,
     feeds: Int,
     active: Boolean,
+    expired: Boolean,
     onSelect: () -> Unit,
     onRemove: () -> Unit
 ) {
@@ -380,6 +396,15 @@ private fun AccountRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // Session expirée : l'utilisateur sait pourquoi rien n'arrive et que faire —
+            // les boutons de connexion plus haut servent à reconnecter.
+            if (expired) {
+                Text(
+                    "Session expirée — reconnectez-vous",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
         IconButton(onRemove) { Icon(Icons.Filled.Delete, "déconnecter", Modifier.size(18.dp)) }
     }

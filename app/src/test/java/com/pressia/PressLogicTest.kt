@@ -141,6 +141,31 @@ class PressLogicTest {
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
     }
+    private fun httpError(code: Int): retrofit2.HttpException {
+        val body = okhttp3.ResponseBody.create(null, "")
+        return retrofit2.HttpException(retrofit2.Response.error<String>(code, body))
+    }
+    @Test fun `echec auth detecte 401 et 403`() {
+        assertTrue(com.pressia.data.isAuthFailure(httpError(401)))
+        assertTrue(com.pressia.data.isAuthFailure(httpError(403)))
+        // Le reste est transitoire : pas d'alerte à reconnecter.
+        assertFalse(com.pressia.data.isAuthFailure(httpError(404)))
+        assertFalse(com.pressia.data.isAuthFailure(httpError(500)))
+        assertFalse(com.pressia.data.isAuthFailure(java.io.IOException("coupure")))
+        // Retrofit enveloppe souvent l'erreur d'origine.
+        assertTrue(com.pressia.data.isAuthFailure(RuntimeException("x", httpError(401))))
+    }
+    @Test fun `comptes expires aller-retour`() {
+        assertEquals("", com.pressia.data.encodeExpired(emptySet()))
+        assertEquals("a#1,b#2", com.pressia.data.encodeExpired(setOf("b#2", "a#1", " ", "b#2")))
+        assertEquals(setOf("a#1", "b#2"), com.pressia.data.parseExpired("a#1,b#2"))
+        assertEquals(setOf("instapaper"), com.pressia.data.parseExpired(" instapaper ,,"))
+        assertTrue(com.pressia.data.parseExpired(null).isEmpty())
+        // Les pseudo-comptes Instapaper ne portent pas de dièse : le filtre par service
+        // (reconnecté) ne les touche pas.
+        assertEquals("instapaper", com.pressia.data.providerBase("instapaper"))
+        assertEquals("feedly", com.pressia.data.providerBase("feedly#ab12"))
+    }
     @Test fun `session web instapaper parsee (dossiers, tags, cle)`() {
         val s = com.pressia.data.remote.InstapaperWeb.parseSession(
             """{"user":{"id":42,"folders":[{"id":0,"title":"Home"},{"id":99,"title":"Recettes"}],"tags":[{"id":7,"name":"Cuisine","count":3}],"formKey":"FK"}}"""

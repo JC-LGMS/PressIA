@@ -169,24 +169,30 @@ object InstapaperWeb {
         .header("Cookie", cookieHeader())
         .header("X-Requested-With", "XMLHttpRequest")
 
-    /** Session active ? (dossiers + tags + cléanti-CSRF, ou null si expirée). */
-    suspend fun session(): Session? = withContext(Dispatchers.IO) {
-        try {
-            // `Rt()` du site préfixe tous ces appels par `/data`.
-            val req = authed("/data/user_session").get().build()
-            client.newCall(req).execute().use {
-                if (it.code != 200) return@withContext null
-                parseSession(it.body?.string().orEmpty())
-            }
-        } catch (_: Exception) { null }
+    /**
+     * Session active ? (dossiers + tags + clé anti-CSRF, ou null si expirée). Ne lève jamais :
+     * une panne réseau donne aussi null — à l'appelant de distinguer si besoin ([fetchSession]).
+     */
+    suspend fun session(): Session? = try {
+        fetchSession()
+    } catch (_: Exception) { null }
+
+    /** Même chose en laissant passer les pannes réseau (pour ne pas les confondre avec un refus). */
+    suspend fun fetchSession(): Session? = withContext(Dispatchers.IO) {
+        // `Rt()` du site préfixe tous ces appels par `/data`.
+        val req = authed("/data/user_session").get().build()
+        client.newCall(req).execute().use {
+            if (it.code != 200) return@withContext null
+            parseSession(it.body?.string().orEmpty())
+        }
     }
 
     /**
      * Ouvre la session web avec les identifiants du compte simple : `_xsrf` frais depuis la page
-     * de connexion, puis `POST /user/login`. Renvoie vrai si `user_session` voit le compte.
+     * de connexion, puis `POST /user/login`. Renvoie faux si le serveur refuse (mauvais
+     * identifiants), et lève en cas de panne réseau.
      */
     suspend fun login(user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
-        try {
             // Jeton frais + cookies de session anonyme.
             val pageReq = Request.Builder().url("$BASE/user/login").get().build()
             val page = noRedirect.newCall(pageReq).execute().use {
@@ -208,8 +214,7 @@ object InstapaperWeb {
                 .post(body)
                 .build()
             noRedirect.newCall(loginReq).execute().use { storeCookies("$BASE/", it.headers) }
-            session() != null
-        } catch (_: Exception) { false }
+            fetchSession() != null
     }
 
     /** Enregistre l'URL (mode lien), ou [SendResult.Expired] si la session est morte. */

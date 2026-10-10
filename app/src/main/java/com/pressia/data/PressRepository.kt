@@ -108,6 +108,9 @@ class PressRepository(
         val account = accounts.first { it.token == token && it.service == service.lowercase() }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         setActiveAccount(account.id)
+        // Une reconnexion du même service lève l'alerte des anciens jetons : l'utilisateur a
+        // déjà agi, inutile de continuer à lui demander.
+        clearExpiredOfService(service)
         account
     }
 
@@ -123,6 +126,7 @@ class PressRepository(
     suspend fun deleteAccount(accountId: String) = withContext(Dispatchers.IO) {
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
+        clearAccountExpired(accountId)
         dao.clearArticlesOf(accountId)
         gcThumbs()
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
@@ -143,9 +147,43 @@ class PressRepository(
         }
     }
 
+    /**
+     * Sessions expirées (voir `EXPIRED_ACCOUNTS`) : identifiants de comptes cloud en 401/403,
+     * plus les pseudo-comptes `"instapaper"` (mot de passe refusé) et `"instapaper_web"`
+     * (session web morte sans reconnexion possible). L'écran Comptes les affiche avec une
+     * réinvite à reconnecter ; un appel authentifié réussi retire le drapeau aussitôt.
+     */
+    suspend fun expiredAccounts(): Set<String> =
+        parseExpired(prefs.data.first()[Prefs.EXPIRED_ACCOUNTS])
+
+    suspend fun markAccountExpired(id: String) {
+        val key = id.trim()
+        if (key.isBlank()) return
+        val cur = expiredAccounts()
+        if (key in cur) return
+        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur + key))
+    }
+
+    suspend fun clearAccountExpired(id: String) {
+        val key = id.trim()
+        if (key.isBlank()) return
+        val cur = expiredAccounts()
+        if (key !in cur) return
+        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur - key))
+    }
+
+    /** Oublie les alertes d'un service (reconnecté) : seuls ses comptes sont concernés. */
+    suspend fun clearExpiredOfService(service: String) {
+        val s = service.trim().lowercase()
+        if (s.isBlank()) return
+        val cur = expiredAccounts()
+        val kept = cur.filterNot { providerBase(it) == s }.toSet()
+        if (kept.size == cur.size) return
+        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(kept))
+    }
+
     /** Compte servant aux opérations courantes (le premier connecté si aucun n'est désigné). */
-    suspend fun activeAccount(): CloudAccount? {
-        val accounts = cloudAccounts()
+    suspend fun activeAccount(): CloudAccount? {        val accounts = cloudAccounts()
         if (accounts.isEmpty()) return null
         val wanted = prefs.data.first()[Prefs.ACTIVE_ACCOUNT]
         return accounts.firstOrNull { it.id == wanted } ?: accounts.first()
@@ -633,8 +671,9 @@ class PressRepository(
 
     /** Synchronise un compte : flux d'articles, puis dossiers et abonnements si vue globale. */
     private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
-        val p = providerFor(account.provider)
-        val page = p.stream(account.token, feedId, categoryId, max)
+        try {
+            val p = providerFor(account.provider)
+            val page = p.stream(account.token, feedId, categoryId, max)
         var added = storeArticles(page.articles)
         if (feedId == null && categoryId == null) {
             // Sync globale : les articles ne redescendent que par fenêtre récente, les lus / non lus
@@ -666,7 +705,15 @@ class PressRepository(
             dao.clearSubscriptionsOf(account.id)
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
         }
+        // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
+        clearAccountExpired(account.id)
         return added
+        } catch (e: Exception) {
+            // 401/403 = session morte : on lève le drapeau pour l'écran Comptes, puis on
+            // laisse l'appelant compter zéro (comportement inchangé pour le reste).
+            if (isAuthFailure(e)) markAccountExpired(account.id)
+            throw e
+        }
     }
 
     /**
@@ -730,8 +777,9 @@ class PressRepository(
      * assez large pour qu'aucun compte réel ne l'atteigne.
      */
     private suspend fun backfillAccount(account: CloudAccount): Int = withContext(Dispatchers.IO) {
-        val p = providerFor(account.provider)
-        val cats = p.categories(account.token).map { it.copy(provider = account.id) }
+        try {
+            val p = providerFor(account.provider)
+            val cats = p.categories(account.token).map { it.copy(provider = account.id) }
         replaceCategories(account.id, cats)
         val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
         val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
@@ -741,11 +789,18 @@ class PressRepository(
         var added = 0
         var continuation: String? = null
         var seen = 0
+        var authFailed = false
         while (seen < backfillSafetyCap) {
             // `getOrNull` et non `getOrElse` : sortir de la boucle depuis une lambda inline
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
             val page = runCatching { p.stream(account.token, null, null, pageSize, continuation) }
-                .onFailure { android.util.Log.e("PressIA", "backfill ${account.id} page failed", it) }
+                .onFailure {
+                    android.util.Log.e("PressIA", "backfill ${account.id} page failed", it)
+                    if (isAuthFailure(it)) {
+                        authFailed = true
+                        markAccountExpired(account.id)
+                    }
+                }
                 .getOrNull() ?: break
             if (page.articles.isEmpty()) break
             added += storeArticles(page.articles)
@@ -757,7 +812,13 @@ class PressRepository(
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
         syncThumbs()
+        // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
+        if (!authFailed) clearAccountExpired(account.id)
         added
+        } catch (e: Exception) {
+            if (isAuthFailure(e)) markAccountExpired(account.id)
+            throw e
+        }
     }
 
     /**
@@ -843,7 +904,11 @@ class PressRepository(
                         val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
                         if (feeds.isNotEmpty()) dao.clearLater(feeds)
                         storeArticles(items)
-                    }.onFailure { android.util.Log.e("PressIA", "read later ${account.id} failed", it) }
+                    }.onSuccess { clearAccountExpired(account.id) }
+                        .onFailure {
+                            android.util.Log.e("PressIA", "read later ${account.id} failed", it)
+                            if (isAuthFailure(it)) markAccountExpired(account.id)
+                        }
                         .getOrDefault(0)
                 }
             }.awaitAll().sum()
@@ -907,7 +972,11 @@ class PressRepository(
                     "markAllRead" -> p.markAllRead(account.token, listOfNotNull(a.feedId))
                 }
                 dao.dequeue(a.rowId); done++
-            } catch (_: Exception) { dao.bumpTry(a.rowId) }
+                clearAccountExpired(account.id)
+            } catch (e: Exception) {
+                if (isAuthFailure(e)) markAccountExpired(account.id)
+                dao.bumpTry(a.rowId)
+            }
         }
         done
     }

@@ -143,6 +143,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Session web Instapaper active (dossiers + tags), dernier état vérifié. */
     val instapaperWeb: StateFlow<Boolean> = prefs.flow(Prefs.INSTAPAPER_WEB, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /**
+     * Comptes à la session expirée (voir `EXPIRED_ACCOUNTS`) : l'écran Comptes les signale avec
+     * une réinvite à reconnecter, et la synchro l'annonce au lieu d'un vague échec réseau.
+     */
+    val expiredAccounts: StateFlow<Set<String>> = prefs.flow(Prefs.EXPIRED_ACCOUNTS, "")
+        .map { com.pressia.data.parseExpired(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+    /**
      * Article en attente de sa destination Instapaper (mode « choose ») : tant qu'il est non nul,
      * le dialogue dossier + tags est affiché. Positionné par [askInstapaperTarget], effacé à
      * l'envoi ou à l'annulation.
@@ -377,9 +383,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             // Refresh en attente, et non lancé en arrière-plan : sans cela on pouvait annoncer
             // « connecté » en revenant sur des listes encore vides.
             refreshNow()
+            // Les échecs par compte sont avalés par la sync (les autres comptes passent quand
+            // même) : si un jeton est mort, on le dit au lieu d'annoncer un succès aveugle.
+            if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
             return if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
             else "Synchronisation terminée"
         } catch (e: Exception) {
+            // Même chose quand c'est toute la sync qui tombe : une session connue comme expirée
+            // mérite mieux qu'un vague problème de connexion.
+            if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
             return "Échec de synchronisation : vérifiez la connexion"
         } finally {
             unlockSync()
@@ -518,6 +530,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (ok) {
             prefs.set(Prefs.INSTAPAPER_USER, u)
             prefs.set(Prefs.INSTAPAPER_PASS, pass)
+            repo.clearAccountExpired("instapaper")
             done("Compte Instapaper connecté")
             // Session web en arrière-plan : silencieuse, le drapeau sert au mode « choose ».
             try {
@@ -533,6 +546,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         prefs.set(Prefs.INSTAPAPER_USER, "")
         prefs.set(Prefs.INSTAPAPER_PASS, "")
         prefs.set(Prefs.INSTAPAPER_WEB, false)
+        repo.clearAccountExpired("instapaper")
+        repo.clearAccountExpired("instapaper_web")
         try {
             com.pressia.data.remote.InstapaperWeb.logout()
         } catch (_: Exception) { /* cookies déjà partis */ }
@@ -555,11 +570,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             return@launch
         }
         val title = com.pressia.data.remote.cleanTitle(article.title).ifBlank { "(sans titre)" }
+        val res = com.pressia.data.remote.Instapaper.add(user, pass, url, title)
+        // Mot de passe refusé = session expirée : l'écran Comptes le signale avec réinvite.
+        if (res == com.pressia.data.remote.Instapaper.AddResult.InvalidCredentials) repo.markAccountExpired("instapaper")
+        else if (res == com.pressia.data.remote.Instapaper.AddResult.Ok) repo.clearAccountExpired("instapaper")
         done(
-            when (com.pressia.data.remote.Instapaper.add(user, pass, url, title)) {
+            when (res) {
                 com.pressia.data.remote.Instapaper.AddResult.Ok -> "Envoyé vers Instapaper"
                 com.pressia.data.remote.Instapaper.AddResult.BadRequest -> "Envoi refusé par Instapaper"
-                com.pressia.data.remote.Instapaper.AddResult.InvalidCredentials -> "Instapaper : identifiants invalides"
+                com.pressia.data.remote.Instapaper.AddResult.InvalidCredentials -> "Instapaper : identifiants refusés, reconnectez le compte (Comptes)"
                 com.pressia.data.remote.Instapaper.AddResult.ServerError -> "Instapaper indisponible, réessayez"
                 com.pressia.data.remote.Instapaper.AddResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
             }
@@ -586,10 +605,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Session web Instapaper utilisable : vérifie `user_session`, sinon tente une reconnexion
      * silencieuse avec les identifiants du compte simple. Le drapeau est recalé à chaque appel.
+     *
+     * Seul un refus net lève l'alerte « session expirée » : une panne réseau ou l'absence
+     * d'identifiants n'ont rien à reconnecter et restent silencieuses.
      */
     suspend fun withWebSession(): Boolean {
         if (com.pressia.data.remote.InstapaperWeb.session() != null) {
             prefs.set(Prefs.INSTAPAPER_WEB, true)
+            repo.clearAccountExpired("instapaper_web")
             return true
         }
         val user = prefs.data.first()[Prefs.INSTAPAPER_USER].orEmpty()
@@ -598,10 +621,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             prefs.set(Prefs.INSTAPAPER_WEB, false)
             return false
         }
+        // `login` lève en cas de panne réseau (pas d'alerte) et renvoie faux si refusé.
         val ok = try {
             com.pressia.data.remote.InstapaperWeb.login(user, pass)
-        } catch (_: Exception) { false }
+        } catch (_: Exception) {
+            prefs.set(Prefs.INSTAPAPER_WEB, false)
+            return false
+        }
         prefs.set(Prefs.INSTAPAPER_WEB, ok)
+        if (ok) repo.clearAccountExpired("instapaper_web") else repo.markAccountExpired("instapaper_web")
         return ok
     }
 
