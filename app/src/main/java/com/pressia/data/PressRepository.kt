@@ -533,15 +533,27 @@ class PressRepository(
         }
     }
     /**
-     * Bascule un favori PressIA.
+     * Bascule un favori.
      *
-     * L'étoile est un état **local**, jamais poussé vers le compte : chez Feedly comme chez
-     * Inoreader, le seul état « enregistré » du compte est précisément son tableau « Read later ».
-     * Pousser l'étoile vers lui aurait fait remonter les favoris de PressIA dans le filtre
-     * « Read later » — exactement le problème que ce filtre doit éviter.
+     * L'étoile reste un état **local**, jamais poussé vers le compte — sauf pour un article
+     * Feedly : Feedly ne connaît qu'un seul état « enregistré » (son tableau « Read later »),
+     * donc l'étoile y est rangée (`save` / `unsave` en file, comme le lu/non-lu) au lieu d'un
+     * favori local. Inoreader et les flux locaux gardent l'étoile locale.
      */
     suspend fun setStarred(id: String, starred: Boolean) = withContext(Dispatchers.IO) {
-        dao.setStarred(id, starred)
+        val a = dao.article(id)
+        val owner = a?.feedId?.let { dao.subscription(it)?.provider }
+        val feedly = cloudAccounts().any { sameAccount(it.id, owner) && providerBase(it.id) == "feedly" }
+        if (a != null && feedly) {
+            // Pas de favori local pour Feedly (son étoile = « Read later »), mais on efface
+            // aussi l'étoile locale héritée d'avant : sinon elle ne part plus jamais.
+            dao.setStarred(id, false)
+            if (starred) dao.markLaterSaved(listOf(id)) else dao.unmarkLaterSaved(listOf(id))
+            dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (starred) "save" else "unsave"))
+            pushQueue()
+        } else {
+            dao.setStarred(id, starred)
+        }
     }
     suspend fun markAllRead(feedIds: List<String>) = withContext(Dispatchers.IO) {
         // readAt alimenté aussi pour les marquages groupés : permet de distinguer
@@ -893,6 +905,11 @@ class PressRepository(
     suspend fun syncReadLater(): Int = withContext(Dispatchers.IO) {
         val accounts = cloudAccounts()
         if (accounts.isEmpty()) return@withContext 0
+        // Étoiles posées hors-ligne (file « save » / « unsave » non poussée) : le tableau vierge
+        // reparti par compte les effacerait alors que le serveur ne les a pas encore — on les
+        // repose après chaque replongée (lus une fois, la liste ne change pas pendant la sync).
+        val keepSaved = dao.pendingSync().filter { it.kind == "save" }.map { it.articleId }
+        val keepUnsaved = dao.pendingSync().filter { it.kind == "unsave" }.map { it.articleId }
         val added = coroutineScope {
             accounts.map { account ->
                 async {
@@ -903,7 +920,12 @@ class PressRepository(
                         // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
                         val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
                         if (feeds.isNotEmpty()) dao.clearLater(feeds)
-                        storeArticles(items)
+                        // Dernier mot au compteur (Int) : les rattrapages ci-dessous sont des
+                        // instructions, le bloc doit toujours s'évaluer en nombre d'articles.
+                        val n = storeArticles(items)
+                        if (keepSaved.isNotEmpty()) dao.markLaterSaved(keepSaved)
+                        if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)
+                        n
                     }.onSuccess { clearAccountExpired(account.id) }
                         .onFailure {
                             android.util.Log.e("PressIA", "read later ${account.id} failed", it)
@@ -951,9 +973,9 @@ class PressRepository(
      * le flux concerné, pas au compte actif : sans cela, un article d'un second compte Feedly
      * serait marqué lu chez le mauvais compte.
  *
-     * Les favorites ne figurent plus dans la file : l'étoile PressIA est locale. Les éventuelles
-     * lignes « star » / « unstar » laissées par une version antérieure sont simplement vidées,
-     * plutôt que poussées vers le tableau « Read later » du compte où elles apparîtraient à tort.
+ * Les favorites ne figurent plus dans la file : l'étoile PressIA est locale. Les éventuelles
+ * lignes « star » / « unstar » laissées par une version antérieure sont simplement vidées.
+ * Seules les étoiles d'articles Feedly y transitent (« save » / « unsave » → « Read later »).
  */
     suspend fun pushQueue(): Int = withContext(Dispatchers.IO) {
         val pending = dao.pendingSync()
@@ -968,6 +990,8 @@ class PressRepository(
                 when (a.kind) {
                     "read" -> p.markRead(account.token, listOf(a.articleId))
                     "unread" -> p.markUnread(account.token, listOf(a.articleId))
+                    "save" -> p.markSaved(account.token, listOf(a.articleId))
+                    "unsave" -> p.markUnsaved(account.token, listOf(a.articleId))
                     "star", "unstar" -> Unit // état local : rien à pousser
                     "markAllRead" -> p.markAllRead(account.token, listOfNotNull(a.feedId))
                 }

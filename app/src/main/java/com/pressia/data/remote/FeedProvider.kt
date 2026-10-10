@@ -14,6 +14,13 @@ interface FeedProvider {
     suspend fun markRead(token: String?, articleIds: List<String>)
     suspend fun markUnread(token: String?, articleIds: List<String>)
     suspend fun markAllRead(token: String?, feedIds: List<String>)
+    /**
+     * Range des articles dans le « à lire plus tard » du compte. Défaut : non supporté (état
+     * local seul) — seul Feedly mappe son étoile dessus pour l'instant.
+     */
+    suspend fun markSaved(token: String?, articleIds: List<String>) {}
+    /** Retire des articles du « à lire plus tard » du compte (défaut : non supporté). */
+    suspend fun markUnsaved(token: String?, articleIds: List<String>) {}
     /** Recherche serveur (si supportée), sinon null → fallback local. */
     suspend fun search(token: String?, query: String, feedId: String?): List<ArticleEntity>? = null
     /** Infos du compte connecté (nom / e-mail) — null si l'API ne l'expose pas. */

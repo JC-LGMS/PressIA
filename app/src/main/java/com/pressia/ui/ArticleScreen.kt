@@ -132,12 +132,17 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                 Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
                             }
                             "star" -> IconButton({ article?.let {
-                                vm.setStar(it.id, !it.starred); article = article?.copy(starred = !it.starred)
-                                toast(ctx, if (!it.starred) "Ajouté aux favoris" else "Retiré des favoris")
+                                // Même étoile effective que dans les listes : « Read later » pour
+                                // Feedly (pas de favori local), étoile locale ailleurs.
+                                val on = vm.starState(it)
+                                vm.setStar(it.id, !on)
+                                article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
+                                else it.copy(starred = !on)
+                                toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
                             } }) {
                                 // Favori dans la couleur dominante de l'application.
                                 Icon(
-                                    if (article?.starred == true) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    if (article?.let { vm.starState(it) } == true) Icons.Filled.Star else Icons.Filled.StarBorder,
                                     "favori", tint = MaterialTheme.colorScheme.primary
                                 )
                             }

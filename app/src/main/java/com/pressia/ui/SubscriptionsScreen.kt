@@ -95,7 +95,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                         Text("Aucun abonnement.")
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Ajoutez un flux RSS ou connectez Feedly / Inoreader depuis Comptes.",
+                            "Ajoutez un flux RSS ou connectez Feedly depuis Comptes.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

@@ -15,7 +15,8 @@ import kotlinx.coroutines.sync.withPermit
  * Choix structurant : **le tableau « Read later » du compte n'est jamais importé comme étoile
  * PressIA**. Feedly ne connaît qu'un seul état « enregistré » (`global.saved`), qui est son
  * tableau à lire plus tard ; le confondre avec les favoris de l'application faisait apparaître
- * les favoris de PressIA dans le filtre « Read later », et inversement.
+ * les favoris de PressIA dans le filtre « Read later », et inversement. En revanche l'étoile
+ * posée sur un article Feedly part vers ce tableau (`markSaved`) au lieu d'un favori local.
  */
 class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : FeedProvider {
     override val id = "feedly"
@@ -60,6 +61,20 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {
         // Feedly : markAsRead sur category/feed — on boucle simplement.
         feedIds.forEach { f -> api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = listOf(f))) }
+    }
+    /**
+     * Étoile d'un article Feedly = son « Read later » (`global.saved`, « starring » côté Google
+     * Reader) : `markAsSaved` / `markAsUnsaved`, sans identifiant de compte à résoudre.
+     */
+    override suspend fun markSaved(token: String?, articleIds: List<String>) {
+        if (articleIds.isEmpty()) return
+        android.util.Log.d("PressIA", "feedly save (${articleIds.size})")
+        api.markers(auth(token), FeedlyMarkers("markAsSaved", "entries", entryIds = articleIds))
+    }
+    override suspend fun markUnsaved(token: String?, articleIds: List<String>) {
+        if (articleIds.isEmpty()) return
+        android.util.Log.d("PressIA", "feedly unsave (${articleIds.size})")
+        api.markers(auth(token), FeedlyMarkers("markAsUnsaved", "entries", entryIds = articleIds))
     }
     override suspend fun search(token: String?, query: String, feedId: String?): List<ArticleEntity> {
         val scope = userId(token)

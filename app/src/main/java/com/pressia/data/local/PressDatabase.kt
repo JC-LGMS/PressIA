@@ -226,6 +226,12 @@ interface PressDao {
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
+    /** Pose le marquage « Read later » (étoile optimiste, rattrapage de file). */
+    @Query("UPDATE articles SET laterSaved = 1 WHERE id IN (:ids)")
+    suspend fun markLaterSaved(ids: List<String>)
+    /** Retire le marquage « Read later » (retrait optimiste, rattrapage de file). */
+    @Query("UPDATE articles SET laterSaved = 0 WHERE id IN (:ids)")
+    suspend fun unmarkLaterSaved(ids: List<String>)
     @Query("UPDATE articles SET unread = 0, readAt = :now WHERE feedId IN (:feedIds)")
     suspend fun markFeedsRead(feedIds: List<String>, now: Long)
     @Query("UPDATE articles SET unread = 0, readAt = :now")

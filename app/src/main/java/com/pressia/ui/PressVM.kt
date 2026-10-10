@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
+import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
@@ -457,8 +458,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
-        articles = articles.map { if (it.id == id) it.copy(starred = star) else it }
+        // Le dépôt a écrit le bon drapeau (étoile locale, ou « Read later » pour Feedly) :
+        // on relit l'article plutôt que de deviner lequel, l'affichage suit.
+        repo.article(id)?.let { full ->
+            articles = articles.map { if (it.id == id) full else it }
+        }
     }
+    /** Article d'un flux Feedly : son étoile est le « Read later » du compte. */
+    fun isFeedlyArticle(a: ArticleEntity): Boolean =
+        subs.firstOrNull { it.id == a.feedId }?.provider?.let { providerBase(it) == "feedly" } == true
+    /** Étoile affichée : étoile locale, ou « Read later » pour un article Feedly. */
+    fun starState(a: ArticleEntity): Boolean = a.starred || (isFeedlyArticle(a) && a.laterSaved)
     /** Journalise une lecture (viewModelScope : survit à la fermeture de l'écran article). */
     fun logReading(articleId: String, feedId: String, durationSec: Int) = viewModelScope.launch {
         repo.logReading(articleId, feedId, durationSec)

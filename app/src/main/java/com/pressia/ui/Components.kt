@@ -682,8 +682,11 @@ fun ArticleList(
     val ctx = LocalContext.current
     val sendScope = rememberCoroutineScope()
     val row: @Composable (ArticleEntity) -> Unit = { a ->
-        ArticleRow(a, mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
-            { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !a.starred) },
+        // Étoile effective : un article Feedly affiche son « Read later » (jamais de favori
+        // local), basculé par le même geste que l'étoile des autres flux.
+        val star = vm.starState(a)
+        ArticleRow(a.copy(starred = star), mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
+            { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !star) },
             showSource = showSource,
             onInstapaper = { sendScope.launch { vm.sendOrAskInstapaper(a) { toast(ctx, it) } } },
             swipe = swipe, swipeRight = swipeRight)

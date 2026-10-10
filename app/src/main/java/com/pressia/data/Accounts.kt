@@ -8,7 +8,7 @@ import java.security.MessageDigest
 const val LOCAL_PROVIDER = "local"
 
 /**
- * Un compte externe connecté (Feedly ou Inoreader). Plusieurs comptes du même service coexistent :
+ * Un compte externe connecté à Feedly. Plusieurs comptes du même service coexistent :
  * chacun a son jeton, ses dossiers et ses abonnements, sans jamais se confondre avec les autres.
  *
  * [id] est la clé d'appropriation utilisée dans Room : elle vaut `"<service>#<empreinte du jeton>"`,

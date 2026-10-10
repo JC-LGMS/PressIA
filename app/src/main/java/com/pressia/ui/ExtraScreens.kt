@@ -1051,7 +1051,7 @@ fun AboutScreen() {
         Spacer(Modifier.height(16.dp))
         Text(
             "Lecteur RSS Android développé grâce à OpenCode et Muse Spark 1.3 free par " +
-                "Jean-Cyril Poiraud et inspiré par Press : Feedly, Inoreader ou flux locaux, " +
+                "Jean-Cyril Poiraud (inspiré par Press) : Feedly ou flux locaux, " +
                 "100 % Jetpack Compose, lecture hors-ligne et article complet via Readability.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
