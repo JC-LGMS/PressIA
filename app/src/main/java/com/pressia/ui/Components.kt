@@ -721,7 +721,14 @@ fun ArticleList(
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
         Box(Modifier.fillMaxSize()) {
-            LazyColumn(state = listState) {
+            LazyColumn(
+                state = listState,
+                // Les boutons haut/bas flottent en bas au centre : en vues liste et compacte, un
+                // espace sous le dernier article l'empêche d'être masqué par eux.
+                contentPadding = PaddingValues(
+                    bottom = if (mode == "list" || mode == "compact") 72.dp else 0.dp
+                )
+            ) {
                 grouped.forEachIndexed { i, si ->
                     when (si) {
                         is StreamItem.Day -> {
