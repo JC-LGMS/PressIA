@@ -68,29 +68,6 @@ object OAuth {
         }
 
     /**
-     * Instapaper API v2 (dossiers + tags) : OAuth2 authorization code flow, même schéma que
-     * Feedly/Inoreader. L'URL de redirection doit être déclarée dans les URL de retour de
-     * l'application côté Instapaper. Les jetons n'expirent pas : on stocke, pas besoin de refresh.
-     */
-    fun instapaperAuthUrl(clientId: String, redirect: String = BuildConfig.INSTAPAPER_REDIRECT_URI): String =
-        "https://www.instapaper.com/oauth2/authorize?client_id=${enc(clientId)}" +
-            "&redirect_uri=${enc(redirect)}&response_type=code&state=instapaper"
-
-    /** Échange code→jeton Instapaper v2 (réseau sur IO : jamais sur le thread d'appel). */
-    suspend fun instapaperToken(code: String, clientId: String, secret: String, redirect: String = BuildConfig.INSTAPAPER_REDIRECT_URI): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val body = okhttp3.FormBody.Builder()
-                    .add("code", code).add("client_id", clientId).add("client_secret", secret)
-                    .add("redirect_uri", redirect).build()
-                val req = okhttp3.Request.Builder().url("https://www.instapaper.com/oauth2/token").post(body).build()
-                val resp = okhttp3.OkHttpClient().newCall(req).execute()
-                val txt = resp.body?.string().orEmpty()
-                Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
-            } catch (_: Exception) { null }
-        }
-
-    /**
      * Génère un vérificateur PKCE (RFC 7636) : 32 octets aléatoires en base64url (43 caractères).
      * Pur JVM, testable sans Android.
      */

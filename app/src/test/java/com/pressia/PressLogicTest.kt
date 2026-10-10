@@ -141,37 +141,60 @@ class PressLogicTest {
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
     }
-    @Test fun `url oauth instapaper v2 bien formee`() {
-        val u = OAuth.instapaperAuthUrl("CID", "pressia://oauth/instapaper")
-        assertTrue(u.contains("instapaper.com/oauth2/authorize") && u.contains("client_id=CID"))
-        assertTrue(u.contains("response_type=code") && u.contains("state=instapaper"))
-        val ok = OAuth.parseRedirect("pressia://oauth/instapaper?code=XYZ&state=instapaper", "pressia://oauth/instapaper")
-        assertEquals("XYZ", ok?.code)
-    }
-    @Test fun `parse dossiers et tags instapaper v2`() {
-        val folders = com.pressia.data.remote.InstapaperV2.parseFolders(
-            """{"folders":[{"id":0,"title":"Home"},{"id":99,"title":"Recettes"},{"title":"sans id"}]}"""
+    @Test fun `session web instapaper parsee (dossiers, tags, cle)`() {
+        val s = com.pressia.data.remote.InstapaperWeb.parseSession(
+            """{"user":{"id":42,"folders":[{"id":0,"title":"Home"},{"id":99,"title":"Recettes"}],"tags":[{"id":7,"name":"Cuisine","count":3}],"formKey":"FK"}}"""
         )
-        assertEquals(listOf(com.pressia.data.remote.InstapaperV2.Folder(99, "Recettes")), folders)
-        assertTrue(com.pressia.data.remote.InstapaperV2.parseFolders("pas du json").isEmpty())
-        val tags = com.pressia.data.remote.InstapaperV2.parseTags(
-            """{"tags":[{"id":7,"name":"Cuisine","count":3},{"id":8,"name":"","count":1}]}"""
+        assertEquals(listOf(com.pressia.data.remote.InstapaperWeb.Folder(99, "Recettes")), s?.folders)
+        assertEquals(listOf(com.pressia.data.remote.InstapaperWeb.Tag(7, "Cuisine", 3)), s?.tags)
+        assertEquals("FK", s?.formKey)
+        // Variante snake_case + sans utilisateur = déconnecté.
+        val s2 = com.pressia.data.remote.InstapaperWeb.parseSession(
+            """{"user":{"folders":[],"tags":[],"form_key":"SK"}}"""
         )
-        assertEquals(listOf(com.pressia.data.remote.InstapaperV2.Tag(7, "Cuisine", 3)), tags)
+        assertEquals("SK", s2?.formKey)
+        assertNull(com.pressia.data.remote.InstapaperWeb.parseSession("""{"user":null}"""))
+        assertNull(com.pressia.data.remote.InstapaperWeb.parseSession("pas du json"))
     }
-    @Test fun `corps d'enregistrement instapaper v2`() {
-        val b = com.pressia.data.remote.InstapaperV2.saveBody("https://x/y", "T", 99, listOf("A", "B"))
-        assertTrue(b.contains("\"folder_id\":99") && b.contains("\"name\":\"A\"") && b.contains("\"name\":\"B\""))
-        // Sans dossier ni tag : accueil, aucun champ superflu.
-        val home = com.pressia.data.remote.InstapaperV2.saveBody("https://x/y", "T", null, emptyList())
-        assertTrue(!home.contains("folder_id") && !home.contains("tags"))
+    @Test fun `reponse post_v6 parsee (id, dossiers, tags)`() {
+        val s = com.pressia.data.remote.InstapaperWeb.parseSaved(
+            """{"bookmark_id":12345,"folders":[{"id":99,"name":"Recettes"}],"all_tags":[{"id":7,"name":"Cuisine","count":3}]}"""
+        )
+        assertEquals(12345L, s?.bookmarkId)
+        assertEquals(listOf(com.pressia.data.remote.InstapaperWeb.Folder(99, "Recettes")), s?.folders)
+        assertEquals(listOf(com.pressia.data.remote.InstapaperWeb.Tag(7, "Cuisine", 3)), s?.tags)
+        assertNull(com.pressia.data.remote.InstapaperWeb.parseSaved("""{"bookmark_id":0}"""))
     }
-    @Test fun `mode instapaper persiste et secrets proteges`() {
-        assertTrue("instapaper_mode" in entryNames())
-        assertTrue("instapaper_token" in entryNames())
-        assertTrue("instapaper_token" in com.pressia.data.SECRET_PREFS)
-        assertTrue("instapaper_client_secret" in com.pressia.data.SECRET_PREFS)
-        assertTrue("instapaper_mode" !in com.pressia.data.SECRET_PREFS)
+    @Test fun `corps post_v6 et tags comme l'extension`() {
+        val b = com.pressia.data.remote.InstapaperWeb.saveBody("https://x/y?a=b", "T+t")
+        assertTrue(b.startsWith("gr=1&") && b.contains("u=https%3A%2F%2Fx%2Fy%3Fa%3Db") && b.contains("t=T%2Bt"))
+        assertTrue(b.endsWith("&b="))
+        val xsrf = com.pressia.data.remote.InstapaperWeb.extractXsrf(
+            """<form action="/user/login" method="post"><input type="hidden" name="_xsrf" value="2|abc|def"/>"""
+        )
+        assertEquals("2|abc|def", xsrf)
+        assertEquals("k2", com.pressia.data.remote.InstapaperWeb.formKey("a=1; form_key=k2; b=3", "IGNOREE"))
+        assertEquals("SK", com.pressia.data.remote.InstapaperWeb.formKey("", "SK"))
+        assertNull(com.pressia.data.remote.InstapaperWeb.formKey("", null))
+    }
+    @Test fun `action tags du site en JSON`() {
+        // Forme du dialogue de tags du site : {"actions":[{bookmark_id, action:"tags", …}]}.
+        val o = org.json.JSONObject()
+            .put("actions", org.json.JSONArray().put(
+                org.json.JSONObject()
+                    .put("bookmark_id", 12345)
+                    .put("action", "tags")
+                    .put("add_tags", org.json.JSONArray(listOf(org.json.JSONObject().put("name", "Cuisine"))))
+                    .put("remove_tags", org.json.JSONArray())
+            ))
+            .toString()
+        assertTrue(o.contains("\"action\":\"tags\"") && o.contains("\"name\":\"Cuisine\""))
+    }
+    @Test fun `mode instapaper persiste`() {        assertTrue("instapaper_mode" in entryNames())
+        assertTrue("instapaper_web" in entryNames())
+        // Ni clé ni jeton : la session web n'a rien à protéger dans la sauvegarde.
+        assertFalse("instapaper_token" in entryNames())
+        assertFalse("instapaper_client_id" in entryNames())
     }
     @Test fun `pkce verificateur et defi bien formes`() {
         val v1 = OAuth.pkceVerifier()

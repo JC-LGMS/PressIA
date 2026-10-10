@@ -12,7 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.pressia.data.remote.InstapaperV2
+import com.pressia.data.remote.InstapaperWeb
 import kotlinx.coroutines.launch
 
 /**
@@ -27,8 +27,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun InstapaperTargetDialog(vm: PressVM, articleId: String, articleTitle: String, onToast: (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    var folders by remember(articleId) { mutableStateOf<List<InstapaperV2.Folder>>(emptyList()) }
-    var tags by remember(articleId) { mutableStateOf<List<InstapaperV2.Tag>>(emptyList()) }
+    var folders by remember(articleId) { mutableStateOf<List<InstapaperWeb.Folder>>(emptyList()) }
+    var tags by remember(articleId) { mutableStateOf<List<InstapaperWeb.Tag>>(emptyList()) }
     var loaded by remember(articleId) { mutableStateOf(false) }
     var folderId by remember(articleId) { mutableStateOf<Long?>(null) }
     var checkedTags by remember(articleId) { mutableStateOf(setOf<String>()) }

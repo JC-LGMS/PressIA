@@ -109,14 +109,16 @@ class Prefs(private val ctx: Context) {
         val INSTAPAPER_PASS = stringPreferencesKey("instapaper_pass")
         /**
          * Envoi vers Instapaper : "direct" (API simple, sans dossier ni tag) ou "choose"
-         * (dialogue dossier + tags à chaque envoi, via l'API v2).
+         * (dialogue dossier + tags à chaque envoi, via la session web du compte).
          */
         val INSTAPAPER_MODE = stringPreferencesKey("instapaper_mode")
-        /** Jeton d'accès Instapaper API v2 (OAuth2), secret : même protection que les jetons. */
-        val INSTAPAPER_TOKEN = stringPreferencesKey("instapaper_token")
-        /** Identifiants d'application Instapaper (API v2), surchargeables comme Feedly/Inoreader. */
-        val INSTAPAPER_CLIENT_ID = stringPreferencesKey("instapaper_client_id")
-        val INSTAPAPER_CLIENT_SECRET = stringPreferencesKey("instapaper_client_secret")
+        /**
+         * Session web Instapaper active (dossiers + tags disponibles) : les cookies vivent dans la
+         * WebView, ce drapeau ne fait que mémoriser le dernier état vérifié. À la moindre
+         * expiration (401/403), une reconnexion silencieuse est tentée avec les identifiants
+         * simples stockés, sinon l'utilisateur est renvoyé vers l'écran Comptes.
+         */
+        val INSTAPAPER_WEB = booleanPreferencesKey("instapaper_web")
 
         /**
          * Identifiants d'articles mis en favori par une restauration de sauvegarde, rejoués à chaque
@@ -154,8 +156,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),
-            PrefEntry.Str("instapaper_mode", INSTAPAPER_MODE), PrefEntry.Str("instapaper_token", INSTAPAPER_TOKEN),
-            PrefEntry.Str("instapaper_client_id", INSTAPAPER_CLIENT_ID), PrefEntry.Str("instapaper_client_secret", INSTAPAPER_CLIENT_SECRET)
+            PrefEntry.Str("instapaper_mode", INSTAPAPER_MODE), PrefEntry.Bool("instapaper_web", INSTAPAPER_WEB)
         )
     }
 

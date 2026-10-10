@@ -140,8 +140,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val instapaperUser: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_USER, "").stateIn(viewModelScope, SharingStarted.Eagerly, "")
     /** Envoi Instapaper : "direct" (API simple) ou "choose" (dossier + tags via API v2). */
     val instapaperMode: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_MODE, "direct").stateIn(viewModelScope, SharingStarted.Eagerly, "direct")
-    /** Jeton Instapaper API v2 présent (OAuth2 fait) — le jeton lui-même ne sort jamais du stockage. */
-    val instapaperV2: StateFlow<Boolean> = prefs.flow(Prefs.INSTAPAPER_TOKEN, "").map { it.isNotBlank() }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** Session web Instapaper active (dossiers + tags), dernier état vérifié. */
+    val instapaperWeb: StateFlow<Boolean> = prefs.flow(Prefs.INSTAPAPER_WEB, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /**
      * Article en attente de sa destination Instapaper (mode « choose ») : tant qu'il est non nul,
      * le dialogue dossier + tags est affiché. Positionné par [askInstapaperTarget], effacé à
@@ -572,97 +572,143 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Ferme le dialogue dossier + tags sans envoyer. */
     fun cancelInstapaperPicker() { instapaperPickerFor = null }
 
-    /** Identifiants d'application Instapaper v2 : réglage saisi, sinon valeur compilée. */
-    suspend fun instapaperClient(): Pair<String, String> {
-        val d = prefs.data.first()
-        val id = d[Prefs.INSTAPAPER_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: com.pressia.BuildConfig.INSTAPAPER_CLIENT_ID
-        val secret = d[Prefs.INSTAPAPER_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: com.pressia.BuildConfig.INSTAPAPER_CLIENT_SECRET
-        return id to secret
-    }
-
-    /** L'API v2 est utilisable : clé d'application renseignée et compte OAuth connecté. */
-    suspend fun instapaperV2Ready(): Boolean {
-        val (id, secret) = instapaperClient()
-        if (id.isBlank() || secret.isBlank()) return false
-        return prefs.data.first()[Prefs.INSTAPAPER_TOKEN]?.isNotBlank() == true
+    /**
+     * Session web Instapaper utilisable : vérifie `user_session`, sinon tente une reconnexion
+     * silencieuse avec les identifiants du compte simple. Le drapeau est recalé à chaque appel.
+     */
+    suspend fun withWebSession(): Boolean {
+        if (com.pressia.data.remote.InstapaperWeb.session() != null) {
+            prefs.set(Prefs.INSTAPAPER_WEB, true)
+            return true
+        }
+        val user = prefs.data.first()[Prefs.INSTAPAPER_USER].orEmpty()
+        val pass = prefs.data.first()[Prefs.INSTAPAPER_PASS].orEmpty()
+        if (user.isBlank() || pass.isEmpty()) {
+            prefs.set(Prefs.INSTAPAPER_WEB, false)
+            return false
+        }
+        val ok = try {
+            com.pressia.data.remote.InstapaperWeb.login(user, pass)
+        } catch (_: Exception) { false }
+        prefs.set(Prefs.INSTAPAPER_WEB, ok)
+        return ok
     }
 
     /**
-     * Termine la connexion Instapaper v2 après retour OAuth : échange le code contre un jeton
-     * (stocké, il n'expire pas) et mémorise la clé utilisée. Version suspendue, pour la WebView OAuth.
+     * Active les dossiers + tags : ouvre la session web (silencieuse si le compte simple est
+     * renseigné). À appeler depuis l'écran Comptes.
      */
-    suspend fun connectInstapaperV2Now(code: String): String {
-        val (id, secret) = instapaperClient()
-        if (id.isBlank() || secret.isBlank()) {
-            return "Clé d'application manquante (INSTAPAPER_CLIENT_ID dans local.properties)"
+    fun ensureInstapaperWeb(done: (String) -> Unit) = viewModelScope.launch {
+        val user = prefs.data.first()[Prefs.INSTAPAPER_USER].orEmpty()
+        val pass = prefs.data.first()[Prefs.INSTAPAPER_PASS].orEmpty()
+        if (user.isBlank() || pass.isEmpty()) {
+            done("Connectez d'abord le compte Instapaper (identifiant + mot de passe)")
+            return@launch
         }
-        val tok = try {
-            com.pressia.data.remote.OAuth.instapaperToken(code, id, secret)
-        } catch (_: Exception) { null }
-        if (tok.isNullOrBlank()) {
-            return "Échange code→jeton refusé : vérifiez la clé et l'URL de retour déclarée"
-        }
-        prefs.set(Prefs.INSTAPAPER_CLIENT_ID, id)
-        prefs.set(Prefs.INSTAPAPER_CLIENT_SECRET, secret)
-        prefs.set(Prefs.INSTAPAPER_TOKEN, tok)
-        return "Instapaper connecté (dossiers + tags)"
+        done(
+            if (withWebSession()) "Instapaper connecté (dossiers + tags)"
+            else "Connexion refusée : vérifiez identifiant et mot de passe"
+        )
     }
 
-    /** Même chose en rappel, pour les appelants hors coroutine. */
-    fun connectInstapaperV2(code: String, done: (String) -> Unit) = viewModelScope.launch {
-        done(connectInstapaperV2Now(code))
+    /** Déconnecte la session web (les identifiants simples et le mode d'envoi sont conservés). */
+    fun disconnectInstapaperWeb() = viewModelScope.launch {
+        try {
+            com.pressia.data.remote.InstapaperWeb.logout()
+        } catch (_: Exception) { /* cookies déjà partis */ }
+        prefs.set(Prefs.INSTAPAPER_WEB, false)
     }
-
-    /** Déconnecte l'API v2 (le compte simple et le mode d'envoi sont conservés). */
-    fun disconnectInstapaperV2() = viewModelScope.launch { prefs.set(Prefs.INSTAPAPER_TOKEN, "") }
 
     /** Dossiers du compte Instapaper (liste d'accueil exclue : c'est le choix « Accueil »). */
-    suspend fun instapaperFolders(): List<com.pressia.data.remote.InstapaperV2.Folder> {
-        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
-        if (tok.isBlank()) return emptyList()
-        return try { com.pressia.data.remote.InstapaperV2.folders(tok) } catch (_: Exception) { emptyList() }
+    suspend fun instapaperFolders(): List<com.pressia.data.remote.InstapaperWeb.Folder> {
+        val s = try {
+            com.pressia.data.remote.InstapaperWeb.session()
+        } catch (_: Exception) { null }
+        if (s != null) return s.folders
+        if (!withWebSession()) return emptyList()
+        return try {
+            com.pressia.data.remote.InstapaperWeb.session()?.folders.orEmpty()
+        } catch (_: Exception) { emptyList() }
     }
 
     /** Tags du compte, les plus utilisés d'abord. */
-    suspend fun instapaperTags(): List<com.pressia.data.remote.InstapaperV2.Tag> {
-        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
-        if (tok.isBlank()) return emptyList()
-        return try { com.pressia.data.remote.InstapaperV2.tags(tok) } catch (_: Exception) { emptyList() }
+    suspend fun instapaperTags(): List<com.pressia.data.remote.InstapaperWeb.Tag> {
+        val s = try {
+            com.pressia.data.remote.InstapaperWeb.session()
+        } catch (_: Exception) { null }
+        if (s != null) return s.tags
+        if (!withWebSession()) return emptyList()
+        return try {
+            com.pressia.data.remote.InstapaperWeb.session()?.tags.orEmpty()
+        } catch (_: Exception) { emptyList() }
     }
 
     /** Crée un dossier Instapaper, null si refusé (titre déjà pris). */
-    suspend fun createInstapaperFolder(title: String): com.pressia.data.remote.InstapaperV2.Folder? {
-        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
-        if (tok.isBlank() || title.isBlank()) return null
-        return try { com.pressia.data.remote.InstapaperV2.createFolder(tok, title.trim()) } catch (_: Exception) { null }
+    suspend fun createInstapaperFolder(title: String): com.pressia.data.remote.InstapaperWeb.Folder? {
+        if (title.isBlank()) return null
+        val s = try {
+            com.pressia.data.remote.InstapaperWeb.session()
+        } catch (_: Exception) { null }
+        val sess = s ?: if (!withWebSession()) return null else try {
+            com.pressia.data.remote.InstapaperWeb.session()
+        } catch (_: Exception) { null }
+        val key = com.pressia.data.remote.InstapaperWeb.formKey(
+            com.pressia.data.remote.InstapaperWeb.cookieHeader(), sess?.formKey
+        )
+        return try {
+            com.pressia.data.remote.InstapaperWeb.createFolder(title.trim(), key)
+        } catch (_: Exception) { null }
     }
 
     /**
-     * Envoie un article vers Instapaper v2, dans un dossier et avec des tags (créés si besoin).
-     * Sans jeton, le message renvoie vers l'écran Comptes.
+     * Envoie un article vers Instapaper web : enregistrement (`post_v6`, comme l'extension),
+     * puis rangement dans le dossier et pose des tags. Sans session, le message renvoie vers
+     * l'écran Comptes.
      */
     fun sendToInstapaperTarget(article: ArticleEntity, folderId: Long?, tags: List<String>, done: (String) -> Unit) = viewModelScope.launch {
         instapaperPickerFor = null
-        val tok = prefs.data.first()[Prefs.INSTAPAPER_TOKEN].orEmpty()
-        if (tok.isBlank()) {
-            done("Instapaper (dossiers + tags) non connecté : voyez l'écran Comptes")
-            return@launch
-        }
         val url = article.url
         if (url.isBlank()) {
             done("Cet article n'a pas de lien à envoyer")
             return@launch
         }
         val title = com.pressia.data.remote.cleanTitle(article.title).ifBlank { "(sans titre)" }
-        done(
-            when (com.pressia.data.remote.InstapaperV2.save(tok, url, title, folderId, tags)) {
-                com.pressia.data.remote.InstapaperV2.SaveResult.Ok -> "Envoyé vers Instapaper"
-                com.pressia.data.remote.InstapaperV2.SaveResult.BadRequest -> "Envoi refusé par Instapaper"
-                com.pressia.data.remote.InstapaperV2.SaveResult.Unauthorized -> "Instapaper : reconnectez le compte (Comptes)"
-                com.pressia.data.remote.InstapaperV2.SaveResult.ServerError -> "Instapaper indisponible, réessayez"
-                com.pressia.data.remote.InstapaperV2.SaveResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
+        suspend fun attempt(): String {
+            val (res, saved) = try {
+                com.pressia.data.remote.InstapaperWeb.save(url, title)
+            } catch (_: Exception) {
+                Pair(com.pressia.data.remote.InstapaperWeb.SendResult.NetworkError, null)
             }
-        )
+            return when (res) {
+                com.pressia.data.remote.InstapaperWeb.SendResult.Ok -> {
+                    val id = saved!!.bookmarkId
+                    if (folderId != null && folderId != 0L) com.pressia.data.remote.InstapaperWeb.move(id, folderId)
+                    val sess = try {
+                        com.pressia.data.remote.InstapaperWeb.session()
+                    } catch (_: Exception) { null }
+                    // La pose des tags demande la clé anti-CSRF (cookie `form_key` ou session).
+                    if (tags.isNotEmpty()) {
+                        val key = com.pressia.data.remote.InstapaperWeb.formKey(
+                            com.pressia.data.remote.InstapaperWeb.cookieHeader(), sess?.formKey
+                        )
+                        com.pressia.data.remote.InstapaperWeb.addTags(id, tags, key)
+                    }
+                    "Envoyé vers Instapaper"
+                }
+                com.pressia.data.remote.InstapaperWeb.SendResult.Expired -> "EXPIRED"
+                com.pressia.data.remote.InstapaperWeb.SendResult.Refused -> "Envoi refusé par Instapaper"
+                com.pressia.data.remote.InstapaperWeb.SendResult.ServerError -> "Instapaper indisponible, réessayez"
+                com.pressia.data.remote.InstapaperWeb.SendResult.NetworkError -> "Envoi impossible : vérifiez la connexion"
+            }
+        }
+        var msg = attempt()
+        // Session expirée en cours de route : une reconnexion silencieuse puis un seul nouvel essai.
+        if (msg == "EXPIRED") {
+            prefs.set(Prefs.INSTAPAPER_WEB, false)
+            msg = if (withWebSession()) attempt() else "EXPIRED"
+            if (msg == "EXPIRED") msg = "Instapaper : reconnectez le compte (Comptes)"
+        }
+        done(msg)
     }
     /**
      * Connecte un compte et le rend actif.
