@@ -291,6 +291,9 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                 enabled = instaUser.isNotBlank() && instaPass.isNotEmpty() && !instaBusy
             ) { Text(if (instaBusy) "Vérification…" else "Connecter Instapaper") }
         }
+        // Les options d'envoi n'apparaissent qu'une fois le compte connecté : avant, seuls
+        // l'identifiant, le mot de passe et le bouton de connexion sont visibles.
+        if (instaConnected.isNotBlank()) {
         // ---- Mode d'envoi : direct, ou dossier + tags choisis à chaque fois (session web) ----
         Text("Envoi vers Instapaper", style = MaterialTheme.typography.titleSmall)
         InstaModeRow(instaMode == "direct", "Envoyer directement",
@@ -333,6 +336,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
         }
 
         if (vm.authMsg?.isNotBlank() == true) {
