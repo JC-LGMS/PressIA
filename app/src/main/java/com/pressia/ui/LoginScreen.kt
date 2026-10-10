@@ -50,7 +50,6 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     val instaConnected by vm.instapaperUser.collectAsState()
     val instaMode by vm.instapaperMode.collectAsState()
     val instaWeb by vm.instapaperWeb.collectAsState()
-    var instaWebBusy by remember { mutableStateOf(false) }
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
 
@@ -300,40 +299,24 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             "Sans dossier ni tag, avec le compte ci-dessus.",
             { vm.setInstapaperMode("direct") })
         InstaModeRow(instaMode == "choose", "Choisir le dossier et les tags à chaque envoi",
-            "Demande la destination avant chaque envoi (comme l'extension Chrome, sans clé).",
+            "Demande la destination avant chaque envoi (connecté automatiquement, sans clé).",
             { vm.setInstapaperMode("choose") })
+        // La session web se connecte toute seule (à la connexion du compte, puis à chaque
+        // besoin) : aucun bouton, juste un état.
         if (instaMode == "choose") {
-            if (instaWeb) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "Dossiers + tags connectés", modifier = Modifier.weight(1f),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                    TextButton({
-                        vm.disconnectInstapaperWeb()
-                        toast(ctx, "Instapaper (dossiers + tags) déconnecté")
-                    }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
-                }
-            } else {
-                Button(
-                    {
-                        instaWebBusy = true
-                        vm.ensureInstapaperWeb {
-                            msg = it
-                            toast(ctx, it)
-                            instaWebBusy = false
-                        }
-                    },
-                    Modifier.fillMaxWidth(),
-                    enabled = !instaWebBusy
-                ) { Text(if (instaWebBusy) "Connexion…" else "Connecter Instapaper (dossiers + tags)") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (instaWeb) Icons.Filled.Folder else Icons.Filled.FolderOpen,
+                    null, tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    "Utilise le compte ci-dessus : la connexion se fait en arrière-plan, comme " +
-                        "l'extension Chrome, sans clé d'application.",
+                    if (instaWeb) "Dossiers + tags connectés"
+                    else "Dossiers + tags : connexion automatique au premier envoi",
+                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (instaWeb) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

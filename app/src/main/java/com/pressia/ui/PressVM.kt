@@ -500,6 +500,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Connecte le compte Instapaper : les identifiants sont validés par `/api/authenticate`
      * avant d'être conservés (l'identifiant part en sauvegarde, jamais le mot de passe).
+     *
+     * La session web (dossiers + tags) est ouverte en arrière-plan dans la foulée, avec les
+     * mêmes identifiants : en mode « choisir à chaque envoi », tout est prêt sans second bouton.
      */
     fun connectInstapaper(user: String, pass: String, done: (String) -> Unit) = viewModelScope.launch {
         val u = user.trim()
@@ -516,15 +519,23 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             prefs.set(Prefs.INSTAPAPER_USER, u)
             prefs.set(Prefs.INSTAPAPER_PASS, pass)
             done("Compte Instapaper connecté")
+            // Session web en arrière-plan : silencieuse, le drapeau sert au mode « choose ».
+            try {
+                withWebSession()
+            } catch (_: Exception) { /* réessayée au premier envoi */ }
         } else {
             done("Connexion refusée : vérifiez identifiant et mot de passe")
         }
     }
 
-    /** Déconnecte Instapaper : l'identifiant et le mot de passe sont effacés de l'appareil. */
+    /** Déconnecte Instapaper : identifiants, mot de passe et session web sont effacés. */
     fun disconnectInstapaper() = viewModelScope.launch {
         prefs.set(Prefs.INSTAPAPER_USER, "")
         prefs.set(Prefs.INSTAPAPER_PASS, "")
+        prefs.set(Prefs.INSTAPAPER_WEB, false)
+        try {
+            com.pressia.data.remote.InstapaperWeb.logout()
+        } catch (_: Exception) { /* cookies déjà partis */ }
     }
 
     /**
@@ -592,31 +603,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         } catch (_: Exception) { false }
         prefs.set(Prefs.INSTAPAPER_WEB, ok)
         return ok
-    }
-
-    /**
-     * Active les dossiers + tags : ouvre la session web (silencieuse si le compte simple est
-     * renseigné). À appeler depuis l'écran Comptes.
-     */
-    fun ensureInstapaperWeb(done: (String) -> Unit) = viewModelScope.launch {
-        val user = prefs.data.first()[Prefs.INSTAPAPER_USER].orEmpty()
-        val pass = prefs.data.first()[Prefs.INSTAPAPER_PASS].orEmpty()
-        if (user.isBlank() || pass.isEmpty()) {
-            done("Connectez d'abord le compte Instapaper (identifiant + mot de passe)")
-            return@launch
-        }
-        done(
-            if (withWebSession()) "Instapaper connecté (dossiers + tags)"
-            else "Connexion refusée : vérifiez identifiant et mot de passe"
-        )
-    }
-
-    /** Déconnecte la session web (les identifiants simples et le mode d'envoi sont conservés). */
-    fun disconnectInstapaperWeb() = viewModelScope.launch {
-        try {
-            com.pressia.data.remote.InstapaperWeb.logout()
-        } catch (_: Exception) { /* cookies déjà partis */ }
-        prefs.set(Prefs.INSTAPAPER_WEB, false)
     }
 
     /** Dossiers du compte Instapaper (liste d'accueil exclue : c'est le choix « Accueil »). */
