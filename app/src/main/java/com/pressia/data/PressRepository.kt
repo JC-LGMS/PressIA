@@ -634,6 +634,7 @@ class PressRepository(
                 }.awaitAll().sum()
         }
         replayRestoredStarred()
+        replayRestoredRead()
         trimToMax()
         syncThumbs()
         android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
@@ -964,6 +965,26 @@ class PressRepository(
         dao.markStarred(arrived.toList())
         val stillWaiting = pending - arrived
         prefs.set(Prefs.RESTORED_STARRED, stillWaiting.joinToString("\n"))
+    }
+
+    /**
+     * Rejoue les lus locaux venus d'une restauration, sur le même principe : seuls les articles
+     * arrivés dont le flux est (toujours) local sont passés en lus, directement par le DAO pour
+     * ne jamais enfiler de poussée cloud. Les autres attendent, les flux cloud sont oubliés.
+     */
+    private suspend fun replayRestoredRead() {
+        val pending = parseRestoredRead(prefs.flow(Prefs.RESTORED_READ, "").first())
+        if (pending.isEmpty()) return
+        val arrived = dao.existingIds(pending.map { it.id }).toSet()
+        if (arrived.isEmpty()) return
+        pending.filter { it.id in arrived }.forEach { r ->
+            val feedId = dao.article(r.id)?.feedId ?: return@forEach
+            if (dao.subscription(feedId)?.provider?.let { isLocalProvider(it) } == true) {
+                dao.setRead(r.id, false, r.readAt)
+            }
+        }
+        val stillWaiting = pending.filter { it.id !in arrived }
+        prefs.set(Prefs.RESTORED_READ, encodeRestoredRead(stillWaiting))
     }
 
     // ----- Sync montante (file bidirectionnelle) -----

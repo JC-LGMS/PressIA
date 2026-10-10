@@ -360,6 +360,9 @@ class PressLogicTest {
         // absence dans ENTRIES garantit qu'elle ne peut pas être réimportée par un nom.
         assertTrue("restored_starred" in com.pressia.data.NON_EXPORTED_PREFS)
         assertFalse("restored_starred" in entryNames())
+        // Idem pour la file des lus locaux restaurés.
+        assertTrue("restored_read" in com.pressia.data.NON_EXPORTED_PREFS)
+        assertFalse("restored_read" in entryNames())
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
     }
@@ -379,6 +382,28 @@ class PressLogicTest {
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()
+
+    @Test fun `lus restaures aller-retour tolerant`() {
+        val rows = listOf(
+            com.pressia.data.RestoredRead("https://exemple.fr/rss", "https://exemple.fr/rss:123", 1700000000000L),
+            com.pressia.data.RestoredRead("feed/x", "feed/x:-99", null)
+        )
+        val back = com.pressia.data.parseRestoredRead(com.pressia.data.encodeRestoredRead(rows))
+        assertEquals(rows, back)
+        // Lignes abîmées ignorées, `readAt` absent ou nul → null, espaces rognés.
+        assertEquals(
+            listOf(
+                com.pressia.data.RestoredRead("f", "a", null),
+                com.pressia.data.RestoredRead("f", "a", null),
+                com.pressia.data.RestoredRead("f", "a", 42)
+            ),
+            com.pressia.data.parseRestoredRead("f|a|\nbroken\nf|a|0\n  f  |  a  | 42 ")
+        )
+        assertTrue(com.pressia.data.parseRestoredRead(null).isEmpty())
+        assertTrue(com.pressia.data.parseRestoredRead("").isEmpty())
+        // Identifiants ou flux vides : jamais programmés.
+        assertEquals("", com.pressia.data.encodeRestoredRead(listOf(com.pressia.data.RestoredRead("", "a", null))))
+    }
 
     // ----- Registre multi-comptes -----
 

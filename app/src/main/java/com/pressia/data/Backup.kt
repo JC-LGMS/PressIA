@@ -14,7 +14,8 @@ import org.json.JSONObject
  *  - [SECTION_PREFS]     toutes les options (thème, couleurs, polices, vues, hors-ligne…)
  *  - [SECTION_STATS]     les statistiques de lecture et d'extraction
  *  - [SECTION_ACCOUNTS]  les comptes / flux (abonnements + dossiers + fournisseur courant)
- *  - [SECTION_READ]      les favoris PressIA (étoiles locales, tous flux confondus)
+ *  - [SECTION_READ]      les favoris PressIA (étoiles locales, tous flux confondus) et les
+ *                         articles lus des flux saisis à la main (rejoués à l'import)
  *
  * Les jetons de connexion (mots de passe d'API) ne sont jamais exportés par défaut :
  * il faut cocher [INCLUDE_TOKENS] explicitement.
@@ -41,7 +42,33 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
  * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration,
  * et les derniers totaux de non-lus sont un cache dérivé qu'une restauration recalcule.
  */
-val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name, Prefs.RECONCILE_TOTALS.name)
+val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name)
+
+/** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
+data class RestoredRead(val feedId: String, val id: String, val readAt: Long?)
+
+/**
+ * Sérialise une file de lus à rejouer, une entrée par ligne (`feedId|articleId|readAt`).
+ * Découpage par la droite : les identifiants de flux (URL) comme d'articles peuvent
+ * contenir des séparateurs, jamais en dernière position.
+ */
+fun encodeRestoredRead(rows: List<RestoredRead>): String = rows
+    .filter { it.feedId.isNotBlank() && it.id.isNotBlank() }
+    .joinToString("\n") { "${it.feedId}|${it.id}|${it.readAt ?: 0}" }
+
+/** Parse [encodeRestoredRead], tolérant (lignes incomplètes ignorées, `readAt` absent → null). */
+fun parseRestoredRead(raw: String?): List<RestoredRead> =
+    raw.orEmpty().split("\n").mapNotNull { line ->
+        val last = line.lastIndexOf('|')
+        if (last < 0) return@mapNotNull null
+        val readAt = line.substring(last + 1).trim().toLongOrNull()?.takeIf { it > 0 }
+        val head = line.substring(0, last)
+        val sep = head.lastIndexOf('|')
+        if (sep < 0) return@mapNotNull null
+        val feedId = head.substring(0, sep).trim()
+        val id = head.substring(sep + 1).trim()
+        if (feedId.isBlank() || id.isBlank()) null else RestoredRead(feedId, id, readAt)
+    }
 
 /** Résultat d'un import, pour l'affichage utilisateur. */
 data class ImportReport(
@@ -121,14 +148,26 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
         root.put(Sections.STATS, o)
     }
     if (Sections.READ in sections) {
-        root.put(Sections.READ, JSONArray().apply {
-            dao.starredStates().forEach { r ->
-                put(
-                    JSONObject()
-                        .put("id", r.id).put("unread", r.unread).put("starred", r.starred)
-                        .put("readAt", r.readAt ?: JSONObject.NULL)
-                )
+        // Étoiles (tous flux) + lus des flux locaux. Les lus trop vieux pour survivre à la
+        // purge locale (30 jours, comme `trimToMax`) sont exclus : ils ne reviendraient jamais.
+        val cutoff = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
+        val rows = HashMap<String, JSONObject>()
+        dao.starredStates().forEach { r ->
+            rows[r.id] = JSONObject()
+                .put("id", r.id).put("unread", r.unread).put("starred", r.starred)
+                .put("readAt", r.readAt ?: JSONObject.NULL).put("feedId", r.feedId)
+        }
+        dao.localReadStates().forEach { r ->
+            if (r.published < cutoff) return@forEach
+            val o = rows.getOrPut(r.id) {
+                JSONObject().put("id", r.id).put("unread", false).put("starred", false)
+                    .put("readAt", JSONObject.NULL).put("feedId", r.feedId)
             }
+            o.put("unread", false)
+            if (r.readAt != null) o.put("readAt", r.readAt)
+        }
+        root.put(Sections.READ, JSONArray().apply {
+            rows.values.sortedBy { it.optString("id") }.forEach { put(it) }
         })
     }
     root.toString(2)
@@ -203,10 +242,31 @@ suspend fun PressRepository.importJson(
             // La section ne contient plus que des favoris (flux RSS locaux) : on ne restaure
             // que l'étoile, l'état lu/non-lu des comptes cloud étant géré par le service lui-même.
             val starred = mutableSetOf<String>()
+            val read = mutableListOf<RestoredRead>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val id = o.optString("id").takeIf { it.isNotBlank() } ?: continue
                 if (o.optBoolean("starred", false)) starred += id
+                // `unread` explicite à faux uniquement : les sauvegardes d'avant les lus locaux
+                // et les lignes sans flux vérifiable ne programment aucun marquage.
+                if (o.has("unread") && !o.isNull("unread") && !o.optBoolean("unread", true)) {
+                    val feedId = o.optString("feedId").trim()
+                    if (feedId.isBlank()) continue
+                    val readAt = if (o.has("readAt") && !o.isNull("readAt")) {
+                        o.optLong("readAt").takeIf { it > 0 }
+                    } else null
+                    val a = dao.article(id)
+                    if (a != null) {
+                        // Article déjà là : marquage immédiat si son flux est local, sinon oubli
+                        // (un lu cloud serait rouvert par la prochaine réconciliation de toute façon).
+                        // Passage direct par le DAO : `setRead` du dépôt enfilerait une poussée cloud.
+                        if (dao.subscription(a.feedId)?.provider?.let { isLocalProvider(it) } == true) {
+                            dao.setRead(id, false, readAt)
+                        }
+                    } else {
+                        read += RestoredRead(feedId, id, readAt)
+                    }
+                }
             }
             if (starred.isNotEmpty()) {
                 dao.markStarred(starred.toList())
@@ -216,7 +276,12 @@ suspend fun PressRepository.importJson(
                 // une autre restauration, encore en attente de ses propres articles.
                 prefs.set(Prefs.RESTORED_STARRED, starred.joinToString("\n"))
             }
-            report = report.copy(read = starred.size)
+            if (read.isNotEmpty()) {
+                // Même attente que les étoiles : les articles locaux arrivent à la prochaine sync.
+                val prev = parseRestoredRead(prefs.data.first()[Prefs.RESTORED_READ])
+                prefs.set(Prefs.RESTORED_READ, encodeRestoredRead(prev + read))
+            }
+            report = report.copy(read = starred.size + read.size)
         }
     }
     report

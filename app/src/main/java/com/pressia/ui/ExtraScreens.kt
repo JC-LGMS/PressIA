@@ -934,7 +934,7 @@ private fun SectionPickerDialog(
         Sections.PREFS to "Options (thème, couleurs, polices, vues…)",
         Sections.STATS to "Statistiques de lecture et d'extraction",
         Sections.ACCOUNTS to "Comptes et flux (abonnements, dossiers)",
-        Sections.READ to "Favoris PressIA (étoiles)"
+        Sections.READ to "Favoris (étoiles) et lus des flux locaux"
     )
     var sel by remember { mutableStateOf(Sections.ALL) }
     var tokens by remember { mutableStateOf(false) }

@@ -136,6 +136,15 @@ class Prefs(private val ctx: Context) {
          */
         val RESTORED_STARRED = stringPreferencesKey("restored_starred")
 
+        /**
+         * Identifiants d'articles lus des flux locaux, rejoués comme les favoris restaurés :
+         * le lu/non-lu local n'existe nulle part ailleurs (ni serveur, ni export de contenu),
+         * donc sans cette file une restauration rouvrirait tout. Lignes `feedId|articleId|readAt`,
+         * le flux étant revérifié au rejeu (jamais de marquage vers un compte cloud).
+         * Même statut que [RESTORED_STARRED] : hors [ENTRIES], jamais exporté.
+         */
+        val RESTORED_READ = stringPreferencesKey("restored_read")
+
         /** Toutes les préférences, typées : sauvegarde / restauration par nom. */
         val ENTRIES: List<PrefEntry> = listOf(
             PrefEntry.Str("provider", PROVIDER), PrefEntry.Str("token", TOKEN),

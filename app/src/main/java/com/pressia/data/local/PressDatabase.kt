@@ -363,8 +363,15 @@ interface PressDao {
      * L'étoile PressIA étant un état local pour **tous** les flux (Feedly et Inoreader compris,
      * dont le tableau du compte est un ensemble distinct), elle est sauvegardée intégralement.
      */
-    @Query("SELECT a.id AS id, a.unread AS unread, a.starred AS starred, a.readAt AS readAt FROM articles a WHERE a.starred = 1")
+    @Query("SELECT a.id AS id, a.unread AS unread, a.starred AS starred, a.readAt AS readAt, a.feedId AS feedId FROM articles a WHERE a.starred = 1")
     suspend fun starredStates(): List<ReadStateRow>
+    /**
+     * États lus des flux saisis à la main, pour la sauvegarde : seuls les lus sont exportés
+     * (le non-lu est l'état d'arrivée), et seuls les flux locaux (le lu/non-lu cloud appartient
+     * au service, qui le réimpose à la prochaine réconciliation de toute façon).
+     */
+    @Query("SELECT a.id AS id, a.feedId AS feedId, a.readAt AS readAt, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = 'local' AND a.unread = 0")
+    suspend fun localReadStates(): List<LocalReadRow>
     /** Rejoue les favoris restaurés d'une sauvegarde sur les articles tout juste synchronisés. */
     @Query("UPDATE articles SET starred = 1 WHERE id IN (:ids)")
     suspend fun markStarred(ids: List<String>)
@@ -377,7 +384,9 @@ data class FeedUnread(val feedId: String, val c: Int)data class LocalDayCount(va
 data class CategorySeconds(val categoryId: String?, val secs: Int)
 data class FeedSeconds(val feedId: String, val secs: Int, val c: Int)
 data class ExtractCount(val ok: Boolean, val c: Int)
-data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolean, val readAt: Long?)
+data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolean, val readAt: Long?, val feedId: String)
+/** État lu d'un article local à sauvegarder (voir [PressDao.localReadStates]). */
+data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
 /** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */
 data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
