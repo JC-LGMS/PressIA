@@ -612,6 +612,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     suspend fun withWebSession(): Boolean {
         if (com.pressia.data.remote.InstapaperWeb.session() != null) {
             prefs.set(Prefs.INSTAPAPER_WEB, true)
+            repo.clearAccountExpired("instapaper")
             repo.clearAccountExpired("instapaper_web")
             return true
         }
@@ -629,7 +630,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             return false
         }
         prefs.set(Prefs.INSTAPAPER_WEB, ok)
-        if (ok) repo.clearAccountExpired("instapaper_web") else repo.markAccountExpired("instapaper_web")
+        // Refus net avec les identifiants mémorisés : c'est le mot de passe stocké qui est
+        // mauvais, donc l'alerte visible du compte (« instapaper ») est levée. Un succès efface
+        // aussi l'ancien drapeau « instapaper_web » (versions précédentes).
+        if (ok) {
+            repo.clearAccountExpired("instapaper")
+            repo.clearAccountExpired("instapaper_web")
+        } else {
+            repo.markAccountExpired("instapaper")
+        }
         return ok
     }
 

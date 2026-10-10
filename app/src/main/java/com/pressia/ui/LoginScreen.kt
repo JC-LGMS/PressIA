@@ -49,7 +49,6 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     var instaBusy by remember { mutableStateOf(false) }
     val instaConnected by vm.instapaperUser.collectAsState()
     val instaMode by vm.instapaperMode.collectAsState()
-    val instaWeb by vm.instapaperWeb.collectAsState()
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
 
@@ -230,20 +229,11 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
 
         // ---- services tiers -------------------------------------------------------------------
         HorizontalDivider()
-        Text("Services tiers", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Services annexes : envoi vers Instapaper.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        // (Inoreader : voir « Agrégateur de flux RSS », plus haut)
-
+        Text("Services annexes", style = MaterialTheme.typography.titleMedium)
         // ---- Instapaper --------------------------------------------------------------------
         Text("Instapaper", style = MaterialTheme.typography.titleSmall)
         Text(
-            "Pour envoyer un article vers Instapaper depuis le bouton de raccourci à droite " +
-                "de chaque article (Réglages). Le mot de passe ne sert qu'à valider le compte " +
-                "puis chaque envoi : il reste sur l'appareil et n'est jamais exporté.",
+            "Pour envoyer un article vers Instapaper, avec ou sans choix de tags et dossiers.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -306,35 +296,11 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
         // ---- Mode d'envoi : direct, ou dossier + tags choisis à chaque fois (session web) ----
         Text("Envoi vers Instapaper", style = MaterialTheme.typography.titleSmall)
         InstaModeRow(instaMode == "direct", "Envoyer directement",
-            "Sans dossier ni tag, avec le compte ci-dessus.",
+            "Sans dossier ni tag.",
             { vm.setInstapaperMode("direct") })
         InstaModeRow(instaMode == "choose", "Choisir le dossier et les tags à chaque envoi",
-            "Demande la destination avant chaque envoi (connecté automatiquement, sans clé).",
+            "Demande la destination avant chaque envoi.",
             { vm.setInstapaperMode("choose") })
-        // La session web se connecte toute seule (à la connexion du compte, puis à chaque
-        // besoin) : aucun bouton, juste un état.
-        if (instaMode == "choose") {
-            val webExpired = "instapaper_web" in expired
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (instaWeb) Icons.Filled.Folder else Icons.Filled.FolderOpen,
-                    null, tint = if (webExpired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    when {
-                        webExpired -> "Session expirée : vérifiez l'identifiant et le mot de passe ci-dessus"
-                        instaWeb -> "Dossiers + tags connectés"
-                        else -> "Dossiers + tags : connexion automatique au premier envoi"
-                    },
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (webExpired) MaterialTheme.colorScheme.error
-                    else if (instaWeb) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
         }
 
         if (vm.authMsg?.isNotBlank() == true) {

@@ -149,9 +149,9 @@ class PressRepository(
 
     /**
      * Sessions expirées (voir `EXPIRED_ACCOUNTS`) : identifiants de comptes cloud en 401/403,
-     * plus les pseudo-comptes `"instapaper"` (mot de passe refusé) et `"instapaper_web"`
-     * (session web morte sans reconnexion possible). L'écran Comptes les affiche avec une
-     * réinvite à reconnecter ; un appel authentifié réussi retire le drapeau aussitôt.
+     * plus le pseudo-compte `"instapaper"` (mot de passe refusé, API simple comme session web).
+     * L'écran Comptes les affiche avec une réinvite à reconnecter ; un appel authentifié réussi
+     * retire le drapeau aussitôt.
      */
     suspend fun expiredAccounts(): Set<String> =
         parseExpired(prefs.data.first()[Prefs.EXPIRED_ACCOUNTS])
