@@ -26,7 +26,7 @@ data class Scope(val feedId: String? = null, val categoryId: String? = null, val
  * tableau « Read later » appartient au compte.
  */
 data class FavScope(
-    val set: String = "app",
+    val set: String = "all",
     val scope: Scope = Scope(label = "Tous les articles")
 ) {
     val label: String get() = favSetLabel(set)
@@ -164,7 +164,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Faux = un dossier par compte même si les noms se ressemblent. */
     val mergeFolders: StateFlow<Boolean> = prefs.flow(Prefs.MERGE_FOLDERS, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /** Jeu de favoris retenu par l'écran Favoris : « app » (étoiles) | « later » (Read later) | « all ». */
-    val favSet: StateFlow<String> = prefs.flow(Prefs.STARRED_SCOPE, "app").stateIn(viewModelScope, SharingStarted.Eagerly, "app")
+    val favSet: StateFlow<String> = prefs.flow(Prefs.STARRED_SCOPE, "all").stateIn(viewModelScope, SharingStarted.Eagerly, "all")
     /** Masquage des flux sans article non lu, pour l'écran Accueil (indépendant du drawer). */
     val hideEmptySubs: StateFlow<Boolean> = prefs.flow(Prefs.HIDE_EMPTY_SUBS, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** Échelle des libellés du drawer, en pourcentage. */
