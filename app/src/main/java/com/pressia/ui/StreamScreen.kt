@@ -38,11 +38,6 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val reactive by live.collectAsState(initial = vm.articles)
     val localArticles = reactive
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
-    // Le rond suit le geste de l'utilisateur, pas les synchronisations de fond (lancement,
-    // tâche planifiée) : celles-ci s'annoncent déjà par la barre sous la barre de titre.
-    // Lier le rond à vm.syncing l'affichait à l'ouverture pendant la synchro de lancement,
-    // sans aucun geste.
-    var pullRefreshing by remember { mutableStateOf(false) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -95,13 +90,20 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                 }
             } else {
                 // Tirer la liste vers le bas synchronise, comme le bouton d'en haut : le rond ne
-                // tourne que pour ce geste, et le message arrive dans le bandeau ci-dessus.
+                // reflète que le geste puis s'efface au relâchement — la synchro en cours garde ses
+                // deux indicateurs (barre sous le titre, bouton).
+                // Le composant exige l'alternance vrai→faux de isRefreshing pour refermer son état
+                // interne : on l'impulse brièvement au relâchement pendant que la synchro continue
+                // sans lui.
+                var gestureRefresh by remember { mutableStateOf(false) }
                 androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                    isRefreshing = pullRefreshing,
+                    isRefreshing = gestureRefresh,
                     onRefresh = {
                         scope.launch {
-                            pullRefreshing = true
-                            try { vm.syncMsg = vm.syncNow() } finally { pullRefreshing = false }
+                            gestureRefresh = true
+                            launch { vm.syncMsg = vm.syncNow() }
+                            kotlinx.coroutines.delay(300)
+                            gestureRefresh = false
                         }
                     },
                     modifier = Modifier.fillMaxSize()
