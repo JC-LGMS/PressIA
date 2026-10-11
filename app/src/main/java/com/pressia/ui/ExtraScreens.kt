@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -811,14 +812,21 @@ fun SettingsScreen(vm: PressVM) {
         Text("Cache utilisé : $cacheInfo")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
-            FilledTonalButton({ vm.refreshFavicons() }, enabled = !vm.refreshingFavicons) {
+            FilledTonalButton(
+                { vm.refreshFavicons() },
+                enabled = !vm.refreshingFavicons,
+                contentPadding = PaddingValues(horizontal = 12.dp)
+            ) {
                 if (vm.refreshingFavicons) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
                 }
                 Spacer(Modifier.width(8.dp))
-                Text(if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons/miniatures")
+                Text(
+                    if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons/\nminiatures",
+                    textAlign = TextAlign.Center
+                )
             }
         }
         HorizontalDivider()
