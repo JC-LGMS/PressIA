@@ -4,8 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
@@ -168,110 +167,133 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                ModalNavigationDrawer(
-                    drawerState = drawer,
-                    drawerContent = {
-                        PressDrawer(vm, currentRoute = current,
-                            onNavigate = { r ->
-                                // Le drawer a déjà positionné le flux ou le dossier voulu :
-                                // un tel écran est une destination de contenu, on repart donc d'une
-                                // pile propre. Les écrans utilitaires se posent par-dessus.
-                                if (r in CONTENT_ROUTES) openContent(r) else nav.navigate(r) { launchSingleTop = true }
-                            }) {
-                            closeDrawer()
-                        }
+                val snackbarHostState = remember { SnackbarHostState() }
+                LaunchedEffect(vm.syncMsg) {
+                    val msg = vm.syncMsg ?: return@LaunchedEffect
+                    val isIntermediate = msg in listOf(
+                        "Envoi des modifications…",
+                        "Réception des articles…",
+                        "Téléchargement des miniatures…",
+                        "Mise à jour du « Read later »…",
+                        "Récupération des favicons…"
+                    ) || vm.syncing
+                    val duration = if (isIntermediate && vm.syncing) SnackbarDuration.Indefinite else SnackbarDuration.Long
+                    snackbarHostState.showSnackbar(msg, duration = duration)
+                    if (vm.syncMsg == msg) {
+                        vm.syncMsg = null
                     }
-                ) {
-                    key(home) {
-                        NavHost(nav, startDestination = startRoute) {
-                            composable("home") {
-                                BackRule()
-                                SubscriptionsScreen(vm,
-                                    onOpenStream = { openContent("stream") },
-                                    onMenu = { openDrawer() })
+                }
+
+                Box(Modifier.fillMaxSize()) {
+                    ModalNavigationDrawer(
+                        drawerState = drawer,
+                        drawerContent = {
+                            PressDrawer(vm, currentRoute = current,
+                                onNavigate = { r ->
+                                    // Le drawer a déjà positionné le flux ou le dossier voulu :
+                                    // un tel écran est une destination de contenu, on repart donc d'une
+                                    // pile propre. Les écrans utilitaires se posent par-dessus.
+                                    if (r in CONTENT_ROUTES) openContent(r) else nav.navigate(r) { launchSingleTop = true }
+                                }) {
+                                closeDrawer()
                             }
-                            composable("stream") {
-                                BackRule()
-                                StreamScaffold(vm, vm.scope.label,
-                                    onOpen = { openArticle(it.id) },
-                                    onMenu = { openDrawer() })
-                            }
-                            composable("article") {
-                                BackRule()
-                                val id = vm.selectedArticleId
-                                if (id == null) {
-                                    LaunchedEffect(Unit) { nav.popBackStack() }
-                                } else {
-                                    ArticleScreen(vm, id,
-                                        onBack = { nav.popBackStack() },
+                        }
+                    ) {
+                        key(home) {
+                            NavHost(nav, startDestination = startRoute) {
+                                composable("home") {
+                                    BackRule()
+                                    SubscriptionsScreen(vm,
+                                        onOpenStream = { openContent("stream") },
                                         onMenu = { openDrawer() })
                                 }
-                            }
-                            composable("starred") {
-                                BackRule()
-                                FavorisScreen(vm,
-                                    onOpen = { openArticle(it.id) },
-                                    onMenu = { openDrawer() })
-                            }
-                            composable("search") {
-                                BackRule()
-                                ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search")) {
-                                    SearchScreen(vm, onOpen = { openArticle(it.id) })
+                                composable("stream") {
+                                    BackRule()
+                                    StreamScaffold(vm, vm.scope.label,
+                                        onOpen = { openArticle(it.id) },
+                                        onMenu = { openDrawer() })
+                                }
+                                composable("article") {
+                                    BackRule()
+                                    val id = vm.selectedArticleId
+                                    if (id == null) {
+                                        LaunchedEffect(Unit) { nav.popBackStack() }
+                                    } else {
+                                        ArticleScreen(vm, id,
+                                            onBack = { nav.popBackStack() },
+                                            onMenu = { openDrawer() })
+                                    }
+                                }
+                                composable("starred") {
+                                    BackRule()
+                                    FavorisScreen(vm,
+                                        onOpen = { openArticle(it.id) },
+                                        onMenu = { openDrawer() })
+                                }
+                                composable("search") {
+                                    BackRule()
+                                    ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search")) {
+                                        SearchScreen(vm, onOpen = { openArticle(it.id) })
+                                    }
+                                }
+                                composable("dedup") {
+                                    BackRule()
+                                    ScaffoldWithMenu("Doublons", { openDrawer() }, drawerIconFor("dedup")) {
+                                        DedupScreen(vm, onOpen = { openArticle(it.id) })
+                                    }
+                                }
+                                composable("stats") {
+                                    BackRule()
+                                    ScaffoldWithMenu("Stats", { openDrawer() }, drawerIconFor("stats")) {
+                                        StatsScreen(vm)
+                                    }
+                                }
+                                composable("settings") {
+                                    BackRule()
+                                    ScaffoldWithMenu("Réglages", { openDrawer() }, drawerIconFor("settings")) {
+                                        SettingsScreen(vm)
+                                    }
+                                }
+                                composable("login") {
+                                    BackRule()
+                                    ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login")) {
+                                        LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
+                                            onFeedlySignIn = { nav.navigate("feedly-signin") })
+                                    }
+                                }
+                                composable("about") {
+                                    BackRule()
+                                    ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about")) {
+                                        AboutScreen()
+                                    }
+                                }
+                                composable("feedly-signin") {
+                                    BackRule()
+                                    FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
+                                        onDone = { msg ->
+                                            vm.authMsg = msg
+                                            // Retour automatique sur la liste des comptes.
+                                            nav.popBackStack("login", inclusive = false)
+                                        })
+                                }
+                                composable("oauth/{provider}") { backStack ->
+                                    BackRule()
+                                    val p = backStack.arguments?.getString("provider") ?: "feedly"
+                                    OAuthWebViewScreen(vm, p, onBack = { nav.popBackStack() })
                                 }
                             }
-                            composable("dedup") {
-                                BackRule()
-                                ScaffoldWithMenu("Doublons", { openDrawer() }, drawerIconFor("dedup")) {
-                                    DedupScreen(vm, onOpen = { openArticle(it.id) })
-                                }
+                            // Destination Instapaper (mode « choisir à chaque envoi »), au-dessus de
+                            // tout écran : listes, swipes et écran article y aboutissent.
+                            val pending = vm.instapaperPickerFor
+                            if (pending != null) {
+                                InstapaperTargetDialog(vm, pending.id, pending.title) { toast(ctx, it) }
                             }
-                            composable("stats") {
-                                BackRule()
-                                ScaffoldWithMenu("Stats", { openDrawer() }, drawerIconFor("stats")) {
-                                    StatsScreen(vm)
-                                }
-                            }
-                            composable("settings") {
-                                BackRule()
-                                ScaffoldWithMenu("Réglages", { openDrawer() }, drawerIconFor("settings")) {
-                                    SettingsScreen(vm)
-                                }
-                            }
-                            composable("login") {
-                                BackRule()
-                                ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login")) {
-                                    LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
-                                        onFeedlySignIn = { nav.navigate("feedly-signin") })
-                                }
-                            }
-                            composable("about") {
-                                BackRule()
-                                ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about")) {
-                                    AboutScreen()
-                                }
-                            }
-                            composable("feedly-signin") {
-                                BackRule()
-                                FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
-                                    onDone = { msg ->
-                                        vm.authMsg = msg
-                                        // Retour automatique sur la liste des comptes.
-                                        nav.popBackStack("login", inclusive = false)
-                                    })
-                            }
-                            composable("oauth/{provider}") { backStack ->
-                                BackRule()
-                                val p = backStack.arguments?.getString("provider") ?: "feedly"
-                                OAuthWebViewScreen(vm, p, onBack = { nav.popBackStack() })
-                            }
-                        }
-                        // Destination Instapaper (mode « choisir à chaque envoi »), au-dessus de
-                        // tout écran : listes, swipes et écran article y aboutissent.
-                        val pending = vm.instapaperPickerFor
-                        if (pending != null) {
-                            InstapaperTargetDialog(vm, pending.id, pending.title) { toast(ctx, it) }
                         }
                     }
+                    SnackbarHost(
+                        snackbarHostState,
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                    )
                 }
             }
         }

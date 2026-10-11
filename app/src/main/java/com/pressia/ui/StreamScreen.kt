@@ -28,10 +28,6 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val unreadOnly by vm.unreadOnly.collectAsState()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(vm.syncMsg) {
-        vm.syncMsg?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long); vm.syncMsg = null }
-    }
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
     val live = remember(vm.scope, unreadOnly) { vm.streamList(unreadOnly) }
@@ -39,7 +35,6 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val localArticles = reactive
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
@@ -144,15 +139,11 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
             vm.setFavSet("all")
         }
     }
-    LaunchedEffect(vm.syncMsg) {
-        vm.syncMsg?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long); vm.syncMsg = null }
-    }
     val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
     val articles by live.collectAsState(initial = emptyList())
 
     val feed = vm.subs.firstOrNull { it.id == feedScope.feedId }
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {

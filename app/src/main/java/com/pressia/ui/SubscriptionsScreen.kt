@@ -44,18 +44,13 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     val homeScale by vm.homeScale.collectAsState()
     val folderSp = (17.6f * homeScale / 100f).coerceIn(12f, 25f)
     val feedSp = (16.5f * homeScale / 100f).coerceIn(11f, 23f)
-    val snackbar = remember { SnackbarHostState() }
     var editing by remember { mutableStateOf<PressRepository.Folder?>(null) }   // dossier renommé
     var creating by remember { mutableStateOf(false) }                          // création d'un dossier
     var moving by remember { mutableStateOf<SubscriptionEntity?>(null) }       // déplacement d'un flux
     var toDelete by remember { mutableStateOf<PressRepository.Folder?>(null) }
     var addingTo by remember { mutableStateOf<PressRepository.Folder?>(null) } // ajout d'un flux local
 
-    LaunchedEffect(vm.syncMsg) {
-        vm.syncMsg?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long); vm.syncMsg = null }
-    }
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
