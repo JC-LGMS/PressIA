@@ -87,87 +87,103 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
         val visibleUncategorized = if (hiddenEmpty) uncategorized.filter { (vm.unreads[it.id] ?: 0) > 0 } else uncategorized
         val listState = rememberLazyListState()
         val jumpScope = rememberCoroutineScope()
+        // Même tirage que les vues articles : le rond ne reflète que le geste puis s'efface
+        // au relâchement, la synchro gardant barre et bouton.
+        var gestureRefresh by remember { mutableStateOf(false) }
         Box(Modifier.padding(pad).fillMaxSize()) {
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            if (vm.subs.isEmpty() && vm.loaded && !vm.syncing) {
-                item {
-                    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Aucun abonnement.")
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Ajoutez un flux RSS ou connectez Feedly depuis Comptes.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = gestureRefresh,
+                onRefresh = {
+                    jumpScope.launch {
+                        gestureRefresh = true
+                        launch { vm.syncMsg = vm.syncNow() }
+                        kotlinx.coroutines.delay(100)
+                        gestureRefresh = false
                     }
-                }
-            }
-            // `vm.folders` et `vm.subs` sont déjà ordonnés par la base : c'est cet ordre qui est
-            // affiché, et c'est donc lui qui dit si un élément peut monter ou descendre.
-            vm.folders.forEachIndexed { fi, f ->
-                val subs = vm.subs.filter { it.categoryId in f.ids }
-                // Un dossier vide peut être masqué ; un dossier sans flux ne l'est jamais,
-                // sinon la liste donnerait l'impression d'une synchronisation incomplète.
-                val hideFolder = hiddenEmpty && subs.isNotEmpty() && subs.all { (vm.unreads[it.id] ?: 0) == 0 }
-                if (!hideFolder) {
-                    item(key = "cat-${f.id}") {
-                        FolderRow(
-                            label = f.label,
-                            labelSp = folderSp,
-                            unread = subs.sumOf { vm.unreads[it.id] ?: 0 },
-                            collapsed = vm.isCollapsed(f.id),
-                            canMoveUp = fi > 0,
-                            canMoveDown = fi < vm.folders.lastIndex,
-                            onOpen = {
-                                vm.switchScope(Scope(categoryId = f.id, label = f.label))
-                                vm.refresh(); onOpenStream()
-                            },
-                            onToggle = { vm.toggleFolder(f.id) },
-                            onRename = { editing = f },
-                            onAddFeed = { addingTo = f },
-                            onMoveUp = { vm.moveFolder(f, -1) },
-                            onMoveDown = { vm.moveFolder(f, 1) },
-                            onDelete = { toDelete = f }
-                        )
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    if (vm.subs.isEmpty() && vm.loaded && !vm.syncing) {
+                        item {
+                            Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Aucun abonnement.")
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Ajoutez un flux RSS ou connectez Feedly depuis Comptes.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
                     }
-                    if (!vm.isCollapsed(f.id)) {
-                        // Le flux remonte au fond du dossier s'il en quitte un autre : sa place dans
-                        // la liste est celle de sa nouvelle liste, pas de celle d'origine.
-                        val shown = (if (hiddenEmpty) subs.filter { (vm.unreads[it.id] ?: 0) > 0 } else subs)
-                            .sortedBy { it.sortOrder }
-                        items(shown, key = { "s-${it.id}" }) { s ->
-                            val i = shown.indexOfFirst { it.id == s.id }
+                    // `vm.folders` et `vm.subs` sont déjà ordonnés par la base : c'est cet ordre qui est
+                    // affiché, et c'est donc lui qui dit si un élément peut monter ou descendre.
+                    vm.folders.forEachIndexed { fi, f ->
+                        val subs = vm.subs.filter { it.categoryId in f.ids }
+                        // Un dossier vide peut être masqué ; un dossier sans flux ne l'est jamais,
+                        // sinon la liste donnerait l'impression d'une synchronisation incomplète.
+                        val hideFolder = hiddenEmpty && subs.isNotEmpty() && subs.all { (vm.unreads[it.id] ?: 0) == 0 }
+                        if (!hideFolder) {
+                            item(key = "cat-${f.id}") {
+                                FolderRow(
+                                    label = f.label,
+                                    labelSp = folderSp,
+                                    unread = subs.sumOf { vm.unreads[it.id] ?: 0 },
+                                    collapsed = vm.isCollapsed(f.id),
+                                    canMoveUp = fi > 0,
+                                    canMoveDown = fi < vm.folders.lastIndex,
+                                    onOpen = {
+                                        vm.switchScope(Scope(categoryId = f.id, label = f.label))
+                                        vm.refresh(); onOpenStream()
+                                    },
+                                    onToggle = { vm.toggleFolder(f.id) },
+                                    onRename = { editing = f },
+                                    onAddFeed = { addingTo = f },
+                                    onMoveUp = { vm.moveFolder(f, -1) },
+                                    onMoveDown = { vm.moveFolder(f, 1) },
+                                    onDelete = { toDelete = f }
+                                )
+                            }
+                            if (!vm.isCollapsed(f.id)) {
+                                // Le flux remonte au fond du dossier s'il en quitte un autre : sa place dans
+                                // la liste est celle de sa nouvelle liste, pas de celle d'origine.
+                                val shown = (if (hiddenEmpty) subs.filter { (vm.unreads[it.id] ?: 0) > 0 } else subs)
+                                    .sortedBy { it.sortOrder }
+                                items(shown, key = { "s-${it.id}" }) { s ->
+                                    val i = shown.indexOfFirst { it.id == s.id }
+                                    SubRow(
+                                        vm, s, Modifier.padding(start = 20.dp), feedSp, onOpenStream,
+                                        onMove = { moving = s },
+                                        onMoveUp = { vm.moveFeedOrder(s.id, -1, s.categoryId) },
+                                        onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
+                                        canMoveUp = i > 0,
+                                        canMoveDown = i < shown.lastIndex
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (visibleUncategorized.isNotEmpty()) {
+                        item(key = "cat-none") {
+                            Text(
+                                "Flux sans dossier", style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                            )
+                        }
+                        items(visibleUncategorized, key = { "s-${it.id}" }) { s ->
+                            val i = visibleUncategorized.indexOfFirst { it.id == s.id }
                             SubRow(
-                                vm, s, Modifier.padding(start = 20.dp), feedSp, onOpenStream,
+                                vm, s, Modifier, feedSp, onOpenStream,
                                 onMove = { moving = s },
-                                onMoveUp = { vm.moveFeedOrder(s.id, -1, s.categoryId) },
-                                onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
+                                onMoveUp = { vm.moveFeedOrder(s.id, -1, null) },
+                                onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
                                 canMoveUp = i > 0,
-                                canMoveDown = i < shown.lastIndex
+                                canMoveDown = i < visibleUncategorized.lastIndex
                             )
                         }
                     }
                 }
             }
-            if (visibleUncategorized.isNotEmpty()) {
-                item(key = "cat-none") {
-                    Text(
-                        "Flux sans dossier", style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                    )
-                }
-                items(visibleUncategorized, key = { "s-${it.id}" }) { s ->
-                    val i = visibleUncategorized.indexOfFirst { it.id == s.id }
-                    SubRow(
-                        vm, s, Modifier, feedSp, onOpenStream,
-                        onMove = { moving = s },
-                        onMoveUp = { vm.moveFeedOrder(s.id, -1, null) },
-                        onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
-                        canMoveUp = i > 0,
-                        canMoveDown = i < visibleUncategorized.lastIndex
-                    )
-                }
-            }
-        }
         if (vm.subs.size + vm.folders.size > 3) {
             ScrollJumpOverlay(
                 onTop = { jumpScope.launch { listState.animateScrollToItem(0) } },

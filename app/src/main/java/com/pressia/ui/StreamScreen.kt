@@ -102,7 +102,7 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                         scope.launch {
                             gestureRefresh = true
                             launch { vm.syncMsg = vm.syncNow() }
-                            kotlinx.coroutines.delay(300)
+                            kotlinx.coroutines.delay(100)
                             gestureRefresh = false
                         }
                     },
