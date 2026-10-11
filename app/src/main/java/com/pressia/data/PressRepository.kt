@@ -1019,6 +1019,9 @@ class PressRepository(
  * lignes « star » / « unstar » laissées par une version antérieure sont simplement vidées.
  * Seules les étoiles d'articles Feedly y transitent (« save » / « unsave » → « Read later »).
  */
+    /** File montante non vide ? (pour n'annoncer l'envoi que s'il a vraiment lieu). */
+    suspend fun hasPendingSync(): Boolean = withContext(Dispatchers.IO) { dao.pendingSync().isNotEmpty() }
+
     suspend fun pushQueue(): Int = withContext(Dispatchers.IO) {
         val pending = dao.pendingSync()
         if (pending.isEmpty()) return@withContext 0

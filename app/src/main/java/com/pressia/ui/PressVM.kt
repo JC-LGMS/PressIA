@@ -375,6 +375,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * est déjà en cours (lancement, planifiée ou manuelle), la demande est annulée et le
      * message le dit.
      *
+     * Chaque grande étape est publiée dans [syncMsg] (bandeau) au fil de l'eau, pour suivre
+     * l'avancement ; le message final (nouveautés, fin ou échec) reste celui rendu ici.
+     *
      * Le message ne parle que des **nouveaux** articles : le nombre d'articles déjà connus n'apporte
      * rien à l'utilisateur et masquait le seul chiffre utile.
      */
@@ -389,8 +392,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     private suspend fun doSyncNow(): String {
         lockSync()
         try {
+            if (repo.hasPendingSync()) syncMsg = "Envoi des modifications…"
             val pushed = repo.pushQueue()
+            syncMsg = "Réception des articles…"
             val n = repo.syncDown()
+            syncMsg = "Mise à jour du « Read later »…"
             repo.syncReadLater()
             // Toute synchro bien finie (manuelle, lancement, tâche planifiée) recule le garde-fou :
             // le lancement suivant saute si elle date de moins de X minutes (voir syncOnLaunch).
