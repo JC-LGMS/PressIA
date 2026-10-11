@@ -1119,13 +1119,46 @@ class PressRepository(
     }
 
     /**
-     * Ne vide que les images (force le re-téléchargement, dont les favicons). Comme pour
-     * [clearCache], tout est récupéré à la prochaine synchronisation.
+     * Ne vide que les images (force le re-téléchargement). Les miniatures d'articles sont
+     * récupérées à la prochaine synchronisation, les favicons au prochain affichage —
+     * voir [refreshFavicons] pour un re-téléchargement immédiat des deux.
      */
     suspend fun clearImages() = withContext(Dispatchers.IO) {
         ThumbStore.clear(ctx)
         dao.resetThumbsCached()
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
+    }
+
+    /**
+     * Rafraîchit les images maintenant : vide tout (miniatures + cache Coil, dont favicons)
+     * puis re-télécharge aussitôt les favicons de tous les abonnements et les miniatures
+     * d'articles. Renvoie le nombre de favicons récupérés, ou -1 si les réglages l'interdisent
+     * (images hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi) : rien n'est alors effacé.
+     */
+    suspend fun refreshFavicons(): Int = withSyncLock {
+        withContext(Dispatchers.IO) {
+            val data = prefs.data.first()
+            if (data[Prefs.IMAGES_OFFLINE] == false) return@withContext -1
+            if (isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)) return@withContext -1
+            clearImages()
+            val loader = coil.Coil.imageLoader(ctx)
+            val subs = dao.subscriptions()
+            var done = 0
+            subs.forEach { sub ->
+                val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id) ?: return@forEach
+                // Préchargement Coil : télécharge et met en cache disque sans afficher.
+                val ok = runCatching {
+                    loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
+                }.onFailure {
+                    android.util.Log.w("PressIA", "favicon ${sub.title} <$url> : $it")
+                }.getOrNull() is coil.request.SuccessResult
+                if (ok) done++
+            }
+            // Tout est pending après clearImages : les miniatures repartent aussitôt elles aussi.
+            syncThumbs()
+            android.util.Log.i("PressIA", "favicons actualisés : $done/${subs.size}")
+            done
+        }
     }
 
     // ----- Déduplication -----

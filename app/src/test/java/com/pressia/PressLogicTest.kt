@@ -542,4 +542,19 @@ class PressLogicTest {
         // Plus petit que le gabarit : jamais agrandi (pas de pixels inventés).
         assertEquals(56 to 56, com.pressia.data.local.ThumbStore.fitSize(56, 56, 1080, 500))
     }
+
+    @Test fun `favicon prefere l icone du compte puis le host`() {
+        // Icône fournie par le compte : telle quelle.
+        assertEquals(
+            "https://example.com/icon.png",
+            com.pressia.data.faviconUrlFor("https://example.com/icon.png", "https://www.frandroid.com/x", null, null)
+        )
+        // Sinon service Google sur le host (www. retiré).
+        assertEquals(
+            "https://www.google.com/s2/favicons?domain=frandroid.com&sz=128",
+            com.pressia.data.faviconUrlFor(null, "https://www.frandroid.com/articles", null, null)
+        )
+        // Sans host exploitable : null (l'UI affiche l'initiale).
+        assertNull(com.pressia.data.faviconUrlFor(null, null, null, "pas une url"))
+    }
 }

@@ -463,6 +463,7 @@ fun SettingsScreen(vm: PressVM) {
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
     var cacheInfo by remember { mutableStateOf("calcul…") }
+    var refreshingFav by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var showArticleActions by remember { mutableStateOf(false) }
@@ -540,10 +541,19 @@ fun SettingsScreen(vm: PressVM) {
         vm.refresh()
     }
     fun refreshFavicons() = scope.launch {
-        vm.repo.clearImages()
-        vm.refresh()
-        refreshCacheInfo()
-        toast(ctx, "Favicons actualisés")
+        refreshingFav = true
+        try {
+            val n = vm.repo.refreshFavicons()
+            vm.refresh()
+            refreshCacheInfo()
+            toast(
+                ctx,
+                if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
+                else "Favicons actualisés ($n)"
+            )
+        } finally {
+            refreshingFav = false
+        }
     }
     fun save() = scope.launch {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
@@ -808,7 +818,9 @@ fun SettingsScreen(vm: PressVM) {
         Text("Cache utilisé : $cacheInfo")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
-            OutlinedButton({ refreshFavicons() }) { Text("Actualiser les favicons") }
+            OutlinedButton({ refreshFavicons() }, enabled = !refreshingFav) {
+                Text(if (refreshingFav) "Actualisation…" else "Actualiser les favicons")
+            }
         }
         HorizontalDivider()
         Text("Sauvegarde", style = MaterialTheme.typography.titleMedium)

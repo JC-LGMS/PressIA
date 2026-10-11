@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pressia.data.faviconUrlFor
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.SubscriptionEntity
 import com.pressia.data.local.ThumbStore
@@ -423,14 +424,8 @@ fun thumbModel(ctx: Context, url: String?): Any? {
 /** Favicon de l'abonnement : icône fournie (Feedly/Inoreader), sinon favicon du site via son host, sinon initiale. */
 fun feedFaviconUrl(sub: SubscriptionEntity?): String? {
     if (sub == null) return null
-    if (!sub.iconUrl.isNullOrBlank()) return sub.iconUrl
-    val host = listOf(sub.siteUrl, sub.url, sub.id).firstNotNullOfOrNull { raw ->
-        runCatching {
-            java.net.URI(raw.trim()).host?.removePrefix("www.")?.takeIf { it.contains(".") }
-        }.getOrNull()
-    } ?: return null
-    // Service de favicons (mise en cache hors-ligne par Coil après le 1er chargement)
-    return "https://www.google.com/s2/favicons?domain=$host&sz=128"
+    // Même résolution que le pré-téléchargement (PressRepository.refreshFavicons).
+    return faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id)
 }
 
 /** Favicon de l'abonnement, sinon pastille avec l'initiale (100 % hors-ligne). */
