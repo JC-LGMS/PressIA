@@ -371,13 +371,19 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * tous les comptes et flux locaux, puis tableau « Read later » — le même contenu quel que
      * soit le déclencheur (bouton, lancement, tâche planifiée). [sync] en est la version non bloquant.
      *
-     * Exécutée sous le verrou partagé [PressRepository.withSyncLock] : un déclenchement manuel
-     * pendant une synchro attend son tour au lieu de télécharger en double.
+     * Tente le verrou partagé [PressRepository.withSyncLock] sans attendre : si une synchro
+     * est déjà en cours (lancement, planifiée ou manuelle), la demande est annulée et le
+     * message le dit.
      *
      * Le message ne parle que des **nouveaux** articles : le nombre d'articles déjà connus n'apporte
      * rien à l'utilisateur et masquait le seul chiffre utile.
      */
-    suspend fun syncNow(): String = repo.withSyncLock { doSyncNow() }
+    suspend fun syncNow(): String {
+        // Pas de file d'attente pour le manuel : si une synchro est déjà en cours, la demande
+        // est annulée au lieu de retélécharger derrière — la flèche tourne déjà, inutile
+        // d'empiler.
+        return repo.tryWithSyncLock { doSyncNow() } ?: "Synchronisation déjà en cours"
+    }
 
     /** Corps de [syncNow], verrou déjà acquis (voir aussi [syncOnLaunch]). */
     private suspend fun doSyncNow(): String {

@@ -80,6 +80,14 @@ class PressRepository(
      */
     private val syncMutex = Mutex()
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
+    /**
+     * Variante non bloquante : exécute [block] sous verrou, ou rend null sans attendre si une
+     * synchro est déjà en cours (le déclenchement manuel est alors annulé, pas mis en queue).
+     */
+    suspend fun <T> tryWithSyncLock(block: suspend () -> T): T? {
+        if (!syncMutex.tryLock()) return null
+        try { return block() } finally { syncMutex.unlock() }
+    }
 
     // ----- Comptes -----
 
