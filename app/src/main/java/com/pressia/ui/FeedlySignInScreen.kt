@@ -254,13 +254,16 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Connexion Feedly") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
-                actions = {
-                    IconButton({ webView?.loadUrl(authUrl) }) { Icon(Icons.Filled.Refresh, "recharger") }
-                }
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("Connexion Feedly") },
+                    navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
+                    actions = {
+                        IconButton({ webView?.loadUrl(authUrl) }) { Icon(Icons.Filled.Refresh, "recharger") }
+                    }
+                )
+                if (vm.syncing) SyncProgress()
+            }
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {

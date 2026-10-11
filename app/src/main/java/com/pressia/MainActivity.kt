@@ -230,43 +230,43 @@ class MainActivity : ComponentActivity() {
                                         onOpen = { openArticle(it.id) },
                                         onMenu = { openDrawer() })
                                 }
-                                composable("search") {
-                                    BackRule()
-                                    ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search")) {
-                                        SearchScreen(vm, onOpen = { openArticle(it.id) })
-                                    }
-                                }
-                                composable("dedup") {
-                                    BackRule()
-                                    ScaffoldWithMenu("Doublons", { openDrawer() }, drawerIconFor("dedup")) {
-                                        DedupScreen(vm, onOpen = { openArticle(it.id) })
-                                    }
-                                }
-                                composable("stats") {
-                                    BackRule()
-                                    ScaffoldWithMenu("Stats", { openDrawer() }, drawerIconFor("stats")) {
-                                        StatsScreen(vm)
-                                    }
-                                }
-                                composable("settings") {
-                                    BackRule()
-                                    ScaffoldWithMenu("Réglages", { openDrawer() }, drawerIconFor("settings")) {
-                                        SettingsScreen(vm)
-                                    }
-                                }
-                                composable("login") {
-                                    BackRule()
-                                    ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login")) {
-                                        LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
-                                            onFeedlySignIn = { nav.navigate("feedly-signin") })
-                                    }
-                                }
-                                composable("about") {
-                                    BackRule()
-                                    ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about")) {
-                                        AboutScreen()
-                                    }
-                                }
+                                 composable("search") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search"), vm) {
+                                         SearchScreen(vm, onOpen = { openArticle(it.id) })
+                                     }
+                                 }
+                                 composable("dedup") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Doublons", { openDrawer() }, drawerIconFor("dedup"), vm) {
+                                         DedupScreen(vm, onOpen = { openArticle(it.id) })
+                                     }
+                                 }
+                                 composable("stats") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Stats", { openDrawer() }, drawerIconFor("stats"), vm) {
+                                         StatsScreen(vm)
+                                     }
+                                 }
+                                 composable("settings") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Réglages", { openDrawer() }, drawerIconFor("settings"), vm) {
+                                         SettingsScreen(vm)
+                                     }
+                                 }
+                                 composable("login") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login"), vm) {
+                                         LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
+                                             onFeedlySignIn = { nav.navigate("feedly-signin") })
+                                     }
+                                 }
+                                 composable("about") {
+                                     BackRule()
+                                     ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about"), vm) {
+                                         AboutScreen()
+                                     }
+                                 }
                                 composable("feedly-signin") {
                                     BackRule()
                                     FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
@@ -325,11 +325,15 @@ fun ScaffoldWithMenu(
     title: String,
     onMenu: () -> Unit,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    vm: PressVM,
     content: @Composable () -> Unit
 ) {
     Scaffold(topBar = {
-        TopAppBar(title = { ViewTitle(icon, title) },
-            navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } })
+        Column {
+            TopAppBar(title = { ViewTitle(icon, title) },
+                navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } })
+            if (vm.syncing) SyncProgress()
+        }
     }) { pad ->
         Box(Modifier.padding(pad)) { content() }
     }

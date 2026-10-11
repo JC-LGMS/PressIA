@@ -117,54 +117,57 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = {
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        IconButton({ onBack() }) { Icon(Icons.Filled.ArrowBack, "retour") }
-                        FeedAvatar(feedSub, 28)
-                    }
-                },
-                actions = {
-                    topActions.forEach { id ->
-                        when (id) {
-                            "instapaper" -> IconButton({ article?.let { vm.sendOrAskInstapaper(it) { toast(ctx, it) } } }) {
-                                Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
-                            }
-                            "star" -> IconButton({ article?.let {
-                                // Même étoile effective que dans les listes : « Read later » pour
-                                // Feedly (pas de favori local), étoile locale ailleurs.
-                                val on = vm.starState(it)
-                                vm.setStar(it.id, !on)
-                                article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
-                                else it.copy(starred = !on)
-                                toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
-                            } }) {
-                                // Favori dans la couleur dominante de l'application.
-                                Icon(
-                                    if (article?.let { vm.starState(it) } == true) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                    "favori", tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            "read" -> IconButton({ article?.let {
-                                vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
-                                toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
-                            } }) {
-                                Icon(
-                                    // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
-                                    // rond des listes) : c'est un bouton d'action, pas un indicateur.
-                                    if (article?.unread == true) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
-                                    if (article?.unread == true) "marquer lu" else "marquer non lu",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                            "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
+            Column {
+                TopAppBar(
+                    title = {},
+                    navigationIcon = {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            IconButton({ onBack() }) { Icon(Icons.Filled.ArrowBack, "retour") }
+                            FeedAvatar(feedSub, 28)
                         }
+                    },
+                    actions = {
+                        topActions.forEach { id ->
+                            when (id) {
+                                "instapaper" -> IconButton({ article?.let { vm.sendOrAskInstapaper(it) { toast(ctx, it) } } }) {
+                                    Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
+                                }
+                                "star" -> IconButton({ article?.let {
+                                    // Même étoile effective que dans les listes : « Read later » pour
+                                    // Feedly (pas de favori local), étoile locale ailleurs.
+                                    val on = vm.starState(it)
+                                    vm.setStar(it.id, !on)
+                                    article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
+                                    else it.copy(starred = !on)
+                                    toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
+                                } }) {
+                                    // Favori dans la couleur dominante de l'application.
+                                    Icon(
+                                        if (article?.let { vm.starState(it) } == true) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                        "favori", tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                "read" -> IconButton({ article?.let {
+                                    vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
+                                    toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
+                                } }) {
+                                    Icon(
+                                        // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
+                                        // rond des listes) : c'est un bouton d'action, pas un indicateur.
+                                        if (article?.unread == true) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
+                                        if (article?.unread == true) "marquer lu" else "marquer non lu",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
+                            }
+                        }
+                        IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") }
                     }
-                    IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") }
-                }
-            )
+                )
+                if (vm.syncing) SyncProgress()
+            }
         }
     ) { pad ->
         // Balayage horizontal : le contenu suit le doigt, puis ouvre le voisin au relâchement.
