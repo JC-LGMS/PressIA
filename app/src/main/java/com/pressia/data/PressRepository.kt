@@ -628,7 +628,7 @@ class PressRepository(
      *
      * Chaque compte est traité séparément avec son propre jeton et ses propres dossiers.
      */
-    suspend fun syncDown(feedId: String? = null, categoryId: String? = null): Int = withContext(Dispatchers.IO) {
+    suspend fun syncDown(feedId: String? = null, categoryId: String? = null, withThumbs: Boolean = true): Int = withContext(Dispatchers.IO) {
         val max = maxItems()
         val t0 = System.currentTimeMillis()
         var added = 0
@@ -657,9 +657,22 @@ class PressRepository(
         replayRestoredStarred()
         replayRestoredRead()
         trimToMax()
-        syncThumbs()
+        // Les miniatures peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
+        // par défaut elles suivent les articles, comme avant.
+        if (withThumbs) syncThumbs()
         android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
         added
+    }
+
+    /**
+     * Téléchargement d'images autorisé en ce moment ? Faux si « Images hors-ligne » est coupé,
+     * ou si « Wi-Fi uniquement » est actif hors Wi-Fi/Ethernet : même une passe manuelle sur
+     * données mobiles ne doit pas vider le forfait.
+     */
+    suspend fun imagesAllowed(): Boolean {
+        val data = prefs.data.first()
+        if (data[Prefs.IMAGES_OFFLINE] == false) return false
+        return !isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)
     }
 
     /**
@@ -673,9 +686,7 @@ class PressRepository(
      * Idempotent : seules les URLs manquantes sont téléchargées.
      */
     suspend fun syncThumbs(): Int = withContext(Dispatchers.IO) {
-        val data = prefs.data.first()
-        if (data[Prefs.IMAGES_OFFLINE] == false) return@withContext 0
-        if (isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)) return@withContext 0
+        if (!imagesAllowed()) return@withContext 0
         val urls = dao.pendingThumbUrls()
         if (urls.isEmpty()) return@withContext 0
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
@@ -1133,6 +1144,33 @@ class PressRepository(
     }
 
     /**
+     * Pré-télécharge les favicons de tous les abonnements (mise en cache disque Coil, sans
+     * afficher). Renvoie le nombre récupéré, ou -1 si les réglages l'interdisent (images
+     * hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi).
+     *
+     * Quasi gratuit en synchro courante : les favicons déjà en cache disque ne repartent pas
+     * sur le réseau, seuls les nouveaux abonnements téléchargent vraiment.
+     */
+    suspend fun syncFavicons(): Int = withContext(Dispatchers.IO) {
+        if (!imagesAllowed()) return@withContext -1
+        val loader = coil.Coil.imageLoader(ctx)
+        val subs = dao.subscriptions()
+        var done = 0
+        subs.forEach { sub ->
+            val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id) ?: return@forEach
+            // Préchargement Coil : télécharge et met en cache disque sans afficher.
+            val ok = runCatching {
+                loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
+            }.onFailure {
+                android.util.Log.w("PressIA", "favicon ${sub.title} <$url> : $it")
+            }.getOrNull() is coil.request.SuccessResult
+            if (ok) done++
+        }
+        android.util.Log.i("PressIA", "favicons : $done/${subs.size}")
+        done
+    }
+
+    /**
      * Rafraîchit les images maintenant : vide tout (miniatures + cache Coil, dont favicons)
      * puis re-télécharge aussitôt les favicons de tous les abonnements et les miniatures
      * d'articles. Renvoie le nombre de favicons récupérés, ou -1 si les réglages l'interdisent
@@ -1140,26 +1178,11 @@ class PressRepository(
      */
     suspend fun refreshFavicons(): Int = withSyncLock {
         withContext(Dispatchers.IO) {
-            val data = prefs.data.first()
-            if (data[Prefs.IMAGES_OFFLINE] == false) return@withContext -1
-            if (isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)) return@withContext -1
+            if (!imagesAllowed()) return@withContext -1
             clearImages()
-            val loader = coil.Coil.imageLoader(ctx)
-            val subs = dao.subscriptions()
-            var done = 0
-            subs.forEach { sub ->
-                val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id) ?: return@forEach
-                // Préchargement Coil : télécharge et met en cache disque sans afficher.
-                val ok = runCatching {
-                    loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
-                }.onFailure {
-                    android.util.Log.w("PressIA", "favicon ${sub.title} <$url> : $it")
-                }.getOrNull() is coil.request.SuccessResult
-                if (ok) done++
-            }
+            val done = syncFavicons()
             // Tout est pending après clearImages : les miniatures repartent aussitôt elles aussi.
             syncThumbs()
-            android.util.Log.i("PressIA", "favicons actualisés : $done/${subs.size}")
             done
         }
     }

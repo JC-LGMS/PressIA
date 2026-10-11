@@ -395,9 +395,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             if (repo.hasPendingSync()) syncMsg = "Envoi des modifications…"
             val pushed = repo.pushQueue()
             syncMsg = "Réception des articles…"
-            val n = repo.syncDown()
+            val n = repo.syncDown(withThumbs = false)
+            if (repo.imagesAllowed()) {
+                syncMsg = "Téléchargement des miniatures…"
+                repo.syncThumbs()
+            }
             syncMsg = "Mise à jour du « Read later »…"
             repo.syncReadLater()
+            if (repo.imagesAllowed()) {
+                syncMsg = "Récupération des favicons…"
+                repo.syncFavicons()
+            }
             // Toute synchro bien finie (manuelle, lancement, tâche planifiée) recule le garde-fou :
             // le lancement suivant saute si elle date de moins de X minutes (voir syncOnLaunch).
             repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
