@@ -38,6 +38,11 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val reactive by live.collectAsState(initial = vm.articles)
     val localArticles = reactive
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
+    // Le rond suit le geste de l'utilisateur, pas les synchronisations de fond (lancement,
+    // tâche planifiée) : celles-ci s'annoncent déjà par la barre sous la barre de titre.
+    // Lier le rond à vm.syncing l'affichait à l'ouverture pendant la synchro de lancement,
+    // sans aucun geste.
+    var pullRefreshing by remember { mutableStateOf(false) }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -89,11 +94,16 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     )
                 }
             } else {
-                // Tirer la liste vers le bas synchronise, comme le bouton d'en haut : l'indicateur
-                // suit la synchronisation en cours, et son message arrive dans le bandeau ci-dessus.
+                // Tirer la liste vers le bas synchronise, comme le bouton d'en haut : le rond ne
+                // tourne que pour ce geste, et le message arrive dans le bandeau ci-dessus.
                 androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                    isRefreshing = vm.syncing,
-                    onRefresh = { if (!vm.syncing) vm.sync() },
+                    isRefreshing = pullRefreshing,
+                    onRefresh = {
+                        scope.launch {
+                            pullRefreshing = true
+                            try { vm.syncMsg = vm.syncNow() } finally { pullRefreshing = false }
+                        }
+                    },
                     modifier = Modifier.fillMaxSize()
                 ) {
                     // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
