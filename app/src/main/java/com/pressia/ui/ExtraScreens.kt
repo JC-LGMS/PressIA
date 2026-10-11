@@ -811,7 +811,13 @@ fun SettingsScreen(vm: PressVM) {
         Text("Cache utilisé : $cacheInfo")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
-            OutlinedButton({ vm.refreshFavicons() }, enabled = !vm.refreshingFavicons) {
+            FilledTonalButton({ vm.refreshFavicons() }, enabled = !vm.refreshingFavicons) {
+                if (vm.refreshingFavicons) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(8.dp))
                 Text(if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons/miniatures")
             }
         }
