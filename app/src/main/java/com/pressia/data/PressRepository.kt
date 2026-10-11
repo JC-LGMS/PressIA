@@ -14,7 +14,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
@@ -67,6 +69,17 @@ class PressRepository(
     /** Contexte applicatif (l'UI s'en sert pour suivre l'état du Worker de synchronisation). */
     val appCtx: Context get() = ctx.applicationContext
     private val dao get() = db.dao()
+
+    /**
+     * Verrou partagé de synchronisation (bouton, lancement, tâche planifiée : même processus,
+     * donc un Mutex suffit). Une seule synchro effective à la fois : les déclenchements
+     * concurrents s'exécutent en file, et chacun revérifie la fraîcheur une fois le verrou
+     * acquis — le second constate que le premier vient de synchroniser et saute son tour.
+     * Sans cela, lancement et tâche planifiée partaient ensemble sur un cache périmé et
+     * téléchargeaient tout deux fois.
+     */
+    private val syncMutex = Mutex()
+    suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
 
     // ----- Comptes -----
 
