@@ -14,7 +14,8 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * Sync périodique façon Press : planifiée, Wi-Fi only en option, pousse la file puis tire le flux.
+ * Sync périodique façon Press : même contenu que toute synchro (file montante, articles,
+ * tableau « Read later »), planifiée, Wi-Fi only en option.
  *
  * Même règle anti-doublon qu'au lancement : si une synchro s'est bien finie il y a moins de
  * X minutes (X = « Fréquence de synchronisation »), la tâche se termine sans rien faire — la

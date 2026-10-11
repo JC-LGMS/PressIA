@@ -780,10 +780,11 @@ fun SettingsScreen(vm: PressVM) {
             Switch(syncOnLaunch, { syncOnLaunch = it; save() })
         }
         Text(
-            "Au démarrage, PressIA récupère les nouveaux articles de tous vos comptes ainsi que le tableau " +
-                "« Read later », sans attendre la première ouverture d'un flux. Mais pas si une synchronisation " +
-                "s'est bien finie il y a moins longtemps que la « Fréquence de synchronisation » ci-dessous " +
-                "(10 minutes par défaut) : les données sont déjà là. " +
+            "Toutes les synchronisations récupèrent la même chose : les nouveaux articles de tous " +
+                "vos comptes ainsi que le tableau « Read later ». Au démarrage, mais pas si une " +
+                "synchronisation s'est bien finie il y a moins longtemps que la « Fréquence de " +
+                "synchronisation » ci-dessous (10 minutes par défaut) : les données sont déjà là. " +
+                "Option coupée : rien n'est récupéré au démarrage. " +
                 "Le bouton d'actualisation, lui, marche toujours.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant

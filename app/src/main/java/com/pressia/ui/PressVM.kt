@@ -367,8 +367,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /**
-     * Synchronisation complète, en attente du résultat : tous les comptes et tous les abonnements,
-     * quel que soit l'écran qui la déclenche. [sync] en est la version non bloquant.
+     * Synchronisation complète, en attente du résultat : file montante, nouveaux articles de
+     * tous les comptes et flux locaux, puis tableau « Read later » — le même contenu quel que
+     * soit le déclencheur (bouton, lancement, tâche planifiée). [sync] en est la version non bloquant.
      *
      * Le message ne parle que des **nouveaux** articles : le nombre d'articles déjà connus n'apporte
      * rien à l'utilisateur et masquait le seul chiffre utile.
@@ -378,6 +379,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             val pushed = repo.pushQueue()
             val n = repo.syncDown()
+            repo.syncReadLater()
             // Toute synchro bien finie (manuelle, lancement, tâche planifiée) recule le garde-fou :
             // le lancement suivant saute si elle date de moins de X minutes (voir syncOnLaunch).
             repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
@@ -403,39 +405,30 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun sync() = viewModelScope.launch { syncMsg = syncNow() }
 
     /**
-     * Synchronisation au démarrage, si l'option est active et qu'aucune synchro bien finie
-     * ne date de moins de X minutes (X = réglage « Fréquence de synchronisation »).
+     * Synchronisation au démarrage : exactement la même que la manuelle ([syncNow]).
      *
-     * Quand elle a lieu, elle affiche le même message que la synchro manuelle ([syncNow]).
-     * Sautée, elle est totalement silencieuse : ni verrou (donc aucune animation de synchro),
-     * ni réseau, ni rafraîchissement — le [refresh] qui suit dans MainActivity suffit à remplir
-     * les listes.
+     * Elle n'a lieu que si l'option est active et qu'aucune synchro bien finie ne date de
+     * moins de X minutes (X = réglage « Fréquence de synchronisation »). Sinon elle est
+     * totalement silencieuse : option coupée ou synchro récente = rien n'est récupéré
+     * (ni verrou, ni réseau, ni message) — le [refresh] qui suit dans MainActivity suffit
+     * à remplir les listes depuis le cache.
      */
     fun syncOnLaunch() = viewModelScope.launch {
         val prefs = repo.prefs
+        // Lecture directe du réglage, pas du StateFlow : au démarrage celui-ci vaut encore son
+        // initial (vrai) tant que le DataStore n'a pas émis — l'option coupée serait ignorée.
+        if (!prefs.flow(Prefs.SYNC_ON_LAUNCH, true).first()) return@launch
         val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
         val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
         val now = System.currentTimeMillis()
         val ageMin = if (last > 0L) (now - last) / 60_000L else -1L
-        if (syncOnLaunch.value && isSyncFresh(last, now, windowMin)) {
+        if (isSyncFresh(last, now, windowMin)) {
             android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
             return@launch
         }
-        lockSync()
-        try {
-            if (syncOnLaunch.value) {
-                android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
-                // Même message que la synchro manuelle (nouveautés, fin ou échec).
-                syncMsg = syncNow()
-                repo.syncReadLater()
-                refreshNow()
-            } else {
-                repo.syncReadLater()
-                refreshNow()
-            }
-        } finally {
-            unlockSync()
-        }
+        android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
+        // Même contenu et même message que la synchro manuelle (nouveautés, fin ou échec).
+        syncMsg = syncNow()
     }
     fun setRead(id: String, unread: Boolean) = viewModelScope.launch {
         // Passer en lu : rendre l'article « collant » AVANT l'écriture — la réémission du flux
