@@ -536,6 +536,30 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         refreshNow()
     }
 
+    // ----- Images -----
+    /**
+     * Actualisation favicons/miniatures en cours (bouton Réglages). Tourne dans le scope du
+     * modèle, donc survit à la navigation : quitter l'écran n'interrompt plus le travail
+     * (le scope d'écran précédent annulait tout en silence : bouton figé et jamais de toast).
+     */
+    var refreshingFavicons by mutableStateOf(false)
+        private set
+    /** Messages de progression à toaster (consommés par l'écran Réglages). */
+    var favToast by mutableStateOf<String?>(null)
+    fun refreshFavicons() = viewModelScope.launch {
+        if (refreshingFavicons) return@launch
+        refreshingFavicons = true
+        favToast = "Effacement des images, re-téléchargement en cours…"
+        try {
+            val n = repo.refreshFavicons { favToast = it }
+            refreshNow()
+            favToast = if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
+            else "Favicons et miniatures actualisés ($n favicons)"
+        } finally {
+            refreshingFavicons = false
+        }
+    }
+
     // ----- Favoris -----
     fun setFavSet(set: String) = viewModelScope.launch { prefs.set(Prefs.STARRED_SCOPE, set) }
     /** Recharge le tableau « Read later » des comptes, à la demande. */

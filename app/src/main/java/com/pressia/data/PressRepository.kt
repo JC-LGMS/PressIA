@@ -1175,12 +1175,16 @@ class PressRepository(
      * puis re-télécharge aussitôt les favicons de tous les abonnements et les miniatures
      * d'articles. Renvoie le nombre de favicons récupérés, ou -1 si les réglages l'interdisent
      * (images hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi) : rien n'est alors effacé.
+     *
+     * [onStep] annonce les étapes (appelée sans verrou d'UI : simple affectation d'état).
      */
-    suspend fun refreshFavicons(): Int = withSyncLock {
+    suspend fun refreshFavicons(onStep: (suspend (String) -> Unit)? = null): Int = withSyncLock {
         withContext(Dispatchers.IO) {
             if (!imagesAllowed()) return@withContext -1
             clearImages()
+            onStep?.invoke("Images effacées, favicons en cours…")
             val done = syncFavicons()
+            onStep?.invoke("Favicons à jour, miniatures en cours…")
             // Tout est pending après clearImages : les miniatures repartent aussitôt elles aussi.
             syncThumbs()
             done

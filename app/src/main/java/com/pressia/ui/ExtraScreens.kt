@@ -463,7 +463,6 @@ fun SettingsScreen(vm: PressVM) {
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
     var cacheInfo by remember { mutableStateOf("calcul…") }
-    var refreshingFav by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var showArticleActions by remember { mutableStateOf(false) }
@@ -534,26 +533,20 @@ fun SettingsScreen(vm: PressVM) {
     }
 
     LaunchedEffect(Unit) { reloadFromPrefs() }
+    // Progression de l'actualisation images (toasts démarré/étapes/terminé) : le travail vit
+    // dans le modèle et survit à la navigation, l'écran ne fait que consommer.
+    LaunchedEffect(vm.favToast) {
+        vm.favToast?.let { toast(ctx, it); vm.favToast = null }
+    }
+    // Taille du cache à jour quand l'actualisation se termine (aussi sous nos yeux que de retour).
+    LaunchedEffect(vm.refreshingFavicons) {
+        if (!vm.refreshingFavicons) refreshCacheInfo()
+    }
     fun clearCache() = scope.launch {
         vm.repo.clearCache()
         coil.Coil.imageLoader(ctx).diskCache?.clear()
         refreshCacheInfo()
         vm.refresh()
-    }
-    fun refreshFavicons() = scope.launch {
-        refreshingFav = true
-        try {
-            val n = vm.repo.refreshFavicons()
-            vm.refresh()
-            refreshCacheInfo()
-            toast(
-                ctx,
-                if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
-                else "Favicons actualisés ($n)"
-            )
-        } finally {
-            refreshingFav = false
-        }
     }
     fun save() = scope.launch {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
@@ -818,8 +811,8 @@ fun SettingsScreen(vm: PressVM) {
         Text("Cache utilisé : $cacheInfo")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
-            OutlinedButton({ refreshFavicons() }, enabled = !refreshingFav) {
-                Text(if (refreshingFav) "Actualisation…" else "Actualiser les favicons")
+            OutlinedButton({ vm.refreshFavicons() }, enabled = !vm.refreshingFavicons) {
+                Text(if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons/miniatures")
             }
         }
         HorizontalDivider()
