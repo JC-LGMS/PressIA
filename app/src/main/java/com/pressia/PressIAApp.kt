@@ -1,15 +1,13 @@
 package com.pressia
 
 import android.app.Application
+import androidx.work.WorkManager
 import coil.Coil
 import coil.ImageLoader
 import coil.memory.MemoryCache
-import com.pressia.data.local.Prefs
-import com.pressia.data.sync.SyncWorker
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+
+/** Étiquette du travail planifié hérité d'anciennes versions (à annuler, plus rien ne planifie). */
+private const val LEGACY_SYNC_TAG = "pressia-sync"
 
 class PressIAApp : Application() {
     override fun onCreate() {
@@ -20,11 +18,8 @@ class PressIAApp : Application() {
                 .respectCacheHeaders(false)
                 .build()
         }
-        CoroutineScope(Dispatchers.IO).launch {
-            val p = Prefs(this@PressIAApp)
-            val interval = p.data.first()[Prefs.SYNC_INTERVAL_MIN] ?: Prefs.SYNC_INTERVAL_DEFAULT
-            val wifi = p.data.first()[Prefs.WIFI_ONLY] ?: true
-            SyncWorker.schedule(this@PressIAApp, interval, wifi)
-        }
+        // Plus de synchronisation planifiée : l'app ne synchronise que lorsqu'elle est
+        // ouverte. On annule un éventuel travail hérité d'une version précédente.
+        WorkManager.getInstance(this).cancelAllWorkByTag(LEGACY_SYNC_TAG)
     }
 }

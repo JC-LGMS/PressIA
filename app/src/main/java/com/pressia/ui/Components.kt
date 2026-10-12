@@ -819,16 +819,15 @@ private fun animatorScale(ctx: Context): Float = runCatching {
 }.getOrDefault(1f)
 
 /**
- * Bouton de synchronisation : l'icône pivote tant qu'une synchronisation a lieu — manuelle,
- * de démarrage ou périodique (Worker, suivie via [PressVM.workerSyncing]) — pour les écrans
- * Accueil / flux / favoris qui partagent le même état. Animations coupées : pulsation manuelle
- * (`delay`, insensible à l'échelle) au lieu de la rotation.
+ * Bouton de synchronisation : l'icône pivote tant qu'une synchronisation a lieu
+ * (manuelle, démarrage, favicons) — l'app ne synchronise que lorsqu'elle est ouverte.
+ * Animations coupées : pulsation manuelle (`delay`, insensible à l'échelle) au lieu
+ * de la rotation.
  */
 @Composable
 fun SyncButton(vm: PressVM, description: String = "actualiser", onClick: () -> Unit = { vm.sync() }) {
-    val bgSync by vm.workerSyncing.collectAsState()
     IconButton(onClick) {
-        if (vm.syncing || bgSync) {
+        if (vm.syncing) {
             val ctx = LocalContext.current
             if (remember { animatorScale(ctx) } > 0f) {
                 val angle by rememberInfiniteTransition(label = "sync").animateFloat(

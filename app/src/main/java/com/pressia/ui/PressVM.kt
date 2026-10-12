@@ -75,17 +75,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * pas éteindre l'indicateur à la première finie.
      */
     private var syncJobs by mutableStateOf(0)
-    /** Une synchronisation est en cours (premier plan, ou planifiée Worker en tâche de fond). */
-    val syncing: Boolean get() = syncJobs > 0 || workerActive
-    /** Miroir de [workerSyncing] en état Compose : la flèche, le bandeau et les boutons
-     * suivent aussi les synchronisations planifiées. */
-    private var workerActive by mutableStateOf(false)
-    /** Synchronisation périodique (Worker) en cours, même sans action de l'utilisateur. */
-    val workerSyncing: StateFlow<Boolean> =
-        androidx.work.WorkManager.getInstance(repo.appCtx)
-            .getWorkInfosByTagFlow(com.pressia.data.sync.SyncWorker.TAG)
-            .map { infos -> infos.any { it.state == androidx.work.WorkInfo.State.RUNNING } }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    /** Une synchronisation est en cours (l'app ne synchronise que lorsqu'elle est ouverte). */
+    val syncing: Boolean get() = syncJobs > 0
     var stats by mutableStateOf<ReadingStats?>(null)
     /** Années avec des données de lecture (sélecteur « par année »). */
     var statsYears by mutableStateOf<List<Int>>(emptyList())
@@ -184,12 +175,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     init {
         viewModelScope.launch { migrateAppearance() }
-        // Étapes publiées par le pipeline partagé (manuel, lancement, planifié) : le
-        // bandeau les suit quel que soit le déclencheur — y compris `null` en fin de
-        // tâche planifiée (silencieuse, sans message final : le bandeau se referme).
+        // Étapes publiées par le pipeline partagé (manuel, lancement) : le bandeau
+        // les suit quel que soit le déclencheur.
         viewModelScope.launch { repo.syncStep.collect { syncMsg = it } }
-        // Le Worker tourne hors modèle : son état alimente quand même l'indicateur.
-        viewModelScope.launch { workerSyncing.collect { workerActive = it } }
         // Les dossiers suivent le réglage fusion / séparation : la liste est reconstruite à chaque changement.
         viewModelScope.launch { mergeFolders.collect { folders = repo.folders(it) } }
         // Dossiers repliés : conservés d'une session à l'autre.
@@ -369,10 +357,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Synchronisation complète, en attente du résultat : file montante, nouveaux articles de
      * tous les comptes et flux locaux, puis tableau « Read later » — le même contenu quel que
-     * soit le déclencheur (bouton, lancement, tâche planifiée). [sync] en est la version non bloquant.
+     * soit le déclencheur (bouton, lancement). [sync] en est la version non bloquant.
      *
      * Tente le verrou partagé [PressRepository.withSyncLock] sans attendre : si une synchro
-     * est déjà en cours (lancement, planifiée ou manuelle), la demande est annulée et le
+     * est déjà en cours (lancement ou manuelle), la demande est annulée et le
      * message le dit.
      *
      * Chaque grande étape est publiée dans [syncMsg] (bandeau) au fil de l'eau, pour suivre
@@ -434,9 +422,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * (ni réseau, ni message, ni animation) — le [refresh] qui suit dans MainActivity suffit
      * à remplir les listes depuis le cache.
      *
-     * Option et fraîcheur sont revérifiées sous le verrou partagé : si la tâche planifiée
-     * synchronise au même moment, un seul des deux télécharge, l'autre constate un cache
-     * frais et saute son tour — un seul déclenchement effectif au démarrage.
+     * Option et fraîcheur sont revérifiées sous le verrou partagé (l'app ne synchronise
+     * que lorsqu'elle est ouverte : pas d'autre déclencheur concurrent).
      */
     fun syncOnLaunch() = viewModelScope.launch {
         repo.withSyncLock {

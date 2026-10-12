@@ -7,7 +7,6 @@ import androidx.room.Room
 import com.pressia.data.local.*
 import com.pressia.data.readability.Readability
 import com.pressia.data.remote.*
-import com.pressia.data.sync.isWifiOnlyBlocked
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -50,8 +49,8 @@ fun favScopeArg(set: String): String = when (set) {
 /**
  * Vrai si une synchronisation finie à [lastMs] suffit encore : moins de [windowMin] minutes.
  * Fenêtre nulle ou négative (fréquence « manuelle ») : jamais frais, on synchronise dès que
- * l'option de lancement est active. Utilisée au lancement comme par la tâche planifiée : une
- * synchro récente suffit partout, on ne refait pas le travail deux fois.
+ * l'option de lancement est active. Utilisée au lancement : une synchro récente suffit,
+ * on ne refait pas le travail deux fois.
  */
 fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
     lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
@@ -70,17 +69,15 @@ class PressRepository(
     private val inoreader: FeedProvider = InoreaderProvider(),
     private val local: LocalProvider = LocalProvider()
 ) {
-    /** Contexte applicatif (l'UI s'en sert pour suivre l'état du Worker de synchronisation). */
+    /** Contexte applicatif. */
     val appCtx: Context get() = ctx.applicationContext
     private val dao get() = db.dao()
 
     /**
-     * Verrou partagé de synchronisation (bouton, lancement, tâche planifiée : même processus,
+     * Verrou partagé de synchronisation (bouton, lancement : même processus,
      * donc un Mutex suffit). Une seule synchro effective à la fois : les déclenchements
      * concurrents s'exécutent en file, et chacun revérifie la fraîcheur une fois le verrou
      * acquis — le second constate que le premier vient de synchroniser et saute son tour.
-     * Sans cela, lancement et tâche planifiée partaient ensemble sur un cache périmé et
-     * téléchargeaient tout deux fois.
      */
     private val syncMutex = Mutex()
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
@@ -509,7 +506,7 @@ class PressRepository(
     }
     /**
      * Flux du flux de lecture : la liste affichée se met à jour toute seule quand la
-     * synchronisation (bouton ou tâche en arrière-plan) insère de nouveaux articles.
+     * synchronisation insère de nouveaux articles.
      */
     fun streamFlow(feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "", limit: Int = 2000, offset: Int = 0): Flow<List<ArticleEntity>> =
         scopeFlow(catId, unreadOnly, favScope) { feeds, empty, un, fav ->
@@ -628,7 +625,6 @@ class PressRepository(
     /**
      * Un réseau utilisable est-il disponible ? Sans lui, une synchronisation ne peut
      * rien récupérer — l'appelant affiche « pas de réseau » au lieu d'échouer en vague.
-     * (Le Worker planifié n'en a pas besoin : ses contraintes exigent déjà du réseau.)
      */
     fun isOnline(): Boolean {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -637,8 +633,8 @@ class PressRepository(
     }
 
     /**
-     * Étape de synchronisation en cours, tous déclencheurs confondus (manuelle,
-     * lancement, planifiée) ; `null` = aucune. Le modèle la recopie dans `syncMsg`
+     * Étape de synchronisation en cours, manuelle ou lancement ; `null` = aucune.
+     * Le modèle la recopie dans `syncMsg`
      * pour le bandeau : une seule source pour les étapes, quel que soit l'appelant.
      * Écrit depuis des fils IO (StateFlow thread-safe), lu sur le fil principal.
      */
@@ -723,6 +719,17 @@ class PressRepository(
     }
 
     /**
+     * Le « Wi-Fi uniquement » bloque-t-il les téléchargements ? Vrai si le réglage est actif
+     * et que le réseau courant n'est ni Wi-Fi ni Ethernet.
+     */
+    fun isWifiOnlyBlocked(wifiOnly: Boolean): Boolean {
+        if (!wifiOnly) return false
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return true
+        return !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    /**
      * Téléchargement d'images autorisé en ce moment ? Faux si « Images hors-ligne » est coupé,
      * ou si « Wi-Fi uniquement » est actif hors Wi-Fi/Ethernet : même une passe manuelle sur
      * données mobiles ne doit pas vider le forfait.
@@ -730,7 +737,7 @@ class PressRepository(
     suspend fun imagesAllowed(): Boolean {
         val data = prefs.data.first()
         if (data[Prefs.IMAGES_OFFLINE] == false) return false
-        return !isWifiOnlyBlocked(ctx, data[Prefs.WIFI_ONLY] ?: true)
+        return !isWifiOnlyBlocked(data[Prefs.WIFI_ONLY] ?: true)
     }
 
     /**

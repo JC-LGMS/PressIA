@@ -560,7 +560,6 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
-        com.pressia.data.sync.SyncWorker.schedule(ctx, interval, wifiOnly)
         vm.refresh()
     }
 
@@ -788,7 +787,7 @@ fun SettingsScreen(vm: PressVM) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text("Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la planification en arrière-plan, et la fenêtre pendant laquelle le lancement ne resynchronise pas.",
+        Text("Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la fenêtre pendant laquelle le lancement ne resynchronise pas (pas de synchronisation quand l'application est fermée).",
             style = MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Wi-Fi uniquement"); Spacer(Modifier.weight(1f)); Switch(wifiOnly, { wifiOnly = it; save() })

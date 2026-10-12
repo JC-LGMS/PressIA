@@ -94,7 +94,8 @@ dependencies {
     implementation("androidx.paging:paging-compose:3.3.2")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // WorkManager (sync planifiée)
+    // WorkManager : conservé uniquement pour annuler le travail planifié hérité
+    // d'anciennes versions (plus rien ne planifie, cf. PressIAApp).
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // Réseau
