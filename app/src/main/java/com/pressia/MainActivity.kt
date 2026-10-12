@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
@@ -168,9 +167,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Bandeau de synchro : suit syncMsg au fil de l'eau (étapes, puis compteur de
-                // miniatures « … 45/200 ») sans cycle dismiss/re-show à chaque mise à jour —
-                // le texte se rafraîchit en place, seule l'apparition/disparition est animée.
+                // Bandeau de synchro : le vrai SnackbarHost (géométrie et animations
+                // d'origine), mais le texte affiché suit vm.syncMsg en direct via le slot
+                // custom — pas de dismiss/re-show à chaque mise à jour du compteur
+                // de miniatures (« … 45/200 »), le texte se rafraîchit en place.
+                val snackbarHostState = remember { SnackbarHostState() }
+                // Pendant la synchro, un seul snackbar indéfini reste affiché ; le slot
+                // ci-dessous en ignore le contenu et rend vm.syncMsg, qui évolue seul.
+                LaunchedEffect(vm.syncing) {
+                    if (vm.syncing) {
+                        snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
+                    }
+                }
+                // Hors synchro (message final ou autre info) : affichage classique, puis effacé.
+                LaunchedEffect(vm.syncMsg) {
+                    val msg = vm.syncMsg ?: return@LaunchedEffect
+                    if (!vm.syncing) {
+                        snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Long)
+                        if (vm.syncMsg == msg) {
+                            vm.syncMsg = null
+                        }
+                    }
+                }
 
                 Box(Modifier.fillMaxSize()) {
                     ModalNavigationDrawer(
@@ -278,19 +296,11 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    AnimatedVisibility(
-                        visible = vm.syncMsg != null,
+                    SnackbarHost(
+                        snackbarHostState,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
                     ) {
-                        val msg = vm.syncMsg ?: ""
-                        Snackbar { Text(msg) }
-                        // Le message final (syncing == false) s'efface de lui-même après quelques secondes.
-                        if (!vm.syncing) {
-                            LaunchedEffect(msg) {
-                                kotlinx.coroutines.delay(4000)
-                                if (vm.syncMsg == msg) vm.syncMsg = null
-                            }
-                        }
+                        Snackbar { Text(vm.syncMsg ?: "") }
                     }
                 }
             }
