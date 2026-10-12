@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -18,6 +19,7 @@ import androidx.navigation.compose.*
 import com.pressia.di.Locator
 import com.pressia.ui.*
 import com.pressia.ui.theme.PressIATheme
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -172,17 +174,40 @@ class MainActivity : ComponentActivity() {
                 // custom — pas de dismiss/re-show à chaque mise à jour du compteur
                 // de miniatures (« … 45/200 »), le texte se rafraîchit en place.
                 val snackbarHostState = remember { SnackbarHostState() }
-                // Pendant la synchro, un seul snackbar indéfini reste affiché ; le slot
-                // ci-dessous en ignore le contenu et rend vm.syncMsg, qui évolue seul.
+                // Un seul bandeau du début de la synchro jusqu'à la fin du message final :
+                // le show reste actif dans le scope (pas dans l'effet, sinon sa fin de
+                // synchro l'annulerait et le bandeau se fermerait avant de se rouvrir
+                // pour le message final). Le slot ci-dessous en ignore le contenu et
+                // rend vm.syncMsg, qui évolue seul.
+                var bannerJob by remember { mutableStateOf<Job?>(null) }
                 LaunchedEffect(vm.syncing) {
-                    if (vm.syncing) {
-                        snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
+                    if (vm.syncing && bannerJob == null) {
+                        bannerJob = scope.launch {
+                            snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
+                        }
                     }
                 }
-                // Hors synchro (message final ou autre info) : affichage classique, puis effacé.
                 LaunchedEffect(vm.syncMsg) {
                     val msg = vm.syncMsg ?: return@LaunchedEffect
-                    if (!vm.syncing) {
+                    if (vm.syncing) {
+                        // Balayé par l'utilisateur en cours de synchro : on réaffiche, comme
+                        // chaque étape le faisait avant (le compteur continue derrière).
+                        // == true uniquement : le lancement initial est du ressort de
+                        // l'effet sur vm.syncing (pas de double placeholder en file).
+                        if (bannerJob?.isCompleted == true && snackbarHostState.currentSnackbarData == null) {
+                            bannerJob = scope.launch {
+                                snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
+                            }
+                        }
+                    } else if (bannerJob != null) {
+                        // Fin de synchro : le bandeau reste ouvert, seul le texte passe au
+                        // message final — aucune fermeture/réouverture intermédiaire.
+                        kotlinx.coroutines.delay(4000)
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        bannerJob = null
+                        if (vm.syncMsg == msg) vm.syncMsg = null
+                    } else {
+                        // Hors synchro (autre info) : affichage classique, puis effacé.
                         snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Long)
                         if (vm.syncMsg == msg) {
                             vm.syncMsg = null
@@ -300,7 +325,9 @@ class MainActivity : ComponentActivity() {
                         snackbarHostState,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
                     ) {
-                        Snackbar { Text(vm.syncMsg ?: "") }
+                        // Même padding que le slot par défaut (Snackbar(snackbarData)) : sans
+                        // lui le bandeau est plein-bleed, trop large et collé en bas.
+                        Snackbar(modifier = Modifier.padding(12.dp)) { Text(vm.syncMsg ?: "") }
                     }
                 }
             }
