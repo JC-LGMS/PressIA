@@ -824,7 +824,7 @@ fun SettingsScreen(vm: PressVM) {
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons/\nminiatures",
+                    if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons",
                     textAlign = TextAlign.Center
                 )
             }

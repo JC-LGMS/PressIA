@@ -549,12 +549,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun refreshFavicons() = viewModelScope.launch {
         if (refreshingFavicons) return@launch
         refreshingFavicons = true
-        favToast = "Effacement des images, re-téléchargement en cours…"
+        favToast = "Actualisation des favicons en cours…"
         try {
             val n = repo.refreshFavicons { favToast = it }
             refreshNow()
             favToast = if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
-            else "Favicons et miniatures actualisés ($n favicons)"
+            else "Favicons actualisés ($n favicons)"
         } finally {
             refreshingFavicons = false
         }
