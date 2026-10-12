@@ -385,6 +385,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Pas de file d'attente pour le manuel : si une synchro est déjà en cours, la demande
         // est annulée au lieu de retélécharger derrière — la flèche tourne déjà, inutile
         // d'empiler.
+        if (!repo.isOnline()) return "Pas de réseau : synchronisation impossible"
         return repo.tryWithSyncLock { doSyncNow() } ?: "Synchronisation déjà en cours"
     }
 
@@ -457,7 +458,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                     lockSync()
                     try {
                         syncMsg = try {
-                            finishSync(repo.syncPipeline())
+                            if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
+                            else finishSync(repo.syncPipeline())
                         } catch (e: Exception) {
                             failSync()
                         }
@@ -556,6 +558,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     fun refreshFavicons() = viewModelScope.launch {
         if (refreshingFavicons) return@launch
+        if (!repo.isOnline()) { syncMsg = "Pas de réseau : actualisation impossible"; return@launch }
         refreshingFavicons = true
         lockSync()
         val n = try {

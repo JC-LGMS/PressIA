@@ -1,6 +1,8 @@
 package com.pressia.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.room.Room
 import com.pressia.data.local.*
 import com.pressia.data.readability.Readability
@@ -624,6 +626,17 @@ class PressRepository(
     // ----- Sync descendante -----
 
     /**
+     * Un réseau utilisable est-il disponible ? Sans lui, une synchronisation ne peut
+     * rien récupérer — l'appelant affiche « pas de réseau » au lieu d'échouer en vague.
+     * (Le Worker planifié n'en a pas besoin : ses contraintes exigent déjà du réseau.)
+     */
+    fun isOnline(): Boolean {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    /**
      * Étape de synchronisation en cours, tous déclencheurs confondus (manuelle,
      * lancement, planifiée) ; `null` = aucune. Le modèle la recopie dans `syncMsg`
      * pour le bandeau : une seule source pour les étapes, quel que soit l'appelant.
@@ -643,7 +656,7 @@ class PressRepository(
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
         pushQueue()
         syncStep.value = "Réception des articles…"
-        val n = syncDown(withThumbs = false)
+        val n = syncDown(withThumbs = false, onSource = { src -> syncStep.value = "Réception des articles… ($src)" })
         if (imagesAllowed()) {
             syncStep.value = "Téléchargement des miniatures…"
             syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
@@ -666,14 +679,19 @@ class PressRepository(
      * synchronisation alors que tout était déjà connu rend le message illisible.
      *
      * Chaque compte est traité séparément avec son propre jeton et ses propres dossiers.
+     *
+     * [onSource] annonce chaque source contactée (« flux locaux », « Feedly »…) : le bandeau
+     * précise ainsi d'où viennent les articles. Appelé depuis des fils IO (comme [onProgress]
+     * de [syncThumbs]) ; les comptes cloud partent en parallèle, l'ordre varie.
      */
-    suspend fun syncDown(feedId: String? = null, categoryId: String? = null, withThumbs: Boolean = true): Int = withContext(Dispatchers.IO) {
+    suspend fun syncDown(feedId: String? = null, categoryId: String? = null, withThumbs: Boolean = true, onSource: ((String) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         val max = maxItems()
         val t0 = System.currentTimeMillis()
         var added = 0
         // Flux RSS saisis à la main : sans compte, donc toujours synchronisés.
         runCatching {
             local.feeds = dao.subscriptions()
+            if (local.feeds.any { isLocalProvider(it.provider) }) onSource?.invoke("flux locaux")
             val page = local.stream(null, feedId, categoryId, max)
             added += storeArticles(page.articles)
         }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }
@@ -687,6 +705,7 @@ class PressRepository(
                 .filter { owner == null || sameAccount(owner, it.id) }
                 .map { account ->
                     async {
+                        onSource?.invoke(account.label)
                         runCatching { syncAccount(account, feedId, categoryId, max) }
                             .onFailure { android.util.Log.e("PressIA", "sync ${account.id} failed", it) }
                             .getOrDefault(0)
