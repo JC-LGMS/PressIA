@@ -20,6 +20,7 @@ import com.pressia.di.Locator
 import com.pressia.ui.*
 import com.pressia.ui.theme.PressIATheme
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -179,30 +180,38 @@ class MainActivity : ComponentActivity() {
                 // synchro l'annulerait et le bandeau se fermerait avant de se rouvrir
                 // pour le message final). Le slot ci-dessous en ignore le contenu et
                 // rend vm.syncMsg, qui évolue seul.
+                // Invariant : jamais de bandeau sans message — refresh() allume syncing
+                // sans message (ex. après « Vider le cache »), sinon bandeau vide.
                 var bannerJob by remember { mutableStateOf<Job?>(null) }
-                LaunchedEffect(vm.syncing) {
-                    if (vm.syncing && bannerJob == null) {
-                        bannerJob = scope.launch {
-                            snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
-                        }
+                fun launchBanner() {
+                    bannerJob = scope.launch {
+                        snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
                     }
                 }
-                LaunchedEffect(vm.syncMsg) {
-                    val msg = vm.syncMsg ?: return@LaunchedEffect
-                    if (vm.syncing) {
-                        // Balayé par l'utilisateur en cours de synchro : on réaffiche, comme
-                        // chaque étape le faisait avant (le compteur continue derrière).
-                        // == true uniquement : le lancement initial est du ressort de
-                        // l'effet sur vm.syncing (pas de double placeholder en file).
-                        if (bannerJob?.isCompleted == true && snackbarHostState.currentSnackbarData == null) {
-                            bannerJob = scope.launch {
-                                snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
-                            }
+                LaunchedEffect(vm.syncing, vm.syncMsg) {
+                    val msg = vm.syncMsg
+                    if (msg == null) {
+                        // Plus rien à afficher : refermer un éventuel bandeau persistant.
+                        bannerJob?.let {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                            bannerJob = null
                         }
+                        return@LaunchedEffect
+                    }
+                    if (vm.syncing) {
+                        if (bannerJob == null) {
+                            launchBanner()
+                        } else if (bannerJob?.isCompleted == true && snackbarHostState.currentSnackbarData == null) {
+                            // Balayé par l'utilisateur en cours de synchro : on réaffiche,
+                            // comme chaque étape le faisait avant (le compteur continue).
+                            launchBanner()
+                        }
+                        // Sinon : le bandeau persistant est déjà affiché, le slot suit
+                        // msg en direct.
                     } else if (bannerJob != null) {
                         // Fin de synchro : le bandeau reste ouvert, seul le texte passe au
                         // message final — aucune fermeture/réouverture intermédiaire.
-                        kotlinx.coroutines.delay(4000)
+                        delay(4000)
                         snackbarHostState.currentSnackbarData?.dismiss()
                         bannerJob = null
                         if (vm.syncMsg == msg) vm.syncMsg = null
