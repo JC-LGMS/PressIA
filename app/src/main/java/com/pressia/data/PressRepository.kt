@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Préfixe des identifiants de dossiers fusionnés (voir [PressRepository.folders]) :
@@ -751,12 +752,12 @@ class PressRepository(
      * Idempotent : seules les URLs manquantes sont téléchargées.
      *
      * [onProgress] est appelé sur le fil IO avec le nombre déjà téléchargé et le total —
-     * d'abord `0/total` dès le départ (le total est connu aussitôt la requête faite), puis par
-     * palier adaptatif et à la fin. Le palier vaut 5 % du total (minimum 1) : ~20 affichages
-     * quel que soit le stock — vivant sur les gros volumes, pas muet sur les petits, sans
-     * inonder le bandeau quand les fichiers répondent aussitôt (déjà en cache).
-     * Seules les réussites incrémentent : des URL en échec ou lentes retardent le premier
-     * palier, mais le total s'affiche sans attendre.
+     * d'abord `0/total` dès le départ (le total est connu aussitôt la requête faite), puis au
+     * plus toutes les 200 ms, et toujours à la fin. Le palier est temporel plutôt que par
+     * nombre : ~5 affichages/s quel que soit le débit — ni inondation du bandeau quand les
+     * fichiers répondent aussitôt (déjà en cache), ni compteur figé quand le réseau traîne.
+     * Seules les réussites incrémentent : des URL en échec ou lentes retardent les paliers,
+     * mais le total s'affiche sans attendre.
      */
     suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext 0
@@ -764,7 +765,9 @@ class PressRepository(
         if (urls.isEmpty()) return@withContext 0
         val total = urls.size
         onProgress?.invoke(0, total)
-        val step = maxOf(1, total / 20)
+        // Dernier affichage publié (horloge monotone) : les 6 téléchargements parallèles
+        // partagent ce garde-fou via compareAndSet, sans verrou.
+        val lastPublish = AtomicLong(0L)
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
         val doneCount = AtomicInteger(0)
@@ -774,8 +777,15 @@ class PressRepository(
                     val ok = permits.withPermit { ThumbStore.fetch(ctx, url, maxW, maxH) }
                     if (ok && onProgress != null) {
                         val n = doneCount.incrementAndGet()
-                        // Palier adaptatif (voir KDoc) + toujours le dernier : le bandeau suffit.
-                        if (n == total || n % step == 0) onProgress(n, total)
+                        if (n == total) {
+                            onProgress(n, total)
+                        } else {
+                            val now = android.os.SystemClock.uptimeMillis()
+                            val prev = lastPublish.get()
+                            if (now - prev >= 200 && lastPublish.compareAndSet(prev, now)) {
+                                onProgress(n, total)
+                            }
+                        }
                     }
                     ok
                 }
