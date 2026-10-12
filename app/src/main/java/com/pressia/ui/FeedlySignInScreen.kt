@@ -255,6 +255,8 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
     Scaffold(
         topBar = {
             Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
                 TopAppBar(
                     title = { Text("Connexion Feedly") },
                     navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
@@ -262,7 +264,6 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
                         IconButton({ webView?.loadUrl(authUrl) }) { Icon(Icons.Filled.Refresh, "recharger") }
                     }
                 )
-                if (vm.syncing) SyncProgress()
             }
         }
     ) { pad ->

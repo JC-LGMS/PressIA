@@ -119,6 +119,8 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
                 TopAppBar(
                     title = { Text(if (provider == "feedly") "Connexion Feedly" else "Connexion Inoreader") },
                     navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
@@ -126,7 +128,6 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
                         IconButton({ webView?.reload() }) { Icon(Icons.Filled.Refresh, "recharger") }
                     }
                 )
-                if (vm.syncing) SyncProgress()
             }
         }
     ) { pad ->

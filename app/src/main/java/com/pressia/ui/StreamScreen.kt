@@ -36,42 +36,47 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (feed != null) {
-                            FeedAvatar(feed, 28)
-                            Spacer(Modifier.width(8.dp))
+            // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
+            // slot topBar et le titre opaque couvre la barre.
+            Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (feed != null) {
+                                FeedAvatar(feed, 28)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                },
-                navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
-                actions = {
-                    IconButton({
-                        val next = !unreadOnly
-                        scope.launch {
-                            // Repasser en « non-lus seuls » masque les lus de la session : on oublie
-                            // les articles gardés « collants », sinon l'œil semblait inopérant.
-                            if (next) vm.clearKept()
-                            vm.repo.prefs.set(Prefs.SHOW_UNREAD_ONLY, next)
-                            toast(ctx, if (next) "Non-lus seuls" else "Tous les articles, lus inclus")
-                            vm.refresh()
+                    },
+                    navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
+                    actions = {
+                        IconButton({
+                            val next = !unreadOnly
+                            scope.launch {
+                                // Repasser en « non-lus seuls » masque les lus de la session : on oublie
+                                // les articles gardés « collants », sinon l'œil semblait inopérant.
+                                if (next) vm.clearKept()
+                                vm.repo.prefs.set(Prefs.SHOW_UNREAD_ONLY, next)
+                                toast(ctx, if (next) "Non-lus seuls" else "Tous les articles, lus inclus")
+                                vm.refresh()
+                            }
+                        }) {
+                            Icon(
+                                if (unreadOnly) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                if (unreadOnly) "afficher aussi les lus" else "ne montrer que les non-lus"
+                            )
                         }
-                    }) {
-                        Icon(
-                            if (unreadOnly) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            if (unreadOnly) "afficher aussi les lus" else "ne montrer que les non-lus"
-                        )
+                        SyncButton(vm)
+                        IconButton({
+                            vm.markAllRead()
+                            toast(ctx, "Tous marqués comme lus")
+                        }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
                     }
-                    SyncButton(vm)
-                    IconButton({
-                        vm.markAllRead()
-                        toast(ctx, "Tous marqués comme lus")
-                    }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
-                }
-            )
-            if (vm.syncing) SyncProgress()
+                )
+            }
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
@@ -145,10 +150,15 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
     val feed = vm.subs.firstOrNull { it.id == feedScope.feedId }
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        drawerIconFor("starred")?.let {
+            // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
+            // slot topBar et le titre opaque couvre la barre.
+            Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            drawerIconFor("starred")?.let {
                             Icon(it, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(8.dp))
                         }
@@ -184,7 +194,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                     }
                 }
             )
-            if (vm.syncing) SyncProgress()
+            }
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {

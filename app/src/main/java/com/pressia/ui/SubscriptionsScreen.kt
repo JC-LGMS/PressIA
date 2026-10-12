@@ -52,30 +52,35 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    ViewTitle(
-                        drawerIconFor("home"),
-                        if (totalUnread > 0) "Accueil ($totalUnread)" else "Accueil"
-                    )
-                },
-                navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
-                actions = {
-                    IconButton({ vm.toggleHideEmptySubs() }) {
-                        Icon(
-                            if (hiddenEmpty) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                            if (hiddenEmpty) "afficher les flux sans article non lu"
-                            else "masquer les flux sans article non lu"
+            // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
+            // slot topBar et le titre opaque couvre la barre.
+            Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
+                TopAppBar(
+                    title = {
+                        ViewTitle(
+                            drawerIconFor("home"),
+                            if (totalUnread > 0) "Accueil ($totalUnread)" else "Accueil"
                         )
+                    },
+                    navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
+                    actions = {
+                        IconButton({ vm.toggleHideEmptySubs() }) {
+                            Icon(
+                                if (hiddenEmpty) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                if (hiddenEmpty) "afficher les flux sans article non lu"
+                                else "masquer les flux sans article non lu"
+                            )
+                        }
+                        SyncButton(vm, "actualiser") {
+                            toast(ctx, "Actualisation des abonnements")
+                            vm.sync()
+                        }
+                        IconButton({ creating = true }) { Icon(Icons.Filled.CreateNewFolder, "nouveau dossier") }
                     }
-                    SyncButton(vm, "actualiser") {
-                        toast(ctx, "Actualisation des abonnements")
-                        vm.sync()
-                    }
-                    IconButton({ creating = true }) { Icon(Icons.Filled.CreateNewFolder, "nouveau dossier") }
-                }
-            )
-            if (vm.syncing) SyncProgress()
+                )
+            }
         }
     ) { pad ->
         val uncategorized = vm.subs.filter { it.categoryId == null }

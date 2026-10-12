@@ -330,9 +330,10 @@ fun ScaffoldWithMenu(
 ) {
     Scaffold(topBar = {
         Column {
+            // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+            if (vm.syncing) SyncProgress()
             TopAppBar(title = { ViewTitle(icon, title) },
                 navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } })
-            if (vm.syncing) SyncProgress()
         }
     }) { pad ->
         Box(Modifier.padding(pad)) { content() }

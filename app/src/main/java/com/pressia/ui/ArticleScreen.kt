@@ -118,6 +118,8 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     Scaffold(
         topBar = {
             Column {
+                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
+                if (vm.syncing) SyncProgress()
                 TopAppBar(
                     title = {},
                     navigationIcon = {
@@ -166,7 +168,6 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") }
                     }
                 )
-                if (vm.syncing) SyncProgress()
             }
         }
     ) { pad ->
