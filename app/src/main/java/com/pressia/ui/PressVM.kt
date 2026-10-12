@@ -544,20 +544,24 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     var refreshingFavicons by mutableStateOf(false)
         private set
-    /** Messages de progression à toaster (consommés par l'écran Réglages). */
-    var favToast by mutableStateOf<String?>(null)
+    /**
+     * Actualise les favicons avec progression dans le bandeau (syncMsg) : l'indicateur
+     * est allumé pour le mode persistant (étapes en direct, message final sans
+     * fermeture/réouverture). Le travail vit dans le modèle et survit à la navigation.
+     */
     fun refreshFavicons() = viewModelScope.launch {
         if (refreshingFavicons) return@launch
         refreshingFavicons = true
-        favToast = "Actualisation des favicons en cours…"
-        try {
-            val n = repo.refreshFavicons { favToast = it }
-            refreshNow()
-            favToast = if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
-            else "Favicons actualisés ($n favicons)"
+        lockSync()
+        val n = try {
+            syncMsg = "Actualisation des favicons en cours…"
+            repo.refreshFavicons { syncMsg = it }.also { refreshNow() }
         } finally {
+            unlockSync()
             refreshingFavicons = false
         }
+        syncMsg = if (n < 0) "Images hors-ligne coupées ou Wi-Fi uniquement : rien d'effacé"
+        else "Favicons actualisés ($n favicons)"
     }
 
     // ----- Favoris -----

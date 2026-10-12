@@ -534,11 +534,6 @@ fun SettingsScreen(vm: PressVM) {
     }
 
     LaunchedEffect(Unit) { reloadFromPrefs() }
-    // Progression de l'actualisation images (toasts démarré/étapes/terminé) : le travail vit
-    // dans le modèle et survit à la navigation, l'écran ne fait que consommer.
-    LaunchedEffect(vm.favToast) {
-        vm.favToast?.let { toast(ctx, it); vm.favToast = null }
-    }
     // Taille du cache à jour quand l'actualisation se termine (aussi sous nos yeux que de retour).
     LaunchedEffect(vm.refreshingFavicons) {
         if (!vm.refreshingFavicons) refreshCacheInfo()
