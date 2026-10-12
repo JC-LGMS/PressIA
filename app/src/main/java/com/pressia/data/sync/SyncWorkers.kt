@@ -35,12 +35,13 @@ class SyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWorker(appCtx,
                 if (isSyncFresh(last, System.currentTimeMillis(), windowMin)) {
                     android.util.Log.i("PressIA", "sync planifiée sautée (dernière synchro récente)")
                 } else {
-                    repo.pushQueue()
-                    repo.syncDown()
-                    // Le tableau « Read later » fait partie des favoris affichés : il suit la même rotation.
-                    // syncDown et syncReadLater téléchargent déjà les miniatures manquantes (syncThumbs).
-                    repo.syncReadLater()
-                    repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+                    // Même pipeline que la synchro manuelle : les étapes partent dans
+                    // repo.syncStep (bandeau + barre si l'app est ouverte), puis on referme.
+                    try {
+                        repo.syncPipeline()
+                    } finally {
+                        repo.syncStep.value = null
+                    }
                 }
             }
             Result.success()

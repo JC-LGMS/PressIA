@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 vm.syncOnLaunch()
-                vm.refreshQuiet()
+                vm.refresh()
             }
             PressIATheme(theme, accent, bg) {
                 val nav = rememberNavController()
@@ -180,8 +180,8 @@ class MainActivity : ComponentActivity() {
                 // synchro l'annulerait et le bandeau se fermerait avant de se rouvrir
                 // pour le message final). Le slot ci-dessous en ignore le contenu et
                 // rend vm.syncMsg, qui évolue seul.
-                // Invariant : jamais de bandeau sans message — refresh() allume syncing
-                // sans message (ex. après « Vider le cache »), sinon bandeau vide.
+                // Invariant : jamais de bandeau sans message — seul un pipeline de
+                // synchro (étapes dans syncStep, recopiées dans syncMsg) allume le bandeau.
                 var bannerJob by remember { mutableStateOf<Job?>(null) }
                 fun launchBanner() {
                     bannerJob = scope.launch {

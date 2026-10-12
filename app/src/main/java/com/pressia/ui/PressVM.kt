@@ -70,13 +70,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var folders by mutableStateOf<List<PressRepository.Folder>>(emptyList())
     var subs by mutableStateOf<List<SubscriptionEntity>>(emptyList())
     /**
-     * Synchronisations / rafraîchissements de premier plan en cours. Un compteur plutôt qu'un
-     * booléen : un rafraîchissement lancé pendant une synchronisation (démarrage : les deux
-     * partent ensemble) ne doit pas éteindre l'indicateur à sa propre fin.
+     * Synchronisations de premier plan en cours (manuelle, démarrage, favicons…).
+     * Un compteur plutôt qu'un booléen : deux opérations parties ensemble ne doivent
+     * pas éteindre l'indicateur à la première finie.
      */
     private var syncJobs by mutableStateOf(0)
-    /** Une synchronisation de premier plan est en cours (manuelle, démarrage, rafraîchissement). */
-    val syncing: Boolean get() = syncJobs > 0
+    /** Une synchronisation est en cours (premier plan, ou planifiée Worker en tâche de fond). */
+    val syncing: Boolean get() = syncJobs > 0 || workerActive
+    /** Miroir de [workerSyncing] en état Compose : la flèche, le bandeau et les boutons
+     * suivent aussi les synchronisations planifiées. */
+    private var workerActive by mutableStateOf(false)
     /** Synchronisation périodique (Worker) en cours, même sans action de l'utilisateur. */
     val workerSyncing: StateFlow<Boolean> =
         androidx.work.WorkManager.getInstance(repo.appCtx)
@@ -181,6 +184,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     init {
         viewModelScope.launch { migrateAppearance() }
+        // Étapes publiées par le pipeline partagé (manuel, lancement, planifié) : le
+        // bandeau les suit quel que soit le déclencheur — y compris `null` en fin de
+        // tâche planifiée (silencieuse, sans message final : le bandeau se referme).
+        viewModelScope.launch { repo.syncStep.collect { syncMsg = it } }
+        // Le Worker tourne hors modèle : son état alimente quand même l'indicateur.
+        viewModelScope.launch { workerSyncing.collect { workerActive = it } }
         // Les dossiers suivent le réglage fusion / séparation : la liste est reconstruite à chaque changement.
         viewModelScope.launch { mergeFolders.collect { folders = repo.folders(it) } }
         // Dossiers repliés : conservés d'une session à l'autre.
@@ -263,16 +272,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     private fun lockSync() { syncJobs++ }
     private fun unlockSync() { syncJobs = (syncJobs - 1).coerceAtLeast(0) }
 
-    fun refresh() = viewModelScope.launch {
-        lockSync()
-        try { refreshNow() } finally { unlockSync() }
-    }
-
-    /**
-     * Rechargement silencieux (lancement) : remplit l'état sans allumer l'indicateur de
-     * synchronisation. Les listes se remplissent dès que la base répond, sans animation.
-     */
-    fun refreshQuiet() = viewModelScope.launch { refreshNow() }
+    fun refresh() = viewModelScope.launch { refreshNow() }
 
     /** Vrai une fois le premier remplissage terminé : avant, vide = « pas encore chargé ». */
     var loaded by mutableStateOf(false)
@@ -388,43 +388,37 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         return repo.tryWithSyncLock { doSyncNow() } ?: "Synchronisation déjà en cours"
     }
 
-    /** Corps de [syncNow], verrou déjà acquis (voir aussi [syncOnLaunch]). */
+    /** Corps de [syncNow] : le pipeline partagé, verrou déjà acquis (voir aussi [syncOnLaunch]). */
     private suspend fun doSyncNow(): String {
         lockSync()
         try {
-            if (repo.hasPendingSync()) syncMsg = "Envoi des modifications…"
-            val pushed = repo.pushQueue()
-            syncMsg = "Réception des articles…"
-            val n = repo.syncDown(withThumbs = false)
-            if (repo.imagesAllowed()) {
-                syncMsg = "Téléchargement des miniatures…"
-                repo.syncThumbs { done, total -> syncMsg = "Téléchargement des miniatures… $done/$total" }
-            }
-            syncMsg = "Mise à jour du « Read later »…"
-            repo.syncReadLater()
-            if (repo.imagesAllowed()) {
-                syncMsg = "Récupération des favicons…"
-                repo.syncFavicons()
-            }
-            // Toute synchro bien finie (manuelle, lancement, tâche planifiée) recule le garde-fou :
-            // le lancement suivant saute si elle date de moins de X minutes (voir syncOnLaunch).
-            repo.prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
-            // Refresh en attente, et non lancé en arrière-plan : sans cela on pouvait annoncer
-            // « connecté » en revenant sur des listes encore vides.
-            refreshNow()
-            // Les échecs par compte sont avalés par la sync (les autres comptes passent quand
-            // même) : si un jeton est mort, on le dit au lieu d'annoncer un succès aveugle.
-            if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
-            return if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
-            else "Synchronisation terminée"
+            return finishSync(repo.syncPipeline())
         } catch (e: Exception) {
-            // Même chose quand c'est toute la sync qui tombe : une session connue comme expirée
-            // mérite mieux qu'un vague problème de connexion.
-            if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
-            return "Échec de synchronisation : vérifiez la connexion"
+            return failSync()
         } finally {
             unlockSync()
         }
+    }
+
+    /**
+     * Fin commune manuel/lancement : affiche le résultat et rend le message du bandeau.
+     */
+    private suspend fun finishSync(n: Int): String {
+        // Refresh attendu, et non lancé en arrière-plan : sans cela on pouvait annoncer
+        // « connecté » en revenant sur des listes encore vides.
+        refreshNow()
+        // Les échecs par compte sont avalés par la sync (les autres comptes passent quand
+        // même) : si un jeton est mort, on le dit au lieu d'annoncer un succès aveugle.
+        if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
+        return if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
+        else "Synchronisation terminée"
+    }
+
+    /** Échec commun manuel/lancement : une session connue comme expirée mérite mieux
+     * qu'un vague problème de connexion. */
+    private suspend fun failSync(): String {
+        if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
+        return "Échec de synchronisation : vérifiez la connexion"
     }
 
     /** Déclenche [syncNow] en tâche de fond et publie le résultat dans [syncMsg]. */
@@ -457,8 +451,19 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                     android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
                 } else {
                     android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
-                    // Même contenu et même message que la synchro manuelle (nouveautés, fin ou échec).
-                    syncMsg = doSyncNow()
+                    // Même contenu, mêmes indicateurs et même message que la synchro manuelle
+                    // (nouveautés, fin ou échec) : le verrou d'indicateur est requis comme
+                    // dans doSyncNow, sinon ni flèche ni bandeau bleu pendant la synchro.
+                    lockSync()
+                    try {
+                        syncMsg = try {
+                            finishSync(repo.syncPipeline())
+                        } catch (e: Exception) {
+                            failSync()
+                        }
+                    } finally {
+                        unlockSync()
+                    }
                 }
             }
         }

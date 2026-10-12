@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Unit) {
-    LaunchedEffect(Unit) { vm.refreshQuiet() }
+    LaunchedEffect(Unit) { vm.refresh() }
     val ctx = LocalContext.current
     val totalUnread = vm.unreads.values.sum()
     val hiddenEmpty by vm.hideEmptySubs.collectAsState()

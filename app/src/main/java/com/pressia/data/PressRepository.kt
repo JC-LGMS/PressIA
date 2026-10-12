@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -621,6 +622,43 @@ class PressRepository(
     }
 
     // ----- Sync descendante -----
+
+    /**
+     * Étape de synchronisation en cours, tous déclencheurs confondus (manuelle,
+     * lancement, planifiée) ; `null` = aucune. Le modèle la recopie dans `syncMsg`
+     * pour le bandeau : une seule source pour les étapes, quel que soit l'appelant.
+     * Écrit depuis des fils IO (StateFlow thread-safe), lu sur le fil principal.
+     */
+    val syncStep = MutableStateFlow<String?>(null)
+
+    /**
+     * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
+     * montante, articles, miniatures (avec compteur), « Read later », favicons.
+     * Publie les étapes dans [syncStep] au fil de l'eau et recule
+     * [Prefs.LAST_SYNC_AT] en cas de succès (lève en cas d'échec, comme avant).
+     * Le verrou partagé, l'indicateur et le message final restent à l'appelant
+     * (verrou déjà acquis ici).
+     */
+    suspend fun syncPipeline(): Int {
+        if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
+        pushQueue()
+        syncStep.value = "Réception des articles…"
+        val n = syncDown(withThumbs = false)
+        if (imagesAllowed()) {
+            syncStep.value = "Téléchargement des miniatures…"
+            syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+        }
+        syncStep.value = "Mise à jour du « Read later »…"
+        syncReadLater()
+        if (imagesAllowed()) {
+            syncStep.value = "Récupération des favicons…"
+            syncFavicons()
+        }
+        // Toute synchro bien finie recule le garde-fou : le lancement suivant saute si
+        // elle date de moins de X minutes.
+        prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+        return n
+    }
 
     /**
      * Récupère les articles de tous les comptes et renvoie le **nombre de nouveaux articles**
