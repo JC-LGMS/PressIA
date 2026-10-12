@@ -1134,17 +1134,11 @@ class PressRepository(
     }
 
     /**
-     * Vide le cache : articles (favoris conservés) + images. Le suivi des miniatures est
-     * réinitialisé : la prochaine synchronisation récupère toutes les images des articles
-     * conservés.
+     * Vide le cache : images uniquement (miniatures + cache Coil). Les articles sont
+     * conservés : seul le suivi des miniatures est réinitialisé, et la prochaine
+     * synchronisation récupère les images des articles conservés.
      */
-    suspend fun clearCache(keepStarred: Boolean = true) = withContext(Dispatchers.IO) {
-        if (keepStarred) dao.prune(Long.MAX_VALUE) // prune() ne supprime que les non-favoris
-        else dao.clearArticles()
-        ThumbStore.clear(ctx)
-        dao.resetThumbsCached()
-        runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
-    }
+    suspend fun clearCache() = clearImages()
 
     /**
      * Ne vide que les images (force le re-téléchargement). Les miniatures d'articles sont
