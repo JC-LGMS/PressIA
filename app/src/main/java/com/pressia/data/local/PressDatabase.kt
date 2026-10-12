@@ -246,9 +246,14 @@ interface PressDao {
      */
     @Query("SELECT a.id FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 1")
     suspend fun unreadIdsOfProvider(provider: String): List<String>
-    /** Parmi des IDs distants, ceux que le local connaît comme lus (non lus ailleurs → à rouvrir). */
-    @Query("SELECT a.id FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 0 AND a.id IN (:ids)")
-    suspend fun readIdsOfProviderAmong(provider: String, ids: List<String>): List<String>
+    /**
+     * États locaux utiles à la réconciliation, en une seule passe : non-lus du compte, plus
+     * lus locaux parmi des IDs distants (non lus ailleurs → à rouvrir). Remplace deux
+     * balayages ([unreadIdsOfProvider] + [readIdsOfProviderAmong]) par un seul par paquet ;
+     * [unreadIdsOfProvider] reste pour le cas dégénéré (aucun ID distant : `IN ()` invalide).
+     */
+    @Query("SELECT a.id, a.unread FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND (a.unread = 1 OR a.id IN (:ids))")
+    suspend fun readStatesOfProvider(provider: String, ids: List<String>): List<ReconcileState>
     @Query("UPDATE articles SET unread = 0, readAt = :now WHERE id IN (:ids)")
     suspend fun markIdsRead(ids: List<String>, now: Long)
     @Query("UPDATE articles SET unread = 1, readAt = NULL WHERE id IN (:ids)")
@@ -413,6 +418,9 @@ data class FavFlags(val id: String, val starred: Boolean, val laterSaved: Boolea
 
 /** Suivi « miniature stockée » d'un article déjà en base (voir [PressDao.thumbFlagsOf]). */
 data class ThumbFlags(val id: String, val imageCached: Boolean)
+
+/** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
+data class ReconcileState(val id: String, val unread: Boolean)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],

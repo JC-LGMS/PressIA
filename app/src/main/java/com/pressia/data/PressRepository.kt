@@ -885,10 +885,17 @@ class PressRepository(
         val pending = dao.pendingSync()
         val pendingIds = pending.filter { it.kind == "read" || it.kind == "unread" }.map { it.articleId }.toSet()
         val hasPendingMarkAll = pending.any { it.kind == "markAllRead" }
-        val localUnread = dao.unreadIdsOfProvider(account.id).toSet()
-        // SQLite refuse ~999 variables liées par requête `IN` : on découpe par paquets de
-        // 500 (marge sous le plafond des vieux appareils, comme les suppressions et marquages).
-        val localReadAmongRemote = remote.ids.chunked(500).flatMap { dao.readIdsOfProviderAmong(account.id, it) }.toSet()
+        // Une seule passe par paquet (plafond ~999 variables) au lieu de deux requêtes :
+        // les paires (id, unread) se répartissent ensuite entre les deux ensembles purs.
+        // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
+        // (qui suffisent : rien à rouvrir quand le compte n'a aucun non-lu).
+        val states = if (remote.ids.isEmpty()) {
+            dao.unreadIdsOfProvider(account.id).map { ReconcileState(it, true) }
+        } else {
+            remote.ids.chunked(500).flatMap { dao.readStatesOfProvider(account.id, it) }
+        }
+        val localUnread = states.filter { it.unread }.map { it.id }.toSet()
+        val localReadAmongRemote = states.filter { !it.unread }.map { it.id }.toSet()
         val split = computeReadReconciliation(localUnread, remote.ids, localReadAmongRemote, pendingIds, remote.complete, hasPendingMarkAll)
         var read = 0
         var unread = 0
