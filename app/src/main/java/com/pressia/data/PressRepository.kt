@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Préfixe des identifiants de dossiers fusionnés (voir [PressRepository.folders]) :
@@ -684,20 +685,33 @@ class PressRepository(
      * Inactif si « Images hors-ligne » est coupé, ou si « Wi-Fi uniquement » est actif hors
      * Wi-Fi/Ethernet : une passe manuelle sur données mobiles ne doit pas vider le forfait.
      * Idempotent : seules les URLs manquantes sont téléchargées.
+     *
+     * [onProgress] est appelé sur le fil IO à chaque miniature téléchargée (limitation à ~7 appels/s)
+     * avec le nombre déjà téléchargé et le total à télécharger — le bandeau affiche ainsi un
+     * avancement fin (« Téléchargement des miniatures… 45/200 ») au lieu d'un simple message figé.
      */
-    suspend fun syncThumbs(): Int = withContext(Dispatchers.IO) {
+    suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext 0
         val urls = dao.pendingThumbUrls()
         if (urls.isEmpty()) return@withContext 0
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
+        val doneCount = AtomicInteger(0)
+        val total = urls.size
         val done = coroutineScope {
             urls.map { url ->
                 async {
-                    permits.withPermit { ThumbStore.fetch(ctx, url, maxW, maxH) }
+                    val ok = permits.withPermit { ThumbStore.fetch(ctx, url, maxW, maxH) }
+                    if (ok && onProgress != null) {
+                        val n = doneCount.incrementAndGet()
+                        // Limitation : inutile de publier à chaque miniature, le bandeau suffit.
+                        if (n == total || n % 8 == 0) onProgress(n, total)
+                    }
+                    ok
                 }
             }.awaitAll()
         }
+        onProgress?.invoke(doneCount.get().coerceAtMost(total), total)
         // Marquage groupé : une requête par paquet plutôt qu'une par URL.
         urls.filterIndexed { i, _ -> done[i] }.chunked(200).forEach { dao.markThumbsCached(it) }
         done.count { it }

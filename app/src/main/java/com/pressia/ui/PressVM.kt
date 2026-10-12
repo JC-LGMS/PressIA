@@ -398,7 +398,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             val n = repo.syncDown(withThumbs = false)
             if (repo.imagesAllowed()) {
                 syncMsg = "Téléchargement des miniatures…"
-                repo.syncThumbs()
+                repo.syncThumbs { done, total -> syncMsg = "Téléchargement des miniatures… $done/$total" }
             }
             syncMsg = "Mise à jour du « Read later »…"
             repo.syncReadLater()
