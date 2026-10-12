@@ -750,18 +750,20 @@ class PressRepository(
      * Wi-Fi/Ethernet : une passe manuelle sur données mobiles ne doit pas vider le forfait.
      * Idempotent : seules les URLs manquantes sont téléchargées.
      *
-     * [onProgress] est appelé sur le fil IO à chaque miniature téléchargée (limitation à ~7 appels/s)
-     * avec le nombre déjà téléchargé et le total à télécharger — le bandeau affiche ainsi un
-     * avancement fin (« Téléchargement des miniatures… 45/200 ») au lieu d'un simple message figé.
+     * [onProgress] est appelé sur le fil IO avec le nombre déjà téléchargé et le total —
+     * d'abord `0/total` dès le départ (le total est connu aussitôt la requête faite), puis à
+     * chaque 8ᵉ succès et à la fin. Seules les réussites incrémentent : des URL en échec ou
+     * lentes retardent le premier palier, mais le total s'affiche sans attendre.
      */
     suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext 0
         val urls = dao.pendingThumbUrls()
         if (urls.isEmpty()) return@withContext 0
+        val total = urls.size
+        onProgress?.invoke(0, total)
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
         val doneCount = AtomicInteger(0)
-        val total = urls.size
         val done = coroutineScope {
             urls.map { url ->
                 async {
@@ -1487,5 +1489,5 @@ fun fmtDuration(sec: Int): String {
 
 fun buildDatabase(ctx: Context): PressDatabase =
     Room.databaseBuilder(ctx, PressDatabase::class.java, "pressia.db")
-        .addMigrations(PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3, PressDatabase.MIGRATION_3_4)
+        .addMigrations(PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3, PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5)
         .build()

@@ -42,7 +42,11 @@ data class SubscriptionEntity(
 /** Article mis en cache pour lecture hors-ligne. */
 @Entity(
     tableName = "articles",
-    indices = [Index("feedId"), Index("published"), Index("unread"), Index("starred"), Index("laterSaved")]
+    indices = [Index("feedId"), Index("published"), Index("unread"), Index("starred"), Index("laterSaved"),
+        // Requête des miniatures en attente : filtre sur imageCached + tri par published, en
+        // couvrant (imageUrl incluse) pour ne jamais toucher la table — dont les colonnes
+        // summary/content sont lourdes — même avec des milliers d'articles.
+        Index(value = ["imageCached", "published", "imageUrl"])]
 )
 data class ArticleEntity(
     @PrimaryKey val id: String, // entryId cloud ou hash lien
@@ -412,7 +416,7 @@ data class ThumbFlags(val id: String, val imageCached: Boolean)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 4, exportSchema = false
+    version = 5, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -453,6 +457,17 @@ abstract class PressDatabase : RoomDatabase() {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `categories` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `subscriptions` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * v4 → v5 : index couvrant pour les miniatures en attente (`imageCached`, `published`,
+         * `imageUrl`). La requête ne lit plus que l'index — étroit — au lieu de balayer la table
+         * et ses gros contenus HTML. Aucune donnée touchée.
+         */
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_articles_imageCached_published_imageUrl` ON `articles` (`imageCached`, `published`, `imageUrl`)")
             }
         }
     }
