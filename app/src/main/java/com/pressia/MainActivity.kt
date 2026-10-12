@@ -338,6 +338,29 @@ class MainActivity : ComponentActivity() {
                         // lui le bandeau est plein-bleed, trop large et collé en bas.
                         Snackbar(modifier = Modifier.padding(12.dp)) { Text(vm.syncMsg ?: "") }
                     }
+                    // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
+                    // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.
+                    val appToast = ToastBus.current
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = appToast != null,
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 200.dp),
+                        enter = androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.fadeOut()
+                    ) {
+                        appToast?.let { (id, msg) ->
+                            LaunchedEffect(id) {
+                                kotlinx.coroutines.delay(2000)
+                                ToastBus.clear(id)
+                            }
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                                color = androidx.compose.ui.graphics.Color(0xE6141414),
+                                contentColor = androidx.compose.ui.graphics.Color.White
+                            ) {
+                                Text(msg, Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+                            }
+                        }
+                    }
                 }
             }
         }

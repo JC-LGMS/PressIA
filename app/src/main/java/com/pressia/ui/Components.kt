@@ -783,9 +783,27 @@ fun shareArticle(ctx: android.content.Context, a: ArticleEntity) {
     ctx.startActivity(Intent.createChooser(i, "Partager l'article"))
 }
 
-/** Petit toast système. */
+/**
+ * Bus de toasts applicatifs : la position du toast système est imposée par Android
+ * (setGravity sans effet depuis l'API 30), donc toast() affiche un bandeau maison
+ * remonté au-dessus du snackbar, consommé par MainActivity.
+ */
+object ToastBus {
+    private var nextId = 0L
+    var current by mutableStateOf<Pair<Long, String>?>(null)
+        private set
+    fun post(msg: String) {
+        nextId++
+        current = nextId to msg
+    }
+    fun clear(id: Long) {
+        if (current?.first == id) current = null
+    }
+}
+
+/** Petit toast applicatif, remonté au-dessus du bandeau (voir ToastBus). */
 fun toast(ctx: android.content.Context, msg: String) {
-    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+    ToastBus.post(msg)
 }
 
 /**
