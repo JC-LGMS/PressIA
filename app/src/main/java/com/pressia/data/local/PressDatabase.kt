@@ -281,6 +281,18 @@ interface PressDao {
     /** Purge : les favoris et le « Read later » du compte sont toujours conservés. */
     @Query("DELETE FROM articles WHERE published < :olderThan AND starred = 0 AND laterSaved = 0")
     suspend fun prune(olderThan: Long): Int
+    /** Flux ayant des articles : périmètre de la rétention au quota par flux. */
+    @Query("SELECT DISTINCT feedId FROM articles")
+    suspend fun articleFeedIds(): List<String>
+    /**
+     * Trop-plein d'un flux au-delà du quota : les plus anciens d'abord (favoris et
+     * « Read later » déjà exclus). OFFSET seul exige LIMIT -1 sous SQLite.
+     */
+    @Query("SELECT id FROM articles WHERE feedId = :feed AND starred = 0 AND laterSaved = 0 ORDER BY published DESC, id DESC LIMIT -1 OFFSET :keep")
+    suspend fun overflowArticleIds(feed: String, keep: Int): List<String>
+    /** Suppression par paquets (limite de variables SQLite) du trop-plein par flux. */
+    @Query("DELETE FROM articles WHERE id IN (:ids)")
+    suspend fun deleteArticlesByIds(ids: List<String>): Int
     @Query("SELECT * FROM articles WHERE titleHash != '' GROUP BY titleHash HAVING SUM(CASE WHEN unread = 1 THEN 1 ELSE 0 END) > 0 ORDER BY published DESC LIMIT 200")
     suspend fun duplicateGroupsSeedUnread(): List<ArticleEntity>
     @Query("SELECT * FROM articles WHERE titleHash = :hash ORDER BY published DESC")

@@ -69,9 +69,8 @@ fun cleanTitle(raw: String?): String {
 data class UnreadSet(val ids: Set<String>, val complete: Boolean)
 
 /**
- * Fenêtre de réconciliation : 30 derniers jours, comme la purge locale (`trimToMax`) et le
- * marquage lu automatique de Feedly au-delà de 31 jours. Au-delà, le local ne conserve de toute
- * façon que les favoris.
+ * Fenêtre de réconciliation : 30 derniers jours, comme le marquage lu automatique de
+ * Feedly au-delà de 31 jours.
  */
 const val RECONCILE_WINDOW_MS = 30L * 24 * 3600 * 1000
 

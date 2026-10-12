@@ -987,8 +987,17 @@ class PressRepository(
     }
 
     private suspend fun trimToMax() {
-        // garde les favoris + prune global > 30j (le quota fin par flux est assuré à l'affichage + prune)
-        if (dao.prune(System.currentTimeMillis() - 30L * 24 * 3600 * 1000) > 0) gcThumbs()
+        // Rétention au seul réglage « Articles conservés par flux » : au-delà du quota,
+        // les plus anciens de chaque flux partent — favoris et « Read later » conservés.
+        val keep = maxItems().coerceAtLeast(1)
+        var deleted = 0
+        dao.articleFeedIds().forEach { feed ->
+            dao.overflowArticleIds(feed, keep).chunked(500).forEach { deleted += dao.deleteArticlesByIds(it) }
+        }
+        if (deleted > 0) {
+            android.util.Log.i("PressIA", "trimToMax: $deleted articles au-delà du quota ($keep/flux)")
+            gcThumbs()
+        }
     }
 
     /** Supprime les miniatures dont plus aucun article n'a besoin (purge, compte supprimé). */

@@ -148,9 +148,8 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
         root.put(Sections.STATS, o)
     }
     if (Sections.READ in sections) {
-        // Étoiles (tous flux) + lus des flux locaux. Les lus trop vieux pour survivre à la
-        // purge locale (30 jours, comme `trimToMax`) sont exclus : ils ne reviendraient jamais.
-        val cutoff = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
+        // Étoiles (tous flux) + lus des flux locaux, sans limite d'âge : la rétention se
+        // fait au quota par flux, les vieux articles lus peuvent survivre localement.
         val rows = HashMap<String, JSONObject>()
         dao.starredStates().forEach { r ->
             rows[r.id] = JSONObject()
@@ -158,7 +157,6 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
                 .put("readAt", r.readAt ?: JSONObject.NULL).put("feedId", r.feedId)
         }
         dao.localReadStates().forEach { r ->
-            if (r.published < cutoff) return@forEach
             val o = rows.getOrPut(r.id) {
                 JSONObject().put("id", r.id).put("unread", false).put("starred", false)
                     .put("readAt", JSONObject.NULL).put("feedId", r.feedId)
