@@ -793,7 +793,7 @@ class PressRepository(
         }
         onProgress?.invoke(doneCount.get().coerceAtMost(total), total)
         // Marquage groupé : une requête par paquet plutôt qu'une par URL.
-        urls.filterIndexed { i, _ -> done[i] }.chunked(200).forEach { dao.markThumbsCached(it) }
+        urls.filterIndexed { i, _ -> done[i] }.chunked(500).forEach { dao.markThumbsCached(it) }
         done.count { it }
     }
 
@@ -886,17 +886,18 @@ class PressRepository(
         val pendingIds = pending.filter { it.kind == "read" || it.kind == "unread" }.map { it.articleId }.toSet()
         val hasPendingMarkAll = pending.any { it.kind == "markAllRead" }
         val localUnread = dao.unreadIdsOfProvider(account.id).toSet()
-        // SQLite refuse ~999 variables liées par requête `IN` : on découpe comme dans storeArticles.
-        val localReadAmongRemote = remote.ids.chunked(400).flatMap { dao.readIdsOfProviderAmong(account.id, it) }.toSet()
+        // SQLite refuse ~999 variables liées par requête `IN` : on découpe par paquets de
+        // 500 (marge sous le plafond des vieux appareils, comme les suppressions et marquages).
+        val localReadAmongRemote = remote.ids.chunked(500).flatMap { dao.readIdsOfProviderAmong(account.id, it) }.toSet()
         val split = computeReadReconciliation(localUnread, remote.ids, localReadAmongRemote, pendingIds, remote.complete, hasPendingMarkAll)
         var read = 0
         var unread = 0
         if (split.markRead.isNotEmpty()) {
             val now = System.currentTimeMillis()
-            split.markRead.chunked(400).forEach { dao.markIdsRead(it, now); read += it.size }
+            split.markRead.chunked(500).forEach { dao.markIdsRead(it, now); read += it.size }
         }
         if (split.markUnread.isNotEmpty()) {
-            split.markUnread.chunked(400).forEach { dao.markIdsUnread(it); unread += it.size }
+            split.markUnread.chunked(500).forEach { dao.markIdsUnread(it); unread += it.size }
         }
         read to unread
     }
@@ -974,7 +975,7 @@ class PressRepository(
         val known = HashSet<String>()
         val prev = HashMap<String, FavFlags>()
         val thumbs = HashMap<String, Boolean>()
-        articles.map { it.id }.chunked(400).forEach { chunk ->
+        articles.map { it.id }.chunked(500).forEach { chunk ->
             known += dao.existingIds(chunk)
             dao.favFlagsOf(chunk).forEach { prev[it.id] = it }
             dao.thumbFlagsOf(chunk).forEach { thumbs[it.id] = it.imageCached }
