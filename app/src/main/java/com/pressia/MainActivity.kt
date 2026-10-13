@@ -11,6 +11,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -225,6 +227,11 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Box(Modifier.fillMaxSize()) {
+                    // Hauteur visible du bandeau : les boutons haut/bas flottants des listes
+                    // se soulèvent juste au-dessus quand il est affiché (0 quand masqué).
+                    var bannerLift by remember { mutableStateOf(0.dp) }
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalBannerLift provides bannerLift) {
                     ModalNavigationDrawer(
                         drawerState = drawer,
                         drawerContent = {
@@ -330,9 +337,11 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    } // CompositionLocalProvider(LocalBannerLift) : le bandeau reste hors périmètre.
                     SnackbarHost(
                         snackbarHostState,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                            .onSizeChanged { bannerLift = with(density) { it.height.toDp() } }
                     ) {
                         // Même padding que le slot par défaut (Snackbar(snackbarData)) : sans
                         // lui le bandeau est plein-bleed, trop large et collé en bas.

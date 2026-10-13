@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -562,10 +563,21 @@ fun ViewTitle(icon: ImageVector?, text: String) {
     }
 }
 
-/** Deux petits boutons en surimpression, en bas au centre : haut / bas de liste. */@Composable
+/**
+ * Hauteur visible du bandeau de synchro (snackbar applicative) : les boutons haut/bas
+ * flottants s'en servent pour se soulever juste au-dessus quand il est affiché.
+ * Nourri par le SnackbarHost lui-même (`onSizeChanged` dans MainActivity) : 0 quand masqué.
+ */
+val LocalBannerLift = compositionLocalOf { 0.dp }
+
+/** Deux petits boutons en surimpression, en bas au centre : haut / bas de liste. */
+@Composable
 fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifier = Modifier) {
+    // Le bandeau applicatif recouvre le bas de l'écran : les boutons glissent juste
+    // au-dessus quand il est visible (hauteur mesurée, animée pour suivre en douceur).
+    val lift by animateDpAsState(LocalBannerLift.current, label = "jump-lift")
     Row(
-        modifier.fillMaxWidth().padding(bottom = 16.dp),
+        modifier.fillMaxWidth().padding(bottom = 16.dp + lift),
         horizontalArrangement = Arrangement.Center
     ) {
         Surface(shadowElevation = 4.dp, shape = CircleShape) {
