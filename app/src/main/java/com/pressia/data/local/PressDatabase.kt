@@ -290,9 +290,14 @@ interface PressDao {
     /** Purge : les favoris et le « Read later » du compte sont toujours conservés. */
     @Query("DELETE FROM articles WHERE published < :olderThan AND starred = 0 AND laterSaved = 0")
     suspend fun prune(olderThan: Long): Int
-    /** Flux ayant des articles : périmètre de la rétention au quota par flux. */
-    @Query("SELECT DISTINCT feedId FROM articles")
-    suspend fun articleFeedIds(): List<String>
+    /**
+     * Flux dépassant le quota d'articles conservés (hors favoris et « Read later ») : seuls
+     * ceux-là justifient une passe de suppression. Une requête au lieu d'une par flux à
+     * chaque synchronisation — même résultat que le balayage complet (quota baissé,
+     * désétoilage et approvisionnement compris, tous sans nouveaux articles).
+     */
+    @Query("SELECT feedId FROM articles WHERE starred = 0 AND laterSaved = 0 GROUP BY feedId HAVING COUNT(*) > :keep")
+    suspend fun overQuotaFeedIds(keep: Int): List<String>
     /**
      * Trop-plein d'un flux au-delà du quota : les plus anciens d'abord (favoris et
      * « Read later » déjà exclus). OFFSET seul exige LIMIT -1 sous SQLite.

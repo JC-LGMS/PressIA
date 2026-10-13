@@ -1077,9 +1077,11 @@ class PressRepository(
     private suspend fun trimToMax() {
         // Rétention au seul réglage « Articles conservés par flux » : au-delà du quota,
         // les plus anciens de chaque flux partent — favoris et « Read later » conservés.
+        // Seuls les flux en dépassement sont balayés (détectés en une requête) : les autres
+        // ne peuvent pas avoir gonflé, inutile de les vérifier à chaque synchronisation.
         val keep = maxItems().coerceAtLeast(1)
         var deleted = 0
-        dao.articleFeedIds().forEach { feed ->
+        dao.overQuotaFeedIds(keep).forEach { feed ->
             dao.overflowArticleIds(feed, keep).chunked(500).forEach { deleted += dao.deleteArticlesByIds(it) }
         }
         if (deleted > 0) {
