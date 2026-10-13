@@ -156,11 +156,11 @@ class PressLogicTest {
         assertTrue(com.pressia.data.isAuthFailure(RuntimeException("x", httpError(401))))
     }
 
-    private fun httpError429(retryAfter: String?): retrofit2.HttpException {
+    private fun httpError429(vararg headers: Pair<String, String>): retrofit2.HttpException {
         val raw = okhttp3.Response.Builder()
             .code(429).message("Too Many Requests").protocol(okhttp3.Protocol.HTTP_1_1)
             .request(okhttp3.Request.Builder().url("https://cloud.feedly.com/v3/streams/contents").build())
-            .apply { if (retryAfter != null) header("Retry-After", retryAfter) }
+            .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
         return retrofit2.HttpException(
             retrofit2.Response.error<String>(okhttp3.ResponseBody.create(null, ""), raw)
@@ -168,27 +168,41 @@ class PressLogicTest {
     }
 
     @Test fun `limite de debit detecte 429 et son delai`() {
-        val hit = com.pressia.data.rateLimitOf(httpError429("120"), "Feedly")
-        assertEquals(com.pressia.data.RateLimit("Feedly", 120L), hit)
+        val hit = com.pressia.data.rateLimitOf(httpError429("Retry-After" to "120"), "Feedly")
+        assertEquals(com.pressia.data.RateLimit("Feedly", 120L, "Retry-After"), hit)
+        // Format réel de Feedly : pas de Retry-After, mais X-RateLimit-Reset (secondes).
+        val feedly = com.pressia.data.rateLimitOf(
+            httpError429("X-RateLimit-Limit" to "100000", "X-RateLimit-Count" to "100000", "X-RateLimit-Reset" to "23841"),
+            "Feedly"
+        )
+        assertEquals(com.pressia.data.RateLimit("Feedly", 23841L, "X-RateLimit-Reset"), feedly)
+        // Les deux présents : le standard gagne.
+        val both = com.pressia.data.rateLimitOf(
+            httpError429("Retry-After" to "60", "X-RateLimit-Reset" to "23841"), "Feedly"
+        )
+        assertEquals(com.pressia.data.RateLimit("Feedly", 60L, "Retry-After"), both)
         // Sans header ou illisible : 429 avéré, délai inconnu.
-        assertEquals(com.pressia.data.RateLimit("Feedly", null), com.pressia.data.rateLimitOf(httpError429(null), "Feedly"))
-        assertEquals(com.pressia.data.RateLimit("Feedly", null), com.pressia.data.rateLimitOf(httpError429("soon"), "Feedly"))
+        assertEquals(com.pressia.data.RateLimit("Feedly", null, null), com.pressia.data.rateLimitOf(httpError429(), "Feedly"))
+        assertEquals(com.pressia.data.RateLimit("Feedly", null, null), com.pressia.data.rateLimitOf(httpError429("X-RateLimit-Reset" to "soon"), "Feedly"))
         // Ni 429 ni enveloppé : rien à signaler (et jamais confondu avec un échec d'auth).
         assertNull(com.pressia.data.rateLimitOf(httpError(403), "Feedly"))
         assertNull(com.pressia.data.rateLimitOf(java.io.IOException("coupure"), "Feedly"))
-        assertFalse(com.pressia.data.isAuthFailure(httpError429("120")))
+        assertFalse(com.pressia.data.isAuthFailure(httpError429("Retry-After" to "120")))
         // Enveloppé : retrouvé via la chaîne des causes.
-        assertEquals(com.pressia.data.RateLimit("Inoreader", 30L), com.pressia.data.rateLimitOf(RuntimeException("x", httpError429("30")), "Inoreader"))
+        assertEquals(com.pressia.data.RateLimit("Inoreader", 30L, "Retry-After"), com.pressia.data.rateLimitOf(RuntimeException("x", httpError429("Retry-After" to "30")), "Inoreader"))
     }
 
     @Test fun `message de limite avec delai du header`() {
-        val withDelay = com.pressia.data.rateLimitMessage("Feedly", 120L)
+        val withDelay = com.pressia.data.rateLimitMessage("Feedly", 120L, "Retry-After")
         assertTrue(withDelay.contains("Feedly") && withDelay.contains("429"))
         assertTrue(withDelay.contains("120") && withDelay.contains("2 min"))
         assertTrue(withDelay.contains("impossible"))
-        val short = com.pressia.data.rateLimitMessage("Feedly", 20L)
+        val reset = com.pressia.data.rateLimitMessage("Feedly", 23841L, "X-RateLimit-Reset")
+        assertTrue(reset.contains("X-RateLimit-Reset") && reset.contains("23841"))
+        assertTrue(reset.contains("6 h"))
+        val short = com.pressia.data.rateLimitMessage("Feedly", 20L, "Retry-After")
         assertTrue(short.contains("20 s"))
-        val unknown = com.pressia.data.rateLimitMessage("Feedly", null)
+        val unknown = com.pressia.data.rateLimitMessage("Feedly", null, null)
         assertTrue(unknown.contains("429") && unknown.contains("quelques minutes"))
     }
 

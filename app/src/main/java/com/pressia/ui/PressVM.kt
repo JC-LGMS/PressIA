@@ -403,10 +403,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Un 429 quelque part dans le pipeline : la synchro n'a rien pu récupérer (ou pas
         // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
         val rl = repo.syncRateLimit
-        if (n == 0 && rl != null) return rateLimitMessage(rl.service, rl.retryAfterSec)
+        if (n == 0 && rl != null) return rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
         val base = if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
         else "Synchronisation terminée"
-        if (rl != null) return "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec)}"
+        if (rl != null) return "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}"
         return base
     }
 

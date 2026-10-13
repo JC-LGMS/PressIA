@@ -78,10 +78,12 @@ fun isAuthFailure(t: Throwable): Boolean {
 }
 
 /**
- * Limitation de débit (HTTP 429) : le serveur dit stop, avec le délai demandé
- * (`Retry-After`, en secondes — null si le serveur ne le donne pas ou s'il est illisible).
+ * Limitation de débit (HTTP 429) : le serveur dit stop, avec le délai demandé en secondes et
+ * le nom du header qui le donne (`Retry-After`, ou `X-RateLimit-Reset` chez Feedly :
+ * secondes restantes avant réinitialisation du compteur). Délai null si aucun des deux
+ * n'est présent ou lisible.
  */
-data class RateLimit(val service: String, val retryAfterSec: Long?)
+data class RateLimit(val service: String, val retryAfterSec: Long?, val header: String? = null)
 
 /**
  * Un 429 se cache-t-il dans cette erreur ? Même remontée de causes que [isAuthFailure].
@@ -92,8 +94,13 @@ fun rateLimitOf(t: Throwable, service: String): RateLimit? {
     var c: Throwable? = t
     while (c != null) {
         if (c is retrofit2.HttpException && c.code() == 429) {
-            val ra = c.response()?.headers()?.get("Retry-After")?.trim()
-            return RateLimit(service, ra?.toLongOrNull()?.takeIf { it >= 0 })
+            val headers = c.response()?.headers()
+            // Standard d'abord, spécifique Feedly ensuite (secondes dans les deux cas).
+            val retryAfter = headers?.get("Retry-After")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+                ?.let { "Retry-After" to it }
+                ?: headers?.get("X-RateLimit-Reset")?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+                    ?.let { "X-RateLimit-Reset" to it }
+            return RateLimit(service, retryAfter?.second, retryAfter?.first)
         }
         val next = c.cause
         if (next == null || next === c) break
@@ -103,9 +110,12 @@ fun rateLimitOf(t: Throwable, service: String): RateLimit? {
 }
 
 /** Message final quand un 429 a empêché la synchronisation, avec le délai du header. */
-fun rateLimitMessage(service: String, retryAfterSec: Long?): String {
-    val wait = retryAfterSec?.let { s -> if (s >= 60) "~${s / 60} min" else "~$s s" }
-    return if (wait != null) "$service limite les requêtes (erreur 429, Retry-After : $retryAfterSec s) : synchronisation impossible, réessayez dans $wait"
+fun rateLimitMessage(service: String, retryAfterSec: Long?, header: String? = null): String {
+    val wait = retryAfterSec?.let { s ->
+        if (s >= 3600) "~${s / 3600} h" else if (s >= 60) "~${s / 60} min" else "~$s s"
+    }
+    val origin = if (header != null && retryAfterSec != null) ", $header : $retryAfterSec s" else ""
+    return if (wait != null) "$service limite les requêtes (erreur 429$origin) : synchronisation impossible, réessayez dans $wait"
     else "$service limite les requêtes (erreur 429) : synchronisation impossible, réessayez dans quelques minutes"
 }
 
