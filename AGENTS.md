@@ -114,10 +114,13 @@ Méthodologie : dump après chaque action, attendre 1–3 s selon la transition,
 - La position du rond lu/non-lu (`dotAtStart`) pilote aussi celle de l'étoile de swipe : les deux
   doivent rester du même côté, sinon l'information saute d'un bout à l'autre de la ligne au geste.
 - Les champs de config OAuth (`FEEDLY_CLIENT_ID`, `INOREADER_APP_ID`, …) sont lus dans
-  `local.properties` ou l'environnement ; ils sont vides par défaut, l'app démarre mais les
-  comptes distants ne s'authentifient pas.
+  `local.properties` ou l'environnement ; ils sont vides par défaut et ne servent qu'au flux
+  OAuth générique (`OAuthWebViewScreen`, utilisé par Inoreader). **Feedly n'en a pas besoin** :
+  sa connexion passe par la page officielle intégrée (`FeedlySignInScreen`, identifiants
+  saisis sur feedly.com, jeton de session récupéré automatiquement) — ne pas conclure
+  qu'un compte distant ne peut pas s'authentifier sous prétexte que ces champs sont vides.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
-  `exportSchema = false`, version DB actuelle : 4.
+  `exportSchema = false`, version DB actuelle : 5.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

@@ -20,7 +20,10 @@ android {
         versionName = "1.0.0"
 
         // OAuth placeholders — surchargeables via local.properties ou variables d'env.
+        // Utiles seulement au flux OAuth générique (Inoreader via OAuthWebViewScreen).
         // Feedly : https://feedly.com/v3/auth/dev — renseignez FEEDLY_CLIENT_ID / FEEDLY_CLIENT_SECRET
+        // uniquement si vous passez par ce flux ; la connexion Feedly normale (FeedlySignInScreen :
+        // page officielle intégrée, jeton de session récupéré) utilise le client_id=feedly public.
         // Inoreader : https://www.inoreader.com/developers/register-app
         buildConfigField("String", "FEEDLY_CLIENT_ID", "\"${project.findProperty("FEEDLY_CLIENT_ID") ?: System.getenv("FEEDLY_CLIENT_ID") ?: ""}\"")
         buildConfigField("String", "FEEDLY_CLIENT_SECRET", "\"${project.findProperty("FEEDLY_CLIENT_SECRET") ?: System.getenv("FEEDLY_CLIENT_SECRET") ?: ""}\"")

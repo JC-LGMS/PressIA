@@ -28,11 +28,17 @@ Ajouts demandés :
 - Couleur dominante configurable (rouge/bleu/vert/violet/orange), pastilles lu/non-lu grises, favicon dans le drawer et le top-bar, toggle rapide lus/non-lus (œil), snackbar de résultat de sync, surbrillance drawer pilotée par la navigation (retour arrière correct).
 - Favicons réels (service `s2/favicons` via host, cache Coil offline, initiale en repli), nom de site `prettyFeedTitle`, palettes couleur dominante + fond, titre d'article redimensionnable/cliquable avec images inline, pastilles grises réduites, thème dans l'en-tête du drawer.
 
-## Config OAuth (100 % in-app, sans navigateur externe)
-Écran **Comptes → Feedly / Inoreader → « Se connecter »** : une WebView intégrée
-(`OAuthWebViewScreen`, comme le `FeedlyOAuthActivity` du Press d'origine) charge la page
-d'autorisation, intercepte le retour `pressia://oauth/…`, échange le code contre un jeton
-(`OAuth.feedlyToken` / `inoreaderToken`) et enregistre le compte. Renseignez :
+## Comptes (100 % in-app, sans navigateur externe)
+**Feedly : aucun identifiant à renseigner.** Écran **Comptes → « Se connecter avec Feedly »**
+(`FeedlySignInScreen`) : la page de connexion officielle s'ouvre dans une WebView intégrée,
+l'utilisateur y saisit ses identifiants habituels (e-mail/mot de passe, Google, Apple),
+puis PressIA récupère automatiquement le jeton de session (stockage web, cookies en filet),
+le vérifie, enregistre le compte et revient. Pas de `FEEDLY_CLIENT_ID` à créer : ce flux
+utilise le `client_id=feedly` public (+ PKCE).
+**Inoreader et variante OAuth générique** (`OAuthWebViewScreen`, comme le `FeedlyOAuthActivity`
+du Press d'origine) : la WebView charge la page d'autorisation, intercepte le retour
+`pressia://oauth/…`, échange le code contre un jeton (`OAuth.feedlyToken` / `inoreaderToken`)
+et enregistre le compte. Ce flux-ci exige des identifiants d'application, renseignez :
 ```
 FEEDLY_CLIENT_ID=...
 FEEDLY_CLIENT_SECRET=...
