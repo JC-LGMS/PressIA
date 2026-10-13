@@ -672,7 +672,8 @@ class PressRepository(
      * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
      * montante, articles (+ taille), puis miniatures et « Read later » en parallèle,
      * et favicons (sauf [withFavicons] faux : le lancement ne précharge pas les favicons —
-     * ils sont déjà en cache Coil et se rechargent à l'affichage, seul le manuel le fait).
+     * ils sont déjà en cache Coil et se rechargent à l'affichage, seul le manuel le fait ;
+     * et seulement s'il y a des abonnements : pas d'étape à vide pour zéro flux).
      * Publie les étapes dans [syncStep] au fil de l'eau et recule
      * [Prefs.LAST_SYNC_AT] en cas de succès (lève en cas d'échec, comme avant).
      * Le verrou partagé, l'indicateur et le message final restent à l'appelant
@@ -704,7 +705,7 @@ class PressRepository(
             thumbs.await()
             later.await()
         }
-        if (withFavicons && withThumbs) {
+        if (withFavicons && withThumbs && dao.subscriptions().isNotEmpty()) {
             syncStep.value = "Récupération des favicons…"
             syncFavicons()
         }

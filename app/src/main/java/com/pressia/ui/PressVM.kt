@@ -364,6 +364,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * est déjà en cours (lancement ou manuelle), la demande est annulée et le
      * message le dit.
      *
+     * Sans source (ni compte ni flux), on ne lance même pas le pipeline : il n'y aurait
+     * que des étapes à vide — dont « Récupération des favicons… » pour zéro abonnement.
+     * Le message le dit au lieu d'un succès aveugle.
+     *
      * Chaque grande étape est publiée dans [syncMsg] (bandeau) au fil de l'eau, pour suivre
      * l'avancement ; le message final (nouveautés, fin ou échec) reste celui rendu ici.
      *
@@ -375,6 +379,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // est annulée au lieu de retélécharger derrière — la flèche tourne déjà, inutile
         // d'empiler.
         if (!repo.isOnline()) return "Pas de réseau : synchronisation impossible"
+        if (!repo.hasSources()) return "Aucun compte ni flux : rien à synchroniser"
         return repo.tryWithSyncLock { doSyncNow() } ?: "Synchronisation déjà en cours"
     }
 
