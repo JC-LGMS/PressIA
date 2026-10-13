@@ -142,6 +142,18 @@ interface InoreaderService {
         @Query("output") o: String = "json",
         @Query("all") all: Boolean = true
     ): InoreaderUnreadCounts
+    /**
+     * IDs seuls d'un flux (`stream/items/ids`) : détecteur de changement pour le tableau
+     * « Starred », pendant léger de `stream/contents` (mêmes paramètres de fenêtre).
+     */
+    @GET("reader/api/0/stream/items/ids")
+    suspend fun itemsIds(
+        @Header("Authorization") h: String,
+        @Query("s") stream: String,
+        @Query("n") n: Int = 200,
+        @Query("c") cont: String? = null,
+        @Query("output") o: String = "json"
+    ): InoreaderIdList
 
     companion object {
         fun create(): InoreaderService {
@@ -177,5 +189,7 @@ interface InoreaderService {
 @Serializable data class InoreaderContent(val content: String? = null, val direction: String? = null)
 @Serializable data class InoreaderOrigin(val streamId: String? = null, val title: String? = null, val htmlUrl: String? = null)
 @Serializable data class InoreaderStream(val id: String? = null, val items: List<InoreaderItem> = emptyList(), val continuation: String? = null)
+@Serializable data class InoreaderIdRef(val id: String)
+@Serializable data class InoreaderIdList(val itemRefs: List<InoreaderIdRef> = emptyList(), val continuation: String? = null)
 @Serializable data class InoreaderUnreadItem(val id: String = "", val count: Int = 0)
 @Serializable data class InoreaderUnreadCounts(val unreadcounts: List<InoreaderUnreadItem> = emptyList())

@@ -44,6 +44,12 @@ interface FeedProvider {
      * les flux RSS saisis à la main n'ont pas de compte, donc rien à y rattacher.
      */
     suspend fun readLater(token: String?, max: Int = 500): List<ArticleEntity> = emptyList()
+    /**
+     * IDs du tableau « à lire plus tard » + exhaustivité, voie légère pour détecter un
+     * changement sans télécharger les contenus. Null = non supporté ou refusé → le tableau
+     * est redescendu en entier, comme avant.
+     */
+    suspend fun readLaterIds(token: String?, max: Int = 500): IdSet? = null
 }
 
 data class StreamPage(
@@ -67,6 +73,20 @@ fun cleanTitle(raw: String?): String {
 
 /** Non-lus d'un compte + exhaustivité de l'énumération (voir [FeedProvider.unreadIds]). */
 data class UnreadSet(val ids: Set<String>, val complete: Boolean)
+
+/** IDs d'un tableau « à lire plus tard » + exhaustivité (voir [FeedProvider.readLaterIds]). */
+data class IdSet(val ids: Set<String>, val complete: Boolean)
+
+/**
+ * Empreinte d'un tableau « à lire plus tard », pour sauter son import quand il n'a pas
+ * changé. Triés avant hachage : l'ordre de renvoi du serveur ne doit pas déclencher un
+ * réimport. Testable en JVM.
+ */
+fun readLaterHash(ids: Set<String>): String {
+    val sha = java.security.MessageDigest.getInstance("SHA-256")
+    ids.sorted().forEach { sha.update(it.toByteArray(Charsets.UTF_8)); sha.update(0) }
+    return sha.digest().joinToString("") { "%02x".format(it) }
+}
 
 /**
  * Fenêtre de réconciliation : 30 derniers jours, comme le marquage lu automatique de

@@ -82,6 +82,8 @@ class PressRepository(
      * acquis — le second constate que le premier vient de synchroniser et saute son tour.
      */
     private val syncMutex = Mutex()
+    /** Sérialise la mise à jour des empreintes (lecture-modification-écriture d'une map JSON). */
+    private val hashMutex = Mutex()
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
     /**
      * Variante non bloquante : exécute [block] sous verrou, ou rend null sans attendre si une
@@ -886,6 +888,22 @@ class PressRepository(
     }
 
     /**
+     * Cache dérivé hors sauvegarde : une restauration refait un import complet, sans danger.
+     */
+    private suspend fun readLaterHashes(): Map<String, String> = runCatching {
+        val raw = prefs.data.first()[Prefs.READLATER_HASHES].orEmpty()
+        if (raw.isBlank()) return@runCatching emptyMap<String, String>()
+        val o = org.json.JSONObject(raw)
+        o.keys().asSequence().associateWith { o.optString(it) }
+    }.getOrDefault(emptyMap())
+
+    private suspend fun storeReadLaterHash(accountId: String, hash: String) = hashMutex.withLock {
+        val o = org.json.JSONObject()
+        (readLaterHashes() + (accountId to hash)).forEach { (k, v) -> o.put(k, v) }
+        prefs.set(Prefs.READLATER_HASHES, o.toString())
+    }
+
+    /**
      * Propage le lu/non-lu distant : les articles lus ailleurs (hors fenêtre récente) passent en
      * lus, ceux rouverts ailleurs repassent en non-lus.
      *
@@ -1056,13 +1074,27 @@ class PressRepository(
         // Étoiles posées hors-ligne (file « save » / « unsave » non poussée) : le tableau vierge
         // reparti par compte les effacerait alors que le serveur ne les a pas encore — on les
         // repose après chaque replongée (lus une fois, la liste ne change pas pendant la sync).
-        val keepSaved = dao.pendingSync().filter { it.kind == "save" }.map { it.articleId }
-        val keepUnsaved = dao.pendingSync().filter { it.kind == "unsave" }.map { it.articleId }
+        // Une file non vide interdit aussi le saut par empreinte : le serveur n'est pas à jour.
+        val pending = dao.pendingSync()
+        val keepSaved = pending.filter { it.kind == "save" }.map { it.articleId }
+        val keepUnsaved = pending.filter { it.kind == "unsave" }.map { it.articleId }
         val added = coroutineScope {
             accounts.map { account ->
                 async {
                     runCatching {
+                        // Voie légère : mêmes IDs qu'au dernier import (liste complète, rien en
+                        // attente) = rien à redescendre — ni contenus, ni stockage, ni miniatures
+                        // (la passe avec compteur couvre déjà les miniatures des articles).
+                        val idSet = providerFor(account.provider).readLaterIds(account.token)
+                        if (idSet != null && idSet.complete && keepSaved.isEmpty() && keepUnsaved.isEmpty()) {
+                            val hash = com.pressia.data.remote.readLaterHash(idSet.ids)
+                            if (readLaterHashes()[account.id] == hash) {
+                                android.util.Log.i("PressIA", "read later ${account.id} inchangé (${idSet.ids.size} articles)")
+                                return@runCatching 0
+                            }
+                        }
                         val items = providerFor(account.provider).readLater(account.token)
+                        android.util.Log.d("PressIA", "read later ${account.id} : ${items.size} articles")
                         if (items.isEmpty()) return@runCatching 0
                         // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
                         // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
@@ -1073,6 +1105,7 @@ class PressRepository(
                         val n = storeArticles(items)
                         if (keepSaved.isNotEmpty()) dao.markLaterSaved(keepSaved)
                         if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)
+                        storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(items.map { it.id }.toSet()))
                         n
                     }.onSuccess { clearAccountExpired(account.id) }
                         .onFailure {

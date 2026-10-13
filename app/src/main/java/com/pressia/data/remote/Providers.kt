@@ -90,6 +90,19 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         return s.items.map { it.toEntity().copy(laterSaved = true) }
     }
     /**
+     * IDs seuls du tableau (même endpoint léger que les non-lus) : une page au même plafond
+     * que les contenus (500, les plus récents d'abord des deux côtés) — au-delà
+     * (continuation), `complete` est faux et on redescend tout, sans sauter.
+     */
+    override suspend fun readLaterIds(token: String?, max: Int): IdSet? {
+        val scope = userId(token)
+        if (scope.isBlank()) return null
+        return runCatching {
+            val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500))
+            IdSet(page.ids.toSet(), page.continuation.isNullOrBlank())
+        }.getOrNull()
+    }
+    /**
      * Non-lus du compte sur 30 jours (flux global, `unreadOnly`, du plus récent au plus ancien) :
      * sert à propager les lus / non lus d'ailleurs, y compris hors de la fenêtre récente
      * redescendue par la synchronisation. Voie légère d'abord (IDs seuls via `streams/ids`,
@@ -217,6 +230,14 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
         return s.items.map { it.toEntity().copy(laterSaved = true) }
     }
+    /**
+     * IDs seuls des « Starred items » (voie légère, même plafond de 200 que les contenus,
+     * les plus récents d'abord des deux côtés) — voir Feedly.
+     */
+    override suspend fun readLaterIds(token: String?, max: Int): IdSet? = runCatching {
+        val page = api.itemsIds(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
+        IdSet(page.itemRefs.map { it.id }.toSet(), page.continuation.isNullOrBlank())
+    }.getOrNull()
     /**
      * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus
      * ancien) : même usage que côté Feedly. Le filtre se fait aussi sur les catégories de chaque

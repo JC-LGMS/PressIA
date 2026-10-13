@@ -98,7 +98,13 @@ class Prefs(private val ctx: Context) {
          * réconciliation quand rien n'a changé. Cache dérivé, volontairement hors de
          * [ENTRIES] : une restauration refait une réconciliation complète, sans danger.
          */
-        val RECONCILE_TOTALS = stringPreferencesKey("reconcile_totals")        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
+        val RECONCILE_TOTALS = stringPreferencesKey("reconcile_totals")
+        /**
+         * Empreintes des tableaux « Read later » par compte (JSON `{id: sha256}`), pour sauter
+         * l'import quand rien n'a changé. Cache dérivé comme ci-dessus, hors sauvegarde.
+         */
+        val READLATER_HASHES = stringPreferencesKey("readlater_hashes")
+        /** Identifiant Instapaper (Simple API : le mot de passe est renvoyé à chaque appel). */
         val INSTAPAPER_USER = stringPreferencesKey("instapaper_user")
         /**
          * Mot de passe Instapaper, secret : exporté seulement si l'utilisateur coche les jetons,

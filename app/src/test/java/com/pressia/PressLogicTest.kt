@@ -508,6 +508,17 @@ class PressLogicTest {
         assertEquals(30L * 24 * 3600 * 1000, com.pressia.data.remote.RECONCILE_WINDOW_MS)
     }
 
+    @Test fun `empreinte du tableau read later`() {
+        val h = com.pressia.data.remote.readLaterHash(setOf("b", "a"))
+        // Déterministe, insensible à l'ordre, SHA-256 hexadécimal.
+        assertEquals(h, com.pressia.data.remote.readLaterHash(setOf("a", "b")))
+        assertTrue(h.matches(Regex("[0-9a-f]{64}")))
+        // Un ajout, un retrait ou le vide changent l'empreinte (sinon le saut raterait).
+        assertNotEquals(h, com.pressia.data.remote.readLaterHash(setOf("a", "b", "c")))
+        assertNotEquals(h, com.pressia.data.remote.readLaterHash(setOf("a")))
+        assertNotEquals(h, com.pressia.data.remote.readLaterHash(emptySet()))
+    }
+
     @Test fun `nom de miniature stable par url`() {
         val n1 = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg")
         val n2 = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg")
