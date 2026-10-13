@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
@@ -643,24 +644,36 @@ class PressRepository(
 
     /**
      * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
-     * montante, articles, miniatures (avec compteur), « Read later », favicons.
-     * Publie les étapes dans [syncStep] au fil de l'eau et recule
+     * montante, articles (+ taille), puis miniatures et « Read later » en parallèle,
+     * et favicons. Publie les étapes dans [syncStep] au fil de l'eau et recule
      * [Prefs.LAST_SYNC_AT] en cas de succès (lève en cas d'échec, comme avant).
      * Le verrou partagé, l'indicateur et le message final restent à l'appelant
      * (verrou déjà acquis ici).
+     *
+     * Miniatures et « Read later » partent ensemble : le Read later est bref (1 appel
+     * par compte) et silencieux — le bandeau garde le compteur des miniatures. Le
+     * [supervisorScope] préserve la sémantique d'échec séquentielle : chaque branche
+     * va au bout, la première exception remonte et annule le succès (pas de
+     * [Prefs.LAST_SYNC_AT]) — sans qu'un échec des miniatures n'interrompe le tableau,
+     * ni l'inverse. La taille ayant déjà eu lieu dans [syncDown], aucun article que le
+     * Read later marque ne peut être supprimé entre-temps.
      */
     suspend fun syncPipeline(): Int {
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
         pushQueue()
         syncStep.value = "Réception des articles…"
         val n = syncDown(withThumbs = false, onSource = { src -> syncStep.value = "Réception des articles… ($src)" })
-        if (imagesAllowed()) {
-            syncStep.value = "Téléchargement des miniatures…"
-            syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+        val withThumbs = imagesAllowed()
+        if (withThumbs) syncStep.value = "Téléchargement des miniatures…"
+        supervisorScope {
+            val thumbs = async {
+                if (withThumbs) syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+            }
+            val later = async { syncReadLater() }
+            thumbs.await()
+            later.await()
         }
-        syncStep.value = "Mise à jour du « Read later »…"
-        syncReadLater()
-        if (imagesAllowed()) {
+        if (withThumbs) {
             syncStep.value = "Récupération des favicons…"
             syncFavicons()
         }
