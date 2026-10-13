@@ -423,11 +423,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Synchronisation au démarrage : exactement la même que la manuelle ([syncNow]).
      *
-     * Elle n'a lieu que si l'option est active et qu'aucune synchro bien finie ne date de
-     * moins de X minutes (X = réglage « Fréquence de synchronisation »). Sinon elle est
-     * totalement silencieuse : option coupée ou synchro récente = rien n'est récupéré
-     * (ni réseau, ni message, ni animation) — le [refresh] qui suit dans MainActivity suffit
-     * à remplir les listes depuis le cache.
+     * Elle n'a lieu que si l'option est active, qu'il y a de quoi synchroniser (compte ou
+     * flux — sinon premier démarrage ou après déconnexion : rien à récupérer, silence total)
+     * et qu'aucune synchro bien finie ne date de moins de X minutes (X = réglage
+     * « Fréquence de synchronisation »). Sinon elle est totalement silencieuse : option
+     * coupée, aucune source ou synchro récente = rien n'est récupéré (ni réseau, ni message,
+     * ni animation) — le [refresh] qui suit dans MainActivity suffit à remplir les listes
+     * depuis le cache.
+     *
+     * Le lancement ne précharge pas les favicons (déjà en cache Coil, rechargés à
+     * l'affichage) : seuls le manuel et « Actualiser favicons » le font.
      *
      * Option et fraîcheur sont revérifiées sous le verrou partagé (l'app ne synchronise
      * que lorsqu'elle est ouverte : pas d'autre déclencheur concurrent).
@@ -444,6 +449,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                 val ageMin = if (last > 0L) (now - last) / 60_000L else -1L
                 if (isSyncFresh(last, now, windowMin)) {
                     android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
+                } else if (!repo.hasSources()) {
+                    android.util.Log.i("PressIA", "sync au lancement sautée (aucune source : ni compte ni flux)")
                 } else {
                     android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
                     // Même contenu, mêmes indicateurs et même message que la synchro manuelle
@@ -453,7 +460,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                     try {
                         syncMsg = try {
                             if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
-                            else finishSync(repo.syncPipeline())
+                            else finishSync(repo.syncPipeline(withFavicons = false))
                         } catch (e: Exception) {
                             failSync()
                         }

@@ -662,9 +662,18 @@ class PressRepository(
     }
 
     /**
+     * De quoi synchroniser ? Un compte cloud ou au moins un abonnement (local ou orphelin).
+     * Sans source, la synchronisation de lancement ne part pas : premier démarrage ou après
+     * déconnexion, elle n'aurait rien à récupérer.
+     */
+    suspend fun hasSources(): Boolean = cloudAccounts().isNotEmpty() || dao.subscriptions().isNotEmpty()
+
+    /**
      * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
      * montante, articles (+ taille), puis miniatures et « Read later » en parallèle,
-     * et favicons. Publie les étapes dans [syncStep] au fil de l'eau et recule
+     * et favicons (sauf [withFavicons] faux : le lancement ne précharge pas les favicons —
+     * ils sont déjà en cache Coil et se rechargent à l'affichage, seul le manuel le fait).
+     * Publie les étapes dans [syncStep] au fil de l'eau et recule
      * [Prefs.LAST_SYNC_AT] en cas de succès (lève en cas d'échec, comme avant).
      * Le verrou partagé, l'indicateur et le message final restent à l'appelant
      * (verrou déjà acquis ici).
@@ -677,7 +686,7 @@ class PressRepository(
      * ni l'inverse. La taille ayant déjà eu lieu dans [syncDown], aucun article que le
      * Read later marque ne peut être supprimé entre-temps.
      */
-    suspend fun syncPipeline(): Int {
+    suspend fun syncPipeline(withFavicons: Boolean = true): Int {
         // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
         // en cours, lu par le message final.
         syncRateLimit = null
@@ -695,7 +704,7 @@ class PressRepository(
             thumbs.await()
             later.await()
         }
-        if (withThumbs) {
+        if (withFavicons && withThumbs) {
             syncStep.value = "Récupération des favicons…"
             syncFavicons()
         }
