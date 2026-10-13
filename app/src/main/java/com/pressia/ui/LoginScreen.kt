@@ -317,9 +317,9 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             title = { Text("Déconnecter ${acc.label} ?") },
             text = {
                 Text(
-                    "Ce compte ne sera plus synchronisé et ses articles resteront lisibles hors-ligne. " +
-                        "Le compte et ses dossiers sont retirés de la liste ; vos flux RSS locaux ne " +
-                        "sont pas touchés."
+                    "Ce compte ne sera plus synchronisé : ses articles et leurs miniatures " +
+                        "seront supprimés de l'appareil. Le compte et ses dossiers sont retirés " +
+                        "de la liste ; vos flux RSS locaux ne sont pas touchés."
                 )
             },
             confirmButton = {
