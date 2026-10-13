@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
+fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone: () -> Unit = onBack) {
     val scope = rememberCoroutineScope()
     var clientId by remember { mutableStateOf("") }
     var clientSecret by remember { mutableStateOf("") }
@@ -63,7 +63,7 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit) {
 
     fun finishWith(msg: String) {
         vm.authMsg = msg
-        onBack()
+        onDone()
     }
 
     fun onCode(code: String) {
