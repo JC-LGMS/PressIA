@@ -979,11 +979,16 @@ class PressRepository(
     /**
      * Synchronisation d'approvisionnement : remonte tout l'historique disponible, page après page.
      *
-     * Le réglage « nombre d'articles conservés » ne s'applique pas ici. À la connexion d'un compte,
-     * il plafonne à 250 articles par flux, ce qui ne remplit que quelques heures de lecture : le
-     * reste de l'historique du compte n'arriverait jamais, puisque les synchronisations suivantes
-     * ne redescendent que la fenêtre la plus récente. On suit donc [StreamPage.continuation]
-     * jusqu'à épuisement, en gardant [pageSize] articles par page — la limite de l'API.
+     * La récupération ne se limite pas au quota : à la connexion d'un compte, 250 articles par
+     * flux ne rempliraient que quelques heures de lecture, et le reste de l'historique du
+     * compte n'arriverait jamais puisque les synchronisations suivantes ne redescendent que
+     * la fenêtre la plus récente. On suit donc [StreamPage.continuation] jusqu'à épuisement,
+     * en gardant [pageSize] articles par page — la limite de l'API.
+     *
+     * En revanche la rétention s'applique à la fin ([trimToMax] avant les miniatures) : sans
+     * elle on téléchargerait les images de lignes aussitôt supprimées — et une synchro
+     * concurrente dont la taille passe au milieu de l'approvisionnement laisserait repousser
+     * la queue sans jamais la retailler après.
      *
      * La boucle s'arrête dans trois cas, tous sûrs : plus de jeton de continuation, une page vide
      * (le compte renvoie indéfiniment la même page), ou [safetyCap] articles lus au total. Ce dernier
@@ -1025,6 +1030,9 @@ class PressRepository(
             continuation = next
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
+        // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
+        // supprimées, ni repousse non retaillée après une taille concurrente.
+        trimToMax()
         syncThumbs()
         // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
         if (!authFailed) clearAccountExpired(account.id)
