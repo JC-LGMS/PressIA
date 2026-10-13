@@ -329,9 +329,9 @@ class MainActivity : ComponentActivity() {
                                     val p = backStack.arguments?.getString("provider") ?: "feedly"
                                     OAuthWebViewScreen(vm, p,
                                         onBack = { nav.popBackStack() },
-                                        // Connexion réussie : retour automatique à la page des
-                                        // comptes (qui affiche le message), comme feedly-signin.
-                                        onDone = { nav.popBackStack("login", inclusive = false) })
+                                        // Connexion réussie : retour à l'accueil avant la première
+                                        // synchro (lancée par l'écran après ce retour).
+                                        onDone = { goHome() })
                                 }
                             }
                             // Destination Instapaper (mode « choisir à chaque envoi »), au-dessus de
