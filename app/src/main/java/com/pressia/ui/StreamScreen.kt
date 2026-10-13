@@ -183,15 +183,9 @@ fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) ->
                             if (favUnreadOnly) "afficher aussi les favoris lus" else "ne montrer que les favoris non lus"
                         )
                     }
-                    // Le tableau du compte est distant : son rafraîchissement est une action explicite.
-                    SyncButton(vm, "actualiser les favoris") {
-                        if (set == "later") {
-                            scope.launch {
-                                vm.reloadReadLater()
-                                toast(ctx, "« Read later » actualisé")
-                            }
-                        } else vm.sync()
-                    }
+                    // Pas de périmètre pour la synchronisation, même sur le tableau distant :
+                    // c'est toujours une synchro complète (qui inclut le « Read later »).
+                    SyncButton(vm, "actualiser les favoris") { vm.sync() }
                 }
             )
             }

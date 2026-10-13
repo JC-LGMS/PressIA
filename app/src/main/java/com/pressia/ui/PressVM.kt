@@ -561,11 +561,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     // ----- Favoris -----
     fun setFavSet(set: String) = viewModelScope.launch { prefs.set(Prefs.STARRED_SCOPE, set) }
-    /** Recharge le tableau « Read later » des comptes, à la demande. */
-    fun reloadReadLater() = viewModelScope.launch {
-        lockSync()
-        try { repo.syncReadLater(); refreshNow() } finally { unlockSync() }
-    }
 
     // ----- Comptes -----
     /**
