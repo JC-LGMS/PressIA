@@ -185,6 +185,9 @@ class MainActivity : ComponentActivity() {
                 // Invariant : jamais de bandeau sans message — seul un pipeline de
                 // synchro (étapes dans syncStep, recopiées dans syncMsg) allume le bandeau.
                 var bannerJob by remember { mutableStateOf<Job?>(null) }
+                // Hauteur du visuel du bandeau (voir slot ci-dessous) : les boutons haut/bas
+                // flottants des listes se soulèvent juste au-dessus quand il est affiché.
+                var bannerLift by remember { mutableStateOf(0.dp) }
                 fun launchBanner() {
                     bannerJob = scope.launch {
                         snackbarHostState.showSnackbar("Synchronisation en cours…", duration = SnackbarDuration.Indefinite)
@@ -198,6 +201,7 @@ class MainActivity : ComponentActivity() {
                             snackbarHostState.currentSnackbarData?.dismiss()
                             bannerJob = null
                         }
+                        bannerLift = 0.dp
                         return@LaunchedEffect
                     }
                     if (vm.syncing) {
@@ -227,9 +231,6 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Box(Modifier.fillMaxSize()) {
-                    // Hauteur visible du bandeau : les boutons haut/bas flottants des listes
-                    // se soulèvent juste au-dessus quand il est affiché (0 quand masqué).
-                    var bannerLift by remember { mutableStateOf(0.dp) }
                     val density = LocalDensity.current
                     CompositionLocalProvider(LocalBannerLift provides bannerLift) {
                     ModalNavigationDrawer(
@@ -341,11 +342,12 @@ class MainActivity : ComponentActivity() {
                     SnackbarHost(
                         snackbarHostState,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
-                            .onSizeChanged { bannerLift = with(density) { it.height.toDp() } }
                     ) {
                         // Même padding que le slot par défaut (Snackbar(snackbarData)) : sans
                         // lui le bandeau est plein-bleed, trop large et collé en bas.
-                        Snackbar(modifier = Modifier.padding(12.dp)) { Text(vm.syncMsg ?: "") }
+                        // Mesure du visuel seul (après le padding) : les boutons haut/bas se
+                        // soulèvent juste au-dessus, sans le trop d'espace de l'hôte.
+                        Snackbar(modifier = Modifier.padding(12.dp).onSizeChanged { bannerLift = with(density) { it.height.toDp() } }) { Text(vm.syncMsg ?: "") }
                     }
                     // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
                     // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.

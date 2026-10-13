@@ -645,6 +645,23 @@ class PressRepository(
     val syncStep = MutableStateFlow<String?>(null)
 
     /**
+     * Un 429 a frappé pendant la synchronisation en cours (remis à zéro à chaque pipeline) :
+     * le message final l'explique avec le délai du serveur au lieu d'un succès aveugle.
+     * Écrit depuis des fils IO (plusieurs comptes en parallèle : le dernier gagne, ils sont
+     * tous interchangeables ici), lu par le message final sous le verrou partagé.
+     */
+    @Volatile var syncRateLimit: RateLimit? = null
+        private set
+
+    /**
+     * Mémorise un 429 (avec son `Retry-After`) sans avaler l'erreur : les échecs par compte
+     * restent contenus, mais le message final dira que la synchro n'a pas pu avoir lieu.
+     */
+    fun noteRateLimit(e: Throwable, service: String) {
+        rateLimitOf(e, service)?.let { syncRateLimit = it }
+    }
+
+    /**
      * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
      * montante, articles (+ taille), puis miniatures et « Read later » en parallèle,
      * et favicons. Publie les étapes dans [syncStep] au fil de l'eau et recule
@@ -661,6 +678,9 @@ class PressRepository(
      * Read later marque ne peut être supprimé entre-temps.
      */
     suspend fun syncPipeline(): Int {
+        // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
+        // en cours, lu par le message final.
+        syncRateLimit = null
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
         pushQueue()
         syncStep.value = "Réception des articles…"
@@ -719,7 +739,10 @@ class PressRepository(
                     async {
                         onSource?.invoke(account.label)
                         runCatching { syncAccount(account, feedId, categoryId, max) }
-                            .onFailure { android.util.Log.e("PressIA", "sync ${account.id} failed", it) }
+                            .onFailure {
+                                noteRateLimit(it, account.label)
+                                android.util.Log.e("PressIA", "sync ${account.id} failed", it)
+                            }
                             .getOrDefault(0)
                     }
                 }.awaitAll().sum()
@@ -847,7 +870,10 @@ class PressRepository(
                     if (total != null) storeReconcileTotal(account.id, total)
                     if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
                 }
-            }.onFailure { android.util.Log.e("PressIA", "reconcile ${account.id} failed", it) }
+            }.onFailure {
+                noteRateLimit(it, account.label)
+                android.util.Log.e("PressIA", "reconcile ${account.id} failed", it)
+            }
             val cats = p.categories(account.token).map { it.copy(provider = account.id) }
             replaceCategories(account.id, cats)
             val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
@@ -1081,11 +1107,14 @@ class PressRepository(
         val added = coroutineScope {
             accounts.map { account ->
                 async {
+                    var alive = false
                     runCatching {
                         // Voie légère : mêmes IDs qu'au dernier import (liste complète, rien en
                         // attente) = rien à redescendre — ni contenus, ni stockage, ni miniatures
                         // (la passe avec compteur couvre déjà les miniatures des articles).
+                        // Un appel IDs réussi prouve déjà la session (quitus ci-dessous).
                         val idSet = providerFor(account.provider).readLaterIds(account.token)
+                        if (idSet != null) alive = true
                         if (idSet != null && idSet.complete && keepSaved.isEmpty() && keepUnsaved.isEmpty()) {
                             val hash = com.pressia.data.remote.readLaterHash(idSet.ids)
                             if (readLaterHashes()[account.id] == hash) {
@@ -1095,7 +1124,16 @@ class PressRepository(
                         }
                         val items = providerFor(account.provider).readLater(account.token)
                         android.util.Log.d("PressIA", "read later ${account.id} : ${items.size} articles")
-                        if (items.isEmpty()) return@runCatching 0
+                        if (items.isNotEmpty()) alive = true
+                        if (items.isEmpty()) {
+                            // Tableau vraiment vide (appel abouti) : l'empreinte du vide est
+                            // stockée pour sauter aussi ce cas ; état inconnu (aucun appel
+                            // abouti : pas de scope, endpoint refusé) : on ne touche à rien —
+                            // ni tableau, ni quitus de session (le drapeau expiré éventuel
+                            // posé par la passe articles doit survivre).
+                            if (idSet != null) storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(emptySet()))
+                            return@runCatching 0
+                        }
                         // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
                         // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
                         val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
@@ -1107,8 +1145,9 @@ class PressRepository(
                         if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)
                         storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(items.map { it.id }.toSet()))
                         n
-                    }.onSuccess { clearAccountExpired(account.id) }
+                    }.onSuccess { if (alive) clearAccountExpired(account.id) }
                         .onFailure {
+                            noteRateLimit(it, account.label)
                             android.util.Log.e("PressIA", "read later ${account.id} failed", it)
                             if (isAuthFailure(it)) markAccountExpired(account.id)
                         }
@@ -1213,6 +1252,7 @@ class PressRepository(
                 dao.dequeue(a.rowId); done++
                 clearAccountExpired(account.id)
             } catch (e: Exception) {
+                noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
                 dao.bumpTry(a.rowId)
             }

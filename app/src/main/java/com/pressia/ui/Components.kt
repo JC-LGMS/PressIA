@@ -564,9 +564,10 @@ fun ViewTitle(icon: ImageVector?, text: String) {
 }
 
 /**
- * Hauteur visible du bandeau de synchro (snackbar applicative) : les boutons haut/bas
- * flottants s'en servent pour se soulever juste au-dessus quand il est affiché.
- * Nourri par le SnackbarHost lui-même (`onSizeChanged` dans MainActivity) : 0 quand masqué.
+ * Hauteur visible du bandeau de synchro (visuel de la snackbar, hors padding) : les boutons
+ * haut/bas flottants s'en servent pour se soulever juste au-dessus quand il est affiché.
+ * Nourri par le slot du SnackbarHost lui-même (`onSizeChanged` dans MainActivity) : 0 quand
+ * masqué (réinitialisé à la fermeture, le slot démonté ne mesurant plus rien).
  */
 val LocalBannerLift = compositionLocalOf { 0.dp }
 
@@ -574,10 +575,12 @@ val LocalBannerLift = compositionLocalOf { 0.dp }
 @Composable
 fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifier = Modifier) {
     // Le bandeau applicatif recouvre le bas de l'écran : les boutons glissent juste
-    // au-dessus quand il est visible (hauteur mesurée, animée pour suivre en douceur).
-    val lift by animateDpAsState(LocalBannerLift.current, label = "jump-lift")
+    // au-dessus quand il est visible (8 dp au-dessus du visuel : 12 de marge basse du
+    // slot + 8 de respiration), animés pour suivre en douceur.
+    val lift = LocalBannerLift.current
+    val pad by animateDpAsState(if (lift > 0.dp) lift + 20.dp else 16.dp, label = "jump-lift")
     Row(
-        modifier.fillMaxWidth().padding(bottom = 16.dp + lift),
+        modifier.fillMaxWidth().padding(bottom = pad),
         horizontalArrangement = Arrangement.Center
     ) {
         Surface(shadowElevation = 4.dp, shape = CircleShape) {

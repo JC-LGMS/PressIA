@@ -155,6 +155,56 @@ class PressLogicTest {
         // Retrofit enveloppe souvent l'erreur d'origine.
         assertTrue(com.pressia.data.isAuthFailure(RuntimeException("x", httpError(401))))
     }
+
+    private fun httpError429(retryAfter: String?): retrofit2.HttpException {
+        val raw = okhttp3.Response.Builder()
+            .code(429).message("Too Many Requests").protocol(okhttp3.Protocol.HTTP_1_1)
+            .request(okhttp3.Request.Builder().url("https://cloud.feedly.com/v3/streams/contents").build())
+            .apply { if (retryAfter != null) header("Retry-After", retryAfter) }
+            .build()
+        return retrofit2.HttpException(
+            retrofit2.Response.error<String>(okhttp3.ResponseBody.create(null, ""), raw)
+        )
+    }
+
+    @Test fun `limite de debit detecte 429 et son delai`() {
+        val hit = com.pressia.data.rateLimitOf(httpError429("120"), "Feedly")
+        assertEquals(com.pressia.data.RateLimit("Feedly", 120L), hit)
+        // Sans header ou illisible : 429 avéré, délai inconnu.
+        assertEquals(com.pressia.data.RateLimit("Feedly", null), com.pressia.data.rateLimitOf(httpError429(null), "Feedly"))
+        assertEquals(com.pressia.data.RateLimit("Feedly", null), com.pressia.data.rateLimitOf(httpError429("soon"), "Feedly"))
+        // Ni 429 ni enveloppé : rien à signaler (et jamais confondu avec un échec d'auth).
+        assertNull(com.pressia.data.rateLimitOf(httpError(403), "Feedly"))
+        assertNull(com.pressia.data.rateLimitOf(java.io.IOException("coupure"), "Feedly"))
+        assertFalse(com.pressia.data.isAuthFailure(httpError429("120")))
+        // Enveloppé : retrouvé via la chaîne des causes.
+        assertEquals(com.pressia.data.RateLimit("Inoreader", 30L), com.pressia.data.rateLimitOf(RuntimeException("x", httpError429("30")), "Inoreader"))
+    }
+
+    @Test fun `message de limite avec delai du header`() {
+        val withDelay = com.pressia.data.rateLimitMessage("Feedly", 120L)
+        assertTrue(withDelay.contains("Feedly") && withDelay.contains("429"))
+        assertTrue(withDelay.contains("120") && withDelay.contains("2 min"))
+        assertTrue(withDelay.contains("impossible"))
+        val short = com.pressia.data.rateLimitMessage("Feedly", 20L)
+        assertTrue(short.contains("20 s"))
+        val unknown = com.pressia.data.rateLimitMessage("Feedly", null)
+        assertTrue(unknown.contains("429") && unknown.contains("quelques minutes"))
+    }
+
+    @Test fun `accueil vide quand tout est lu et filtre`() {
+        val subs = listOf(
+            com.pressia.data.local.SubscriptionEntity(id = "a", title = "A"),
+            com.pressia.data.local.SubscriptionEntity(id = "b", title = "B")
+        )
+        // Aucun abonnement : autre message (« Aucun abonnement »), pas celui-ci.
+        assertFalse(com.pressia.ui.allFeedsRead(emptyList(), emptyMap()))
+        // Compteurs absents = zéro (carte pas encore chargée) : tout est lu.
+        assertTrue(com.pressia.ui.allFeedsRead(subs, emptyMap()))
+        assertTrue(com.pressia.ui.allFeedsRead(subs, mapOf("a" to 0, "b" to 0)))
+        // Un seul non-lu suffit à remplir la page.
+        assertFalse(com.pressia.ui.allFeedsRead(subs, mapOf("a" to 0, "b" to 3)))
+    }
     @Test fun `comptes expires aller-retour`() {
         assertEquals("", com.pressia.data.encodeExpired(emptySet()))
         assertEquals("a#1,b#2", com.pressia.data.encodeExpired(setOf("b#2", "a#1", " ", "b#2")))

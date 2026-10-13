@@ -23,6 +23,13 @@ import com.pressia.data.local.SubscriptionEntity
 import kotlinx.coroutines.launch
 
 /**
+ * Accueil filtré (« masquer les flux sans article non lu ») et tout est lu : la liste est
+ * vide sans que ce soit une erreur — on l'explique au lieu d'une page blanche.
+ */
+fun allFeedsRead(subs: List<SubscriptionEntity>, unreads: Map<String, Int>): Boolean =
+    subs.isNotEmpty() && subs.all { (unreads[it.id] ?: 0) == 0 }
+
+/**
  * Accueil façon Press : l'arborescence des dossiers et des abonnements.
  *
  * Choix retenus :
@@ -85,6 +92,9 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     ) { pad ->
         val uncategorized = vm.subs.filter { it.categoryId == null }
         val visibleUncategorized = if (hiddenEmpty) uncategorized.filter { (vm.unreads[it.id] ?: 0) > 0 } else uncategorized
+        // Tout est lu avec le filtre « sans non-lus » : aucun flux à montrer — le dire
+        // plutôt que laisser une page blanche (distinct de « aucun abonnement »).
+        val nothingUnread = hiddenEmpty && allFeedsRead(vm.subs, vm.unreads)
         val listState = rememberLazyListState()
         val jumpScope = rememberCoroutineScope()
         // Même tirage que les vues articles : le rond ne reflète que le geste puis s'efface
@@ -113,6 +123,13 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                                     "Ajoutez un flux RSS ou connectez Feedly depuis Comptes.",
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                            }
+                        }
+                    }
+                    if (nothingUnread && vm.loaded && !vm.syncing) {
+                        item {
+                            Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Aucun flux avec des articles non lus.")
                             }
                         }
                     }

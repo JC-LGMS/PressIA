@@ -30,7 +30,9 @@ interface FeedProvider {
      * pour réconcilier le lu/non-lu distant à la synchronisation (lus ailleurs → passés en
      * lus ; non lus ailleurs → rouverts). Null = non supporté (flux locaux).
      * `complete` = faux si l'énumération a été plafonnée : dans ce cas on ne passe rien en lu
-     * (des non-lus inconnus resteraient), on ne fait que rouvrir.
+     * (des non-lus inconnus resteraient), on ne fait que rouvrir. Même prudence si le compte
+     * est injoignable (ensemble vide + `complete = false`) : jamais de passage en lu massif
+     * sur une erreur.
      */
     suspend fun unreadIds(token: String?, maxIds: Int = 5000): UnreadSet? = null
     /**

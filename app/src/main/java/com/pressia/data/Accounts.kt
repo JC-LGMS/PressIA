@@ -77,6 +77,38 @@ fun isAuthFailure(t: Throwable): Boolean {
     return false
 }
 
+/**
+ * Limitation de débit (HTTP 429) : le serveur dit stop, avec le délai demandé
+ * (`Retry-After`, en secondes — null si le serveur ne le donne pas ou s'il est illisible).
+ */
+data class RateLimit(val service: String, val retryAfterSec: Long?)
+
+/**
+ * Un 429 se cache-t-il dans cette erreur ? Même remontée de causes que [isAuthFailure].
+ * 429 ≠ session expirée : le jeton est bon, c'est le quota d'appels qui est épuisé —
+ * jamais d'alerte à reconnecter pour ce cas.
+ */
+fun rateLimitOf(t: Throwable, service: String): RateLimit? {
+    var c: Throwable? = t
+    while (c != null) {
+        if (c is retrofit2.HttpException && c.code() == 429) {
+            val ra = c.response()?.headers()?.get("Retry-After")?.trim()
+            return RateLimit(service, ra?.toLongOrNull()?.takeIf { it >= 0 })
+        }
+        val next = c.cause
+        if (next == null || next === c) break
+        c = next
+    }
+    return null
+}
+
+/** Message final quand un 429 a empêché la synchronisation, avec le délai du header. */
+fun rateLimitMessage(service: String, retryAfterSec: Long?): String {
+    val wait = retryAfterSec?.let { s -> if (s >= 60) "~${s / 60} min" else "~$s s" }
+    return if (wait != null) "$service limite les requêtes (erreur 429, Retry-After : $retryAfterSec s) : synchronisation impossible, réessayez dans $wait"
+    else "$service limite les requêtes (erreur 429) : synchronisation impossible, réessayez dans quelques minutes"
+}
+
 /** Comptes à la session expirée, sérialisés (virgules, triés) pour [com.pressia.data.local.Prefs]. */
 fun encodeExpired(ids: Set<String>): String = ids.map { it.trim() }.filter { it.isNotEmpty() }.sorted().joinToString(",")
 

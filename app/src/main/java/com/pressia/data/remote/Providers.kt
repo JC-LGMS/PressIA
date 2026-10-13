@@ -110,7 +110,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      */
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
         val scope = userId(token)
-        if (scope.isBlank()) return UnreadSet(emptySet(), true)
+        // Profil inaccessible (401 transitoire…) : on ne sait RIEN des non-lus distants.
+        // `complete = false` impérativement : avec `true` et un ensemble vide, la
+        // réconciliation passerait tous les non-lus locaux en lus — perte visible des états
+        // de lecture sur une simple erreur réseau. `false` ne fait que rouvrir, sans danger.
+        if (scope.isBlank()) return UnreadSet(emptySet(), false)
         runCatching { unreadIdsViaIds(token, scope, maxIds) }
             .onSuccess { android.util.Log.d("PressIA", "feedly unreadIds via ids (${it.ids.size})") }
             .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }

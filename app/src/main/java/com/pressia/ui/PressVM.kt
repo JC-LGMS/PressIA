@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
 import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
+import com.pressia.data.rateLimitMessage
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
 import com.pressia.data.isLocalProvider
@@ -399,8 +400,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Les échecs par compte sont avalés par la sync (les autres comptes passent quand
         // même) : si un jeton est mort, on le dit au lieu d'annoncer un succès aveugle.
         if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
-        return if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
+        // Un 429 quelque part dans le pipeline : la synchro n'a rien pu récupérer (ou pas
+        // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
+        val rl = repo.syncRateLimit
+        if (n == 0 && rl != null) return rateLimitMessage(rl.service, rl.retryAfterSec)
+        val base = if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
         else "Synchronisation terminée"
+        if (rl != null) return "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec)}"
+        return base
     }
 
     /** Échec commun manuel/lancement : une session connue comme expirée mérite mieux
