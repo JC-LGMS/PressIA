@@ -1126,9 +1126,15 @@ class PressRepository(
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
         // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
-        // supprimées, ni repousse non retaillée après une taille concurrente.
+        // supprimées, ni repousse non retaillée après une taille concurrente. Ces deux
+        // passes sont longues : elles annoncent leurs étapes comme le pipeline, sinon le
+        // bandeau reste figé sur le compteur final.
+        if (!isSyncLocked) syncStep.value = "Application du quota…"
         trimToMax()
-        syncThumbs()
+        if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures…"
+        syncThumbs { done, total ->
+            if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures… $done/$total"
+        }
         // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
         if (!authFailed) clearAccountExpired(account.id)
         added
