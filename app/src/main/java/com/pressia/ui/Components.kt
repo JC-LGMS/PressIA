@@ -422,17 +422,24 @@ fun thumbModel(ctx: Context, url: String?): Any? {
     return ThumbStore.cachedFile(ctx, url) ?: url
 }
 
+/**
+ * Source des favicons choisie en réglages : lue une fois à la racine (MainActivity) et
+ * descendue ici — les avatars n'ont pas accès au modèle, et la résolution doit rester
+ * identique au pré-téléchargement ([PressRepository.syncFavicons]).
+ */
+val LocalFaviconDirect = compositionLocalOf { false }
+
 /** Favicon de l'abonnement : icône fournie (Feedly/Inoreader), sinon favicon du site via son host, sinon initiale. */
-fun feedFaviconUrl(sub: SubscriptionEntity?): String? {
+fun feedFaviconUrl(sub: SubscriptionEntity?, direct: Boolean = false): String? {
     if (sub == null) return null
     // Même résolution que le pré-téléchargement (PressRepository.refreshFavicons).
-    return faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id)
+    return faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct)
 }
 
 /** Favicon de l'abonnement, sinon pastille avec l'initiale (100 % hors-ligne). */
 @Composable
 fun FeedAvatar(sub: SubscriptionEntity?, sizeDp: Int = 28) {
-    FeedAvatarContent(prettyFeedTitle(sub?.title), feedFaviconUrl(sub), sizeDp)
+    FeedAvatarContent(prettyFeedTitle(sub?.title), feedFaviconUrl(sub, LocalFaviconDirect.current), sizeDp)
 }
 
 @Composable

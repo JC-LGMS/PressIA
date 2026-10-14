@@ -49,8 +49,10 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
     val hiddenEmpty by vm.hideEmptySubs.collectAsState()
     // 100 % = l'ancien 110 % : bases relevées d'un dixième (dossier 17,6 sp, flux 16,5 sp).
     val homeScale by vm.homeScale.collectAsState()
-    val folderSp = (17.6f * homeScale / 100f).coerceIn(12f, 25f)
-    val feedSp = (16.5f * homeScale / 100f).coerceIn(11f, 23f)
+    // 100 % = l'ancien 90 %, redéfini comme référence : si votre curseur était à 90,
+    // remettez-le à 100 pour retrouver exactement le même rendu.
+    val folderSp = (17.6f * 0.9f * homeScale / 100f).coerceIn(12f, 25f)
+    val feedSp = (16.5f * 0.9f * homeScale / 100f).coerceIn(11f, 23f)
     var editing by remember { mutableStateOf<PressRepository.Folder?>(null) }   // dossier renommé
     var creating by remember { mutableStateOf(false) }                          // création d'un dossier
     var moving by remember { mutableStateOf<SubscriptionEntity?>(null) }       // déplacement d'un flux

@@ -131,6 +131,10 @@ pour le replier).
   qu'un compte distant ne peut pas s'authentifier sous prétexte que ces champs sont vides.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
   `exportSchema = false`, version DB actuelle : 5.
+- Réglage ajouté, modifié ou supprimé = cycle complet obligatoire : clé dans `Prefs`,
+  état + `reloadFromPrefs`/`save()` dans l'écran Réglages, entrée dans `Prefs.ENTRIES`
+  (sinon absent de l'export/import — test `entrees de preferences` à étendre), valeur
+  par défaut cohérente partout où elle est lue.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

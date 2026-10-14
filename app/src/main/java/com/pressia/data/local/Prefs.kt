@@ -73,7 +73,13 @@ class Prefs(private val ctx: Context) {
         /** Fréquence de synchronisation par défaut, en minutes (fenêtre anti-doublon au lancement). */
         const val SYNC_INTERVAL_DEFAULT = 10
         /** Historique remonté par défaut, en mois calendaires (voir [HISTORY_MONTHS]). */
-        const val HISTORY_MONTHS_DEFAULT = 12
+        const val HISTORY_MONTHS_DEFAULT = 3
+        /**
+         * Source des favicons : agrégateur (service Google, défaut) ou sites eux-mêmes
+         * (`/favicon.ico`, en direct). L'icône fournie par le compte reste prioritaire
+         * dans les deux cas.
+         */
+        val FAVICON_SOURCE = stringPreferencesKey("favicon_source")
         val SHOW_UNREAD_ONLY = booleanPreferencesKey("show_unread_only")
 
         /** Synchronisation automatique au lancement de l'application. */
@@ -176,6 +182,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("open_mode", OPEN_MODE), PrefEntry.Bool("merge_folders", MERGE_FOLDERS),
             PrefEntry.IntPref("max_items", MAX_ITEMS), PrefEntry.Bool("images_offline", IMAGES_OFFLINE),
             PrefEntry.IntPref("history_months", HISTORY_MONTHS),
+            PrefEntry.Str("favicon_source", FAVICON_SOURCE),
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
             PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),

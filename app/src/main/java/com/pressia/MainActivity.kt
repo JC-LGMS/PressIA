@@ -10,6 +10,9 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import com.pressia.data.FAVICON_SOURCE_AGGREGATOR
+import com.pressia.data.FAVICON_SOURCE_DIRECT
+import com.pressia.data.local.Prefs
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -232,7 +235,13 @@ class MainActivity : ComponentActivity() {
 
                 Box(Modifier.fillMaxSize()) {
                     val density = LocalDensity.current
-                    CompositionLocalProvider(LocalBannerLift provides bannerLift) {
+                    val faviconDirect by remember(vm.repo.prefs) {
+                        vm.repo.prefs.flow(Prefs.FAVICON_SOURCE, FAVICON_SOURCE_AGGREGATOR)
+                    }.collectAsState(initial = FAVICON_SOURCE_AGGREGATOR)
+                    CompositionLocalProvider(
+                        LocalBannerLift provides bannerLift,
+                        LocalFaviconDirect provides (faviconDirect == FAVICON_SOURCE_DIRECT)
+                    ) {
                     ModalNavigationDrawer(
                         drawerState = drawer,
                         drawerContent = {

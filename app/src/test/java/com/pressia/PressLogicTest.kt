@@ -445,6 +445,8 @@ class PressLogicTest {
         }
         // Réglage exporté : l'historique remonté doit survivre à une restauration.
         assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
+        // Réglage exporté : la source des favicons doit survivre à une restauration.
+        assertTrue("favicon_source doit figurer dans ENTRIES", "favicon_source" in names)
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()
@@ -588,9 +590,45 @@ class PressLogicTest {
         assertEquals(java.util.Calendar.SEPTEMBER, cut1.get(java.util.Calendar.MONTH))
     }
 
+    private fun art(
+        id: String,
+        feed: String,
+        starred: Boolean = false,
+        laterSaved: Boolean = false,
+        published: Long = 0L
+    ) = com.pressia.data.local.ArticleEntity(
+        id = id, feedId = feed, title = "t$id",
+        starred = starred, laterSaved = laterSaved, published = published
+    )
+
+    @Test fun `fenetre d'historique hors favoris`() {
+        val now = cal(2026, java.util.Calendar.OCTOBER, 14)
+        val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 14 sept. 2026
+        fun ms(y: Int, m: Int, d: Int) = cal(y, m, d)
+        val articles = listOf(
+            art("recent", "f", published = ms(2026, java.util.Calendar.OCTOBER, 1)),
+            art("vieux", "f", published = ms(2026, java.util.Calendar.JANUARY, 5)),
+            art("vieux-star", "f", starred = true, published = ms(2025, java.util.Calendar.MARCH, 2)),
+            art("vieux-later", "f", laterSaved = true, published = ms(2025, java.util.Calendar.MARCH, 2)),
+            art("vieux-connu", "f", published = ms(2025, java.util.Calendar.MARCH, 2)),
+            art("sans-date", "f")
+        )
+        val kept = com.pressia.data.withinHistory(articles, cutoff, setOf("vieux-connu"))
+        assertEquals(listOf("recent", "vieux-star", "vieux-later", "vieux-connu", "sans-date"), kept.map { it.id })
+        // Fenêtre nulle (sans limite) : tout passe, même le vieux.
+        assertEquals(
+            articles.map { it.id },
+            com.pressia.data.withinHistory(articles, 0L, emptySet()).map { it.id }
+        )
+    }
+
+    private fun cal(y: Int, m: Int, d: Int): Long {
+        val c = java.util.Calendar.getInstance()
+        c.clear(); c.set(y, m, d, 12, 0, 0)
+        return c.timeInMillis
+    }
+
     @Test fun `plafond du quota par flux a l'import`() {
-        fun art(id: String, feed: String, starred: Boolean = false) =
-            com.pressia.data.local.ArticleEntity(id = id, feedId = feed, title = "t$id", starred = starred)
         val counts = mutableMapOf("f" to 1)
         // Quota de 2 avec 1 déjà compté : un seul inédit accepté, le suivant saute ;
         // déjà connu et étoile passent toujours (contenu rafraîchi, drapeau préservé).

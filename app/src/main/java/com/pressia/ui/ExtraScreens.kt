@@ -429,6 +429,27 @@ private fun ActionDropDown(
     }
 }
 
+/** Choix radio d'une source de favicons (même motif que le mode d'envoi Instapaper). */
+@Composable
+private fun FaviconSourceRow(
+    selected: Boolean,
+    title: String,
+    help: String,
+    refreshing: Boolean,
+    onSelect: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onSelect, enabled = !refreshing).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onSelect, enabled = !refreshing)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 /** Réglages façon Press + sync. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -455,6 +476,7 @@ fun SettingsScreen(vm: PressVM) {
     var wifiOnly by remember { mutableStateOf(true) }
     var maxItems by remember { mutableStateOf(1000) }
     var historyMonths by remember { mutableStateOf(Prefs.HISTORY_MONTHS_DEFAULT) }
+    var faviconSource by remember { mutableStateOf(com.pressia.data.FAVICON_SOURCE_AGGREGATOR) }
     var imagesOffline by remember { mutableStateOf(true) }
     var interval by remember { mutableStateOf(Prefs.SYNC_INTERVAL_DEFAULT) }
     var openMode by remember { mutableStateOf("internal") }
@@ -494,6 +516,7 @@ fun SettingsScreen(vm: PressVM) {
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
         wifiOnly = get(Prefs.WIFI_ONLY, true); maxItems = get(Prefs.MAX_ITEMS, 1000)
         historyMonths = get(Prefs.HISTORY_MONTHS, Prefs.HISTORY_MONTHS_DEFAULT)
+        faviconSource = get(Prefs.FAVICON_SOURCE, com.pressia.data.FAVICON_SOURCE_AGGREGATOR)
         imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
@@ -546,6 +569,17 @@ fun SettingsScreen(vm: PressVM) {
         refreshCacheInfo()
         vm.refresh()
     }
+    /**
+     * Change la source des favicons puis les actualise aussitôt (cache vidé +
+     * re-téléchargés) : le changement se voit sans passer par le bouton dédié.
+     * Écriture synchrone avant l'actualisation pour que celle-ci lise la nouvelle valeur.
+     */
+    fun pickFaviconSource(v: String) = scope.launch {
+        if (vm.refreshingFavicons) return@launch
+        faviconSource = v
+        vm.repo.prefs.set(Prefs.FAVICON_SOURCE, v)
+        vm.refreshFavicons()
+    }
     fun save() = scope.launch {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
@@ -558,6 +592,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
         vm.repo.prefs.set(Prefs.WIFI_ONLY, wifiOnly); vm.repo.prefs.set(Prefs.MAX_ITEMS, maxItems)
         vm.repo.prefs.set(Prefs.HISTORY_MONTHS, historyMonths)
+        vm.repo.prefs.set(Prefs.FAVICON_SOURCE, faviconSource)
         vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
         vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
@@ -801,11 +836,11 @@ fun SettingsScreen(vm: PressVM) {
         Text("Articles conservés par flux : $maxItems (hors-ligne)")
         Slider(maxItems.toFloat(), { maxItems = it.toInt(); save() }, valueRange = 100f..10000f, steps = 99)
         Text(
-            if (historyMonths <= 0) "Historique remonté à la connexion : sans limite de temps"
-            else "Historique remonté à la connexion : $historyMonths mois"
+            if (historyMonths <= 0) "Durée d'historique hors favoris : sans limite de temps"
+            else "Durée d'historique hors favoris : $historyMonths mois"
         )
-        // 0 = illimité, 1..36 mois calendaires (défaut 12) : ne joue qu'à la connexion d'un
-        // compte — le quota par flux reste le garde-fou dans tous les cas.
+        // 0 = illimité, 1..36 mois calendaires (défaut 3) : ne joue qu'à la connexion d'un
+        // compte, favoris toujours gardés — le quota par flux reste le garde-fou dans tous les cas.
         Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
         Text(
             if (interval <= 0) "Fréquence de synchronisation : manuelle"
@@ -833,6 +868,19 @@ fun SettingsScreen(vm: PressVM) {
                 )
             }
         }
+        Text("Favicons : agrégateur ou sources en direct")
+        FaviconSourceRow(
+            faviconSource == com.pressia.data.FAVICON_SOURCE_AGGREGATOR,
+            "Agrégateur",
+            "Icônes via le service Google, sans visiter les sites (défaut).",
+            refreshing = vm.refreshingFavicons
+        ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_AGGREGATOR) }
+        FaviconSourceRow(
+            faviconSource == com.pressia.data.FAVICON_SOURCE_DIRECT,
+            "Sources en direct",
+            "Icônes demandées aux sites eux-mêmes (/favicon.ico).",
+            refreshing = vm.refreshingFavicons
+        ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
         HorizontalDivider()
         Text("Sauvegarde", style = MaterialTheme.typography.titleMedium)
         Text(

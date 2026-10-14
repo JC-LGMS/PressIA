@@ -73,6 +73,23 @@ fun historyCutoffMs(nowMs: Long, months: Int): Long {
 }
 
 /**
+ * Ne garde que les articles dans la fenêtre d'historique — sauf déjà connus (contenu à
+ * rafraîchir) ou marqués (favoris, « Read later » : la durée est « hors favoris », et la
+ * taille les exempte de toute façon). Sans date (0), on garde : l'âge est inconnu, pas
+ * dépassé. Fenêtre nulle (sans limite) : tout passe.
+ */
+fun withinHistory(
+    articles: List<ArticleEntity>,
+    cutoffMs: Long,
+    known: Set<String>
+): List<ArticleEntity> {
+    if (cutoffMs <= 0L) return articles
+    return articles.filter { a ->
+        publishedMs(a.published) !in 1 until cutoffMs || a.starred || a.laterSaved || a.id in known
+    }
+}
+
+/**
  * Ne garde que les articles à insérer sans dépasser le quota par flux : au-delà de [keep]
  * articles comptés pour un flux, les suivants sont sautés (la taille les supprimerait de
  * toute façon). Les compteurs [counts] (issus de [PressDao.quotaCounts]) sont incrémentés
@@ -1113,7 +1130,10 @@ class PressRepository(
                 if (oldest in 1 until cutoff) break
             }
             val known = page.articles.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
-            added += storeArticles(capByQuota(page.articles, counts, known, keep))
+            // Hors favoris : les lignes plus vieilles que la fenêtre sautent (sauf déjà
+            // connues ou marquées, voir withinHistory).
+            val fresh = withinHistory(page.articles, cutoff, known)
+            added += storeArticles(capByQuota(fresh, counts, known, keep))
             seen += page.articles.size
             // Progression de l'historique (lus / plafond, jamais l'inverse : le total réel
             // est inconnu d'avance, la passe s'arrête avant si épuisée) — tue seulement si
@@ -1470,10 +1490,13 @@ class PressRepository(
     suspend fun syncFavicons(): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext -1
         val loader = coil.Coil.imageLoader(ctx)
+        // Même résolution qu'à l'affichage (voir feedFaviconUrl) : le réglage de source vaut
+        // pour les deux, sinon le préchargement remplirait le cache d'URL jamais affichées.
+        val direct = prefs.data.first()[Prefs.FAVICON_SOURCE] == FAVICON_SOURCE_DIRECT
         val subs = dao.subscriptions()
         var done = 0
         subs.forEach { sub ->
-            val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id) ?: return@forEach
+            val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct) ?: return@forEach
             // Préchargement Coil : télécharge et met en cache disque sans afficher.
             val ok = runCatching {
                 loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
