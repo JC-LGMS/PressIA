@@ -487,14 +487,7 @@ fun SettingsScreen(vm: PressVM) {
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
     var cacheInfo by remember { mutableStateOf("calcul…") }
-    var showExportDialog by remember { mutableStateOf(false) }
-    var showImportDialog by remember { mutableStateOf(false) }
     var showArticleActions by remember { mutableStateOf(false) }
-    var backupMsg by remember { mutableStateOf("") }
-    var exportSel by remember { mutableStateOf(Sections.ALL) }
-    var exportTokens by remember { mutableStateOf(false) }
-    var importSel by remember { mutableStateOf(Sections.ALL) }
-    var importReplace by remember { mutableStateOf(false) }
 
     suspend fun refreshCacheInfo() {
         cacheInfo = vm.repo.cacheInfo()
@@ -522,40 +515,6 @@ fun SettingsScreen(vm: PressVM) {
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         refreshCacheInfo()
-    }
-
-    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri != null) scope.launch {
-            try {
-                val json = vm.repo.exportJson(exportSel, exportTokens)
-                ctx.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
-                backupMsg = "Sauvegarde écrite (${json.length / 1024} Ko)."
-                toast(ctx, "Sauvegarde exportée")
-            } catch (e: Exception) {
-                backupMsg = "Export impossible : ${e.message}"
-            }
-        }
-    }
-    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) scope.launch {
-            try {
-                val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: throw Exception("fichier illisible")
-                val r = vm.repo.importJson(json, importSel, importReplace)
-                // Les réglages importés doivent s'appliquer immédiatement à l'écran ouvert…
-                reloadFromPrefs()
-                backupMsg = "Import terminé : ${r.prefs} option(s), ${r.accounts} compte(s), " +
-                    "${r.stats} statistique(s), ${r.read} favori(s)."
-                vm.refresh(); vm.loadAccount()
-                toast(ctx, "Sauvegarde importée")
-            } catch (e: Exception) {
-                backupMsg = "Import impossible : ${e.message}"
-            }
-        }
     }
 
     LaunchedEffect(Unit) { reloadFromPrefs() }
@@ -882,18 +841,6 @@ fun SettingsScreen(vm: PressVM) {
             refreshing = vm.refreshingFavicons
         ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
         HorizontalDivider()
-        Text("Sauvegarde", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Exporter ou importer en un seul fichier : les options, les statistiques, les comptes " +
-                "et les favoris de vos flux RSS locaux. Vous choisissez ce que vous voulez inclure.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton({ showExportDialog = true }) { Text("Exporter…") }
-            OutlinedButton({ showImportDialog = true }) { Text("Importer…") }
-        }
-        if (backupMsg.isNotBlank()) Text(backupMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
         ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
@@ -906,6 +853,82 @@ fun SettingsScreen(vm: PressVM) {
         ColorPickerDialog("Couleur de fond", bg, { showBgPicker = false }) {
             bg = it; showBgPicker = false; save()
         }
+    }
+}
+
+/** Écran « Sauvegarde/Restauration » : export/import du fichier unique + date de dernière sauvegarde. */
+@Composable
+fun BackupScreen(vm: PressVM) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showExportDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var backupMsg by remember { mutableStateOf("") }
+    var exportSel by remember { mutableStateOf(Sections.ALL) }
+    var exportTokens by remember { mutableStateOf(false) }
+    var importSel by remember { mutableStateOf(Sections.ALL) }
+    var importReplace by remember { mutableStateOf(false) }
+    // Date de la dernière sauvegarde exportée (0 = aucune) : suit le réglage en direct.
+    val lastBackupAt by remember(vm.repo.prefs) {
+        vm.repo.prefs.flow(Prefs.LAST_BACKUP_AT, 0L)
+    }.collectAsState(initial = 0L)
+
+    val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val json = vm.repo.exportJson(exportSel, exportTokens)
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                // Restaurer n'est pas sauvegarder : seule une exportation réussie pose la date.
+                vm.repo.prefs.set(Prefs.LAST_BACKUP_AT, System.currentTimeMillis())
+                backupMsg = "Sauvegarde écrite (${json.length / 1024} Ko)."
+                toast(ctx, "Sauvegarde exportée")
+            } catch (e: Exception) {
+                backupMsg = "Export impossible : ${e.message}"
+            }
+        }
+    }
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: throw Exception("fichier illisible")
+                val r = vm.repo.importJson(json, importSel, importReplace)
+                backupMsg = "Import terminé : ${r.prefs} option(s), ${r.accounts} compte(s), " +
+                    "${r.stats} statistique(s), ${r.read} favori(s)."
+                // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
+                // listes et compte affichés suivent ici même.
+                vm.refresh(); vm.loadAccount()
+                toast(ctx, "Sauvegarde importée")
+            } catch (e: Exception) {
+                backupMsg = "Import impossible : ${e.message}"
+            }
+        }
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            "Exporter ou importer en un seul fichier : les options, les statistiques, les comptes " +
+                "et les favoris de vos flux RSS locaux. Vous choisissez ce que vous voulez inclure.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            if (lastBackupAt > 0) "Dernière sauvegarde : ${formatBackupAt(lastBackupAt)}"
+            else "Aucune sauvegarde pour l'instant",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button({ showExportDialog = true }) { Text("Exporter…") }
+            OutlinedButton({ showImportDialog = true }) { Text("Importer…") }
+        }
+        if (backupMsg.isNotBlank()) Text(backupMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     }
     if (showExportDialog) {
         SectionPickerDialog(
@@ -931,6 +954,10 @@ fun SettingsScreen(vm: PressVM) {
         )
     }
 }
+
+/** Date et heure locales courtes (« 14/10/2026 14:32 »). */
+private fun formatBackupAt(ts: Long): String =
+    java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.FRANCE).format(java.util.Date(ts))
 
 /** Modale de choix des icônes d'action de l'écran article : visibilité + ordre. */
 @Composable

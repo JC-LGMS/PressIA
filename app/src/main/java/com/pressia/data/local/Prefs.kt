@@ -90,6 +90,13 @@ class Prefs(private val ctx: Context) {
          * synchronisation, y compris quand on ne fait qu'y jeter un œil.
          */
         val LAST_SYNC_AT = longPreferencesKey("last_sync_at")
+        /**
+         * Instant (ms) de la dernière sauvegarde exportée dans un fichier. Affiché sur l'écran
+         * « Sauvegarde/Restauration », 0 = aucune. Posé à chaque export réussi, jamais à
+         * l'import (restaurer n'est pas sauvegarder) — sauf restauration d'une sauvegarde qui
+         * le contenait, comme [LAST_SYNC_AT].
+         */
+        val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
         /** Échelle des libellés du drawer, en pourcentage de la taille du thème (80..140). */
         val DRAWER_TEXT_SCALE = intPreferencesKey("drawer_text_scale")
         /** Échelle des libellés dossier / flux de l'écran Accueil, en pourcentage (70..140). */
@@ -185,6 +192,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("favicon_source", FAVICON_SOURCE),
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
+            PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
             PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
             PrefEntry.IntPref("home_text_scale", HOME_TEXT_SCALE),
             PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),

@@ -140,6 +140,9 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             DrawerRow(Icons.Filled.AccountCircle, "Comptes", currentRoute == "login", feedSp) {
                 onNavigate("login"); onClose()
             }
+            DrawerRow(Icons.Filled.Save, "Sauvegarde/Restauration", currentRoute == "backup", feedSp) {
+                onNavigate("backup"); onClose()
+            }
             DrawerRow(Icons.Filled.Info, "À propos", currentRoute == "about", feedSp) {
                 onNavigate("about"); onClose()
             }

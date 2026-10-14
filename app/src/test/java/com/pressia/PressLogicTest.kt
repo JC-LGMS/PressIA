@@ -447,6 +447,9 @@ class PressLogicTest {
         assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
         // Réglage exporté : la source des favicons doit survivre à une restauration.
         assertTrue("favicon_source doit figurer dans ENTRIES", "favicon_source" in names)
+        // Métadonnée exportée : la date de dernière sauvegarde survit à une restauration.
+        assertTrue("last_backup_at doit figurer dans ENTRIES", "last_backup_at" in names)
+        assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "last_backup_at" })
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()

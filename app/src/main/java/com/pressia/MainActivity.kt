@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
 
                 // Dernière destination de contenu réellement visitée (accueil, dossier ou article).
                 // Les écrans utilitaires — Favoris, Recherche, Doublons, Stats, Réglages, Comptes,
-                // À propos — s'appuient dessus pour renvoyer là où l'utilisateur se trouvait,
+                // Sauvegarde/Restauration, À propos — s'appuient dessus pour renvoyer là où l'utilisateur se trouvait,
                 // plutôt que de remonter une pile qui peut ne plus contenir cette destination.
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
@@ -318,6 +318,12 @@ class MainActivity : ComponentActivity() {
                                              onFeedlySignIn = { nav.navigate("feedly-signin") })
                                      }
                                  }
+                                 composable("backup") {
+                                     BackRule()
+                                     ScaffoldWithMenu("Sauvegarde/Restauration", { openDrawer() }, drawerIconFor("backup"), vm) {
+                                         BackupScreen(vm)
+                                     }
+                                 }
                                  composable("about") {
                                      BackRule()
                                      ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about"), vm) {
@@ -408,7 +414,7 @@ private val CONTENT_ROUTES = setOf("home", "stream", "article")
  * sans avoir à remonter l'empilement des écrans précédents.
  */
 private val UTILITY_ROUTES = setOf(
-    "starred", "search", "dedup", "stats", "settings", "login", "feedly-signin", "oauth", "about"
+    "starred", "search", "dedup", "stats", "settings", "login", "backup", "feedly-signin", "oauth", "about"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
