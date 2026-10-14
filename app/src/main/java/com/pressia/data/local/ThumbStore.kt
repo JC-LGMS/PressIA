@@ -162,10 +162,14 @@ object ThumbStore {
     /**
      * Supprime les fichiers orphelins (articles purgés ou compte supprimé). [keepNames] sont
      * les noms attendus, via [thumbFileName] ; les `.tmp` abandonnés partent dans tous les cas.
+     *
+     * Coopératif (`yield` régulier) : des milliers de suppressions bloquantes ignoreraient
+     * sinon l'annulation (déconnexion pendant une synchronisation).
      */
     suspend fun gc(ctx: Context, keepNames: Set<String>): Int = withContext(Dispatchers.IO) {
         var n = 0
-        dir(ctx).listFiles()?.forEach { f ->
+        dir(ctx).listFiles()?.forEachIndexed { i, f ->
+            if (i % 128 == 0) kotlinx.coroutines.yield()
             if (f.name.endsWith(".tmp") || (f.name.endsWith(".jpg") && f.name !in keepNames)) {
                 if (f.delete()) n++
             }

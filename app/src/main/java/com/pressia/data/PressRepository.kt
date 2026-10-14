@@ -8,6 +8,7 @@ import com.pressia.data.local.*
 import com.pressia.data.readability.Readability
 import com.pressia.data.remote.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -179,20 +180,27 @@ class PressRepository(
      * Supprime un compte : ses dossiers, ses flux et les articles mis en cache disparaissent.
      * Les autres comptes — y compris un compte du même service — n'en pâtissent pas.
      *
-     * Les préférences héritées suivent, et c'est indispensable : [Prefs.TOKEN] est le repli de
-     * [cloudAccounts] quand le registre est vide. Un jeton laissé en place après la suppression
-     * ferait réapparaître le compte supprimé à la prochaine lecture ; à l'inverse, [Prefs.PROVIDER]
-     * pouvait désigner un service alors que [Prefs.TOKEN] appartenait encore à l'ancien compte.
+     * Ordre voulu : registre, base, préférences, fichiers. Les suppressions SQL sont rapides ;
+     * le ménage des fichiers est lent (milliers de miniatures) et passe en dernier pour
+     * qu'une interruption ne laisse que des fichiers orphelins (inoffensifs, repris par le
+     * prochain nettoyage) au lieu d'abonnements fantômes. Les préférences héritées suivent,
+     * et c'est indispensable : [Prefs.TOKEN] est le repli de [cloudAccounts] quand le registre
+     * est vide. Un jeton laissé en place après la suppression ferait réapparaître le compte
+     * supprimé à la prochaine lecture ; à l'inverse, [Prefs.PROVIDER] pouvait désigner un
+     * service alors que [Prefs.TOKEN] appartenait encore à l'ancien compte.
      */
     suspend fun deleteAccount(accountId: String) = withContext(Dispatchers.IO) {
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         clearAccountExpired(accountId)
         dao.clearArticlesOf(accountId)
-        gcThumbs()
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
         dao.clearSubscriptionsOf(accountId)
         dao.clearCategoriesOf(accountId)
+        // Puis les orphelins d'avant (flux retiré sans ses articles, résidu de passe
+        // interrompue) : sans flux, ils pollueraient sinon le global, les non-lus et
+        // les favoris alors qu'il n'y a plus de compte.
+        dao.deleteOrphanArticles()
 
         if (accounts.isEmpty()) {
             prefs.set(Prefs.ACTIVE_ACCOUNT, "")
@@ -206,6 +214,8 @@ class PressRepository(
             val activeWasRemoved = prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == accountId
             if (activeWasRemoved) setActiveAccount(accounts.first().id)
         }
+        // Fichiers en dernier (lent, tuable sans casse) : ne restent au pire que des orphelins.
+        gcThumbs()
     }
 
     /**
@@ -801,6 +811,10 @@ class PressRepository(
                         onSource?.invoke(account.label)
                         runCatching { syncAccount(account, feedId, categoryId, max) }
                             .onFailure {
+                                // Ne jamais avaler l'annulation : sinon la synchro
+                                // « annulée » continue en tâche de fond (résurrection
+                                // d'articles après une déconnexion, verrou jamais rendu).
+                                if (it is CancellationException) throw it
                                 noteRateLimit(it, account.label)
                                 android.util.Log.e("PressIA", "sync ${account.id} failed", it)
                             }
@@ -935,6 +949,7 @@ class PressRepository(
                     if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
                 }
             }.onFailure {
+                if (it is CancellationException) throw it
                 noteRateLimit(it, account.label)
                 android.util.Log.e("PressIA", "reconcile ${account.id} failed", it)
             }
@@ -1085,6 +1100,7 @@ class PressRepository(
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
             val page = runCatching { p.stream(account.token, null, null, pageSize, continuation) }
                 .onFailure {
+                    if (it is CancellationException) throw it
                     android.util.Log.e("PressIA", "backfill ${account.id} page failed", it)
                     if (isAuthFailure(it)) {
                         authFailed = true
@@ -1246,6 +1262,7 @@ class PressRepository(
                         n
                     }.onSuccess { if (alive) clearAccountExpired(account.id) }
                         .onFailure {
+                            if (it is CancellationException) throw it
                             noteRateLimit(it, account.label)
                             android.util.Log.e("PressIA", "read later ${account.id} failed", it)
                             if (isAuthFailure(it)) markAccountExpired(account.id)
@@ -1353,6 +1370,7 @@ class PressRepository(
                 dao.dequeue(a.rowId); done++
                 clearAccountExpired(account.id)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
                 dao.bumpTry(a.rowId)

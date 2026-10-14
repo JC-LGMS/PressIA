@@ -176,6 +176,15 @@ interface PressDao {
     /** Supprime un compte : ses dossiers, ses flux et les articles correspondants. */
     @Query("DELETE FROM articles WHERE feedId IN (SELECT id FROM subscriptions WHERE provider = :provider)")
     suspend fun clearArticlesOf(provider: String)
+    /**
+     * Balaye les articles sans flux (désabonnement, compte supprimé) : sans flux ils ne sont
+     * rattachés à rien, mais polluent le flux global, les non-lus et les favoris.
+     * Ne jamais appeler pendant une synchronisation (une passe peut laisser des articles
+     * transitoirement sans flux entre deux écritures) — uniquement sous verrou, sans
+     * écrivain concurrent (déconnexion après annulation).
+     */
+    @Query("DELETE FROM articles WHERE feedId NOT IN (SELECT id FROM subscriptions)")
+    suspend fun deleteOrphanArticles(): Int
 
     // --- Articles ---
     @Query("SELECT * FROM articles WHERE id = :id")
