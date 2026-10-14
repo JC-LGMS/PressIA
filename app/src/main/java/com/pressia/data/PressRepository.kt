@@ -1165,6 +1165,10 @@ class PressRepository(
         // bandeau reste figé sur le compteur final.
         if (!isSyncLocked) syncStep.value = "Application du quota…"
         trimToMax()
+        // Compteurs et listes à jour avant la longue passe miniatures : sans cela l'accueil
+        // affiche des compteurs périmés (pris à la fin du pipeline, avant l'historique),
+        // corrigés seulement à la prochaine ouverture d'écran.
+        pokeLists()
         if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures…"
         syncThumbs { done, total ->
             if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures… $done/$total"
