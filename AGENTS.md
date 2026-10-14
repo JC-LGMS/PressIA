@@ -111,7 +111,9 @@ pour le replier).
   uniquement » hors Wi-Fi). Appelé en fin de `syncDown`, `syncReadLater` et `backfill` : **toute**
   sync (bouton, lancement, worker, connexion de compte) récupère les images.
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 :
-  la prochaine sync, quelle qu'elle soit, récupère tout.
+  la prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits
+  via Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec
+  leur extrait RSS, la prochaine ouverture complète ré-extrait.
 - Listes : les 3 `AsyncImage` d'`ArticleRow` passent par `thumbModel()` (fichier local si
   présent, sinon URL paresseuse au scroll — aucun préchargement de liste). L'écran article garde
   les URL pleine qualité (hero / inline / viewer).

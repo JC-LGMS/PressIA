@@ -270,6 +270,22 @@ interface PressDao {
     @Query("UPDATE articles SET content = :html, fullFetched = 1 WHERE id = :id")
     suspend fun saveFullContent(id: String, html: String)
     /**
+     * Vide le cache Readability : l'extrait RSS (summary) redevient le contenu, à
+     * ré-extraire au prochain double-tap. Les articles sont conservés, seul le HTML
+     * extrait (volumineux) part.
+     */
+    @Query("UPDATE articles SET content = summary, fullFetched = 0 WHERE fullFetched = 1")
+    suspend fun clearFullContents(): Int
+    /**
+     * Traces d'extraction et de lecture d'un flux parti (désabonnement, compte supprimé) :
+     * sans article, elles ne servent plus (ni stats ni rejeu). Ne jamais appeler avec une
+     * liste vide (`IN ()` invalide) — l'appelant garde le cas courant.
+     */
+    @Query("DELETE FROM extract_events WHERE feedId IN (:feedIds)")
+    suspend fun deleteExtractEventsOfFeeds(feedIds: List<String>): Int
+    @Query("DELETE FROM reading_events WHERE feedId IN (:feedIds)")
+    suspend fun deleteReadingEventsOfFeeds(feedIds: List<String>): Int
+    /**
      * URLs des miniatures restant à stocker : les plus récentes d'abord (ordre d'affichage),
      * sans borne — la première synchronisation télécharge tout le stock, les suivantes ne
      * récupèrent que les nouveautés. Dédupliquées : une même image partagée par plusieurs

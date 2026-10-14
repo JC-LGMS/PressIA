@@ -232,6 +232,9 @@ class PressRepository(
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         clearAccountExpired(accountId)
+        // Flux du compte avant leur effacement : leurs traces d'extraction/lecture partent
+        // avec leurs articles (même motif que le désabonnement en synchro).
+        val feedsOfAccount = dao.subscriptions().filter { it.provider == accountId }.map { it.id }
         dao.clearArticlesOf(accountId)
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
         dao.clearSubscriptionsOf(accountId)
@@ -240,6 +243,10 @@ class PressRepository(
         // interrompue) : sans flux, ils pollueraient sinon le global, les non-lus et
         // les favoris alors qu'il n'y a plus de compte.
         dao.deleteOrphanArticles()
+        if (feedsOfAccount.isNotEmpty()) {
+            dao.deleteExtractEventsOfFeeds(feedsOfAccount)
+            dao.deleteReadingEventsOfFeeds(feedsOfAccount)
+        }
 
         if (accounts.isEmpty()) {
             prefs.set(Prefs.ACTIVE_ACCOUNT, "")
@@ -1009,11 +1016,16 @@ class PressRepository(
             dao.clearSubscriptionsOf(account.id)
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
             // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
-            // visibles partout : global, non-lus, favoris), puis leurs miniatures orphelines.
+            // visibles partout : global, non-lus, favoris), avec leurs HTML extraits
+            // (Readability, colonne content) et leurs traces d'extraction/lecture, puis
+            // leurs miniatures orphelines.
             // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
             if (gone.isNotEmpty()) {
                 android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
                 gone.forEach { dao.deleteArticlesOfFeed(it) }
+                val goneIds = gone.toList()
+                dao.deleteExtractEventsOfFeeds(goneIds)
+                dao.deleteReadingEventsOfFeeds(goneIds)
                 gcThumbs()
             }
             // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
@@ -1586,20 +1598,23 @@ class PressRepository(
     }
 
     /**
-     * Vide le cache : images uniquement (miniatures + cache Coil). Les articles sont
-     * conservés : seul le suivi des miniatures est réinitialisé, et la prochaine
-     * synchronisation récupère les images des articles conservés.
+     * Vide le cache : images (miniatures + cache Coil) et HTML extraits via Readability.
+     * Les articles sont conservés avec leur extrait RSS : seul le suivi des miniatures est
+     * réinitialisé (la prochaine synchronisation récupère les images des articles
+     * conservés), et la prochaine ouverture en mode complet ré-extrait l'article.
      */
     suspend fun clearCache() = clearImages()
 
     /**
-     * Ne vide que les images (force le re-téléchargement). Les miniatures d'articles sont
-     * récupérées à la prochaine synchronisation, les favicons au prochain affichage —
-     * voir [refreshFavicons] pour un re-téléchargement immédiat des deux.
+     * Ne vide que les images et les extractions (force le re-téléchargement). Les miniatures
+     * d'articles sont récupérées à la prochaine synchronisation, les favicons au prochain
+     * affichage — voir [refreshFavicons] pour un re-téléchargement immédiat des deux.
+     * Les contenus extraits repartent de l'extrait RSS au prochain double-tap.
      */
     suspend fun clearImages() = withContext(Dispatchers.IO) {
         ThumbStore.clear(ctx)
         dao.resetThumbsCached()
+        dao.clearFullContents()
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
     }
 
@@ -1734,13 +1749,15 @@ class PressRepository(
 
     /**
      * Désabonne un flux. Un flux appartenant à un compte est retiré chez ce compte ; un flux RSS
-     * local est simplement effacé de la base, avec ses articles.
+     * local est simplement effacé de la base, avec ses articles, ses HTML extraits et ses traces.
      */
     suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext
         if (!isLocalProvider(sub.provider)) return@withContext
         dao.deleteSubscription(feedId)
         dao.deleteArticlesOfFeed(feedId)
+        dao.deleteExtractEventsOfFeeds(listOf(feedId))
+        dao.deleteReadingEventsOfFeeds(listOf(feedId))
     }
 
     /**
