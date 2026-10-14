@@ -1092,9 +1092,6 @@ class PressRepository(
         val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
         val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
         val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-        // Total affiché : majorant de ce qui sera gardé (quota × flux, plafonné) — l'historique
-        // réel par flux est inconnu d'avance, la passe s'arrête avant si épuisé.
-        val totalEst = minOf(backfillSafetyCap, keep * subs.size.coerceAtLeast(1))
         while (seen < backfillSafetyCap) {
             // `getOrNull` et non `getOrElse` : sortir de la boucle depuis une lambda inline
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
@@ -1118,9 +1115,10 @@ class PressRepository(
             val known = page.articles.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             added += storeArticles(capByQuota(page.articles, counts, known, keep))
             seen += page.articles.size
-            // Progression de l'historique — tue seulement si aucune synchro ne tient déjà
-            // le bandeau (sinon les deux récits se mélangent).
-            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… $seen/$totalEst"
+            // Progression de l'historique (lus / plafond, jamais l'inverse : le total réel
+            // est inconnu d'avance, la passe s'arrête avant si épuisée) — tue seulement si
+            // aucune synchro ne tient déjà le bandeau (sinon les deux récits se mélangent).
+            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(seen, backfillSafetyCap)}/$backfillSafetyCap"
             val next = page.continuation
             // Une continuation identique ferait boucler la même page indéfiniment.
             if (next.isNullOrBlank() || next == continuation) break
