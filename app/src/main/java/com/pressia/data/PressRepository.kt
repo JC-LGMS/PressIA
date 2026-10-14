@@ -13,6 +13,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
@@ -645,6 +646,22 @@ class PressRepository(
     val syncStep = MutableStateFlow<String?>(null)
 
     /**
+     * Listes à rafraîchir : émis quand le contenu stocké change sous les pieds de l'interface
+     * (abonnements approvisionnés, fin de passe articles ou « Read later »), pour que l'accueil
+     * et les compteurs suivent sans attendre la fin de la synchronisation. Le modèle collecte
+     * et relance son remplissage — sans effet sur le bandeau, qui suit [syncStep].
+     */
+    val listsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+
+    /** Signale que les listes doivent se rafraîchir (voir [listsChanged]). Ne suspend jamais. */
+    fun pokeLists() {
+        listsChanged.tryEmit(Unit)
+    }
+
+    /** Un pipeline tient-il le verrou partagé ? L'approvisionnement tait ses étapes dans ce cas. */
+    val isSyncLocked: Boolean get() = syncMutex.isLocked
+
+    /**
      * Un 429 a frappé pendant la synchronisation en cours (remis à zéro à chaque pipeline) :
      * le message final l'explique avec le délai du serveur au lieu d'un succès aveugle.
      * Écrit depuis des fils IO (plusieurs comptes en parallèle : le dernier gagne, ils sont
@@ -760,6 +777,9 @@ class PressRepository(
         replayRestoredStarred()
         replayRestoredRead()
         trimToMax()
+        // Listes et compteurs à jour avant la (longue) passe miniatures : l'accueil n'attend
+        // pas la fin de la synchronisation. Les listes d'articles, elles, sont réactives.
+        pokeLists()
         // Les miniatures peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
         // par défaut elles suivent les articles, comme avant.
         if (withThumbs) syncThumbs()
@@ -1004,6 +1024,9 @@ class PressRepository(
         val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
         dao.clearSubscriptionsOf(account.id)
         dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+        // Les flux sont connus dès maintenant : l'accueil les affiche sans attendre les
+        // milliers d'articles qui suivent.
+        pokeLists()
 
         var added = 0
         var continuation: String? = null
@@ -1024,6 +1047,9 @@ class PressRepository(
             if (page.articles.isEmpty()) break
             added += storeArticles(page.articles)
             seen += page.articles.size
+            // Progression de l'historique — tue seulement si aucune synchro ne tient déjà
+            // le bandeau (sinon les deux récits se mélangent).
+            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… $seen"
             val next = page.continuation
             // Une continuation identique ferait boucler la même page indéfiniment.
             if (next.isNullOrBlank() || next == continuation) break
@@ -1174,6 +1200,8 @@ class PressRepository(
             }.awaitAll().sum()
         }
         syncThumbs()
+        // Le tableau a changé : les favoris suivent sans attendre la fin du pipeline.
+        pokeLists()
         added
     }
 

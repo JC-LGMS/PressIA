@@ -106,7 +106,9 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                 onRefresh = {
                     jumpScope.launch {
                         gestureRefresh = true
-                        launch { vm.syncMsg = vm.syncNow() }
+                        // Par vm.sync() (suivi, annulable) plutôt qu'un lancement direct :
+                        // une déconnexion arrête aussi les synchronisations au geste.
+                        vm.sync()
                         kotlinx.coroutines.delay(100)
                         gestureRefresh = false
                     }

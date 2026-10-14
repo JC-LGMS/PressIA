@@ -14,6 +14,7 @@ import com.pressia.data.isLocalProvider
 import com.pressia.data.local.*
 import com.pressia.data.statsRange
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 data class Scope(val feedId: String? = null, val categoryId: String? = null, val label: String = "Tous les articles")
@@ -179,6 +180,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Étapes publiées par le pipeline partagé (manuel, lancement) : le bandeau
         // les suit quel que soit le déclencheur.
         viewModelScope.launch { repo.syncStep.collect { syncMsg = it } }
+        // Contenu stocké modifié en cours de route (abonnements approvisionnés, fin de passe
+        // articles ou « Read later ») : l'accueil et les compteurs suivent sans attendre la
+        // fin de la synchronisation. Les listes d'articles, elles, sont déjà réactives.
+        viewModelScope.launch { repo.listsChanged.collect { refreshNow() } }
         // Les dossiers suivent le réglage fusion / séparation : la liste est reconstruite à chaque changement.
         viewModelScope.launch { mergeFolders.collect { folders = repo.folders(it) } }
         // Dossiers repliés : conservés d'une session à l'autre.
@@ -409,7 +414,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
         val rl = repo.syncRateLimit
         if (n == 0 && rl != null) return rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
-        val base = if (n > 0) "$n nouvel${if (n > 1) "s" else ""} article${if (n > 1) "s" else ""}"
+        val base = if (n > 0) "$n nouvel${if (n > 1) "aux" else ""} article${if (n > 1) "s" else ""}"
         else "Synchronisation terminée"
         if (rl != null) return "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}"
         return base
@@ -423,7 +428,19 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /** Déclenche [syncNow] en tâche de fond et publie le résultat dans [syncMsg]. */
-    fun sync() = viewModelScope.launch { syncMsg = syncNow() }
+    fun sync() = launchSync { syncMsg = syncNow() }
+
+    /**
+     * Une seule synchro effective à la fois, même entre déclencheurs : une nouvelle demande
+     * annule la précédente au lieu d'empiler (même sémantique que « déjà en cours », sans
+     * redémarrage visible quand il n'y a rien à annuler). Indispensable aussi à la
+     * déconnexion, qui doit stopper tout travail avant de supprimer.
+     */
+    private var syncJob: Job? = null
+    private fun launchSync(block: suspend () -> Unit) {
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch { block() }
+    }
 
     /**
      * Synchronisation au démarrage : exactement la même que la manuelle ([syncNow]).
@@ -442,7 +459,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Option et fraîcheur sont revérifiées sous le verrou partagé (l'app ne synchronise
      * que lorsqu'elle est ouverte : pas d'autre déclencheur concurrent).
      */
-    fun syncOnLaunch() = viewModelScope.launch {
+    fun syncOnLaunch() = launchSync {
         repo.withSyncLock {
             val prefs = repo.prefs
             // Lecture directe du réglage, pas du StateFlow : au démarrage celui-ci vaut encore son
@@ -809,22 +826,32 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Connecte un compte et le rend actif.
      *
-     * L'approvisionnement ([PressRepository.backfill]) est lancé après la première
-     * synchronisation, jamais avant : il se poursuit en arrière-plan pendant que l'application est
-     * déjà utilisable, et l'utilisateur voit du contenu dès les premières secondes. Sans cela, la
-     * connexion le bloquerait sur un compteur d'archives.
+     * D'abord la synchronisation (récent + flux visibles en ~30 s, un seul récit au
+     * bandeau), puis l'approvisionnement ([PressRepository.backfill]) en arrière-plan
+     * pendant que l'application est déjà utilisable. Sans cet ordre, les deux se
+     * chevauchaient : spinner sans message, message final figé, puis un second message
+     * « Historique… » sorti de nulle part — une fausse deuxième synchro.
+     *
+     * Un seul approvisionnement à la fois : une reconnexion rapide annule le précédent.
      */
-    fun connectAccount(service: String, token: String, name: String = "") = viewModelScope.launch {
-        val connected = repo.addAccount(service, token, name)
-        refreshNow()
-        account = repo.accountInfo()
-        lockSync()
-        syncMsg = try {
-            val n = repo.backfill(connected.id)
-            if (n > 0) "Historique du compte récupéré : $n articles" else null
-        } finally {
-            unlockSync()
+    private var backfillJob: Job? = null
+    fun connectAccount(service: String, token: String, name: String = "") {
+        backfillJob?.cancel()
+        backfillJob = viewModelScope.launch {
+            val connected = repo.addAccount(service, token, name)
             refreshNow()
+            account = repo.accountInfo()
+            syncMsg = syncNow()
+            lockSync()
+            try {
+                val n = repo.backfill(connected.id)
+                // Message de fin seulement si aucune synchro ne tient déjà le bandeau :
+                // sinon les deux récits se mélangent.
+                if (!repo.isSyncLocked && n > 0) syncMsg = "Historique du compte récupéré : $n articles"
+            } finally {
+                unlockSync()
+                refreshNow()
+            }
         }
     }
     fun useAccount(acc: com.pressia.data.CloudAccount) = viewModelScope.launch {
@@ -833,7 +860,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         account = repo.accountInfo()
     }
     fun disconnectAccount(acc: com.pressia.data.CloudAccount) = viewModelScope.launch {
-        repo.deleteAccount(acc.id)
+        // Stoppe tout travail en cours (synchro, approvisionnement) puis supprime sous verrou :
+        // sinon leurs écritures resurrectent des articles après le ménage — compteur, listes
+        // et favoris fantômes. L'attente est bornée : l'annulation débloque vite le verrou.
+        backfillJob?.cancel()
+        backfillJob?.join()
+        syncJob?.cancel()
+        repo.withSyncLock { repo.deleteAccount(acc.id) }
         refreshNow()
         account = repo.accountInfo()
     }

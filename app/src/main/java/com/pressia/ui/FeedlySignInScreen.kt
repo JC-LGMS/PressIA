@@ -189,13 +189,14 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
         }
         // Le compte est ajouté au registre multi-comptes et rendu actif : écrire seulement
         // TOKEN/PROVIDER le ferait disparaître de la liste des comptes.
+        // La première synchro puis l'historique partent dans connectAccount ; on revient
+        // à l'accueil aussitôt, sans attendre (le scope du modèle survit à la navigation).
         vm.connectAccount("feedly", token, label)
         status = "Connexion réussie — récupération de vos flux…"
         vm.loadAccount()
         busy = false
         done = true
         onDone("Connecté à Feedly ✓")
-        vm.sync()
         return true
     }
 

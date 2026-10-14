@@ -93,9 +93,9 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
                     // Retour immédiat à la page des comptes dès le jeton récupéré : la
                     // première synchro part ensuite dans le scope du modèle (qui survit à la
                     // navigation), pas dans celui de cet écran (annulé dès sa sortie, ce qui
-                    // avortait la synchro lancée ici avant).
+                    // avortait la synchro lancée ici avant). La synchro elle-même est lancée
+                    // par connectAccount (puis l'historique), pas ici.
                     finishWith(if (provider == "feedly") "Connecté à Feedly ✓" else "Connecté à Inoreader ✓")
-                    vm.sync()
                 } else {
                     error = "Échange code→jeton refusé. Vérifiez Client ID/Secret et l'URL de redirection déclarée ($redirect)."
                     busy = false
