@@ -14,6 +14,7 @@ import com.pressia.data.isLocalProvider
 import com.pressia.data.local.*
 import com.pressia.data.statsRange
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -865,13 +866,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         done(msg)
     }
     /**
-     * Connecte un compte et le rend actif.
+     * Connecte un compte et le rend actif, en un seul passage.
      *
-     * D'abord la synchronisation (récent + flux visibles en ~30 s, un seul récit au
-     * bandeau), puis l'approvisionnement ([PressRepository.backfill]) en arrière-plan
-     * pendant que l'application est déjà utilisable. Sans cet ordre, les deux se
-     * chevauchaient : spinner sans message, message final figé, puis un second message
-     * « Historique… » sorti de nulle part — une fausse deuxième synchro.
+     * La première synchronisation remonte l'historique depuis le plus récent
+     * ([PressRepository.initialSync], bornes quota / fenêtre / plafond) : le récent est
+     * inclus, pas de synchro préalable qui retéléchargerait les mêmes pages. L'application
+     * reste utilisable pendant la passe (listes réactives + un seul récit au bandeau), avec
+     * un seul message final. Une synchro manuelle entre-temps est refusée (« déjà en
+     * cours »), comme pendant une synchro normale.
      *
      * Un seul approvisionnement à la fois : une reconnexion rapide annule le précédent.
      */
@@ -882,13 +884,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             val connected = repo.addAccount(service, token, name)
             refreshNow()
             account = repo.accountInfo()
-            syncMsg = syncNow()
             lockSync()
             try {
-                val n = repo.backfill(connected.id)
-                // Message de fin seulement si aucune synchro ne tient déjà le bandeau :
-                // sinon les deux récits se mélangent.
-                if (!repo.isSyncLocked && n > 0) syncMsg = "Historique du compte récupéré : $n articles"
+                syncMsg = try {
+                    if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
+                    else finishSync(repo.initialSync(connected.id))
+                } catch (e: CancellationException) {
+                    // Déconnexion pendant la passe : ne pas annoncer d'échec, juste s'arrêter.
+                    throw e
+                } catch (e: Exception) {
+                    failSync()
+                }
             } finally {
                 unlockSync()
                 refreshNow()

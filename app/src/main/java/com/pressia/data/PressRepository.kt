@@ -343,7 +343,7 @@ class PressRepository(
     private val pageSize = 500
 
     /**
-     * Plafond de sécurité de l'approvisionnement ([backfillAccount]) : borne le nombre d'articles
+     * Plafond de sécurité de l'approvisionnement ([backfillArticles]) : borne le nombre d'articles
      * lus lors d'une connexion, pour qu'un compte de plusieurs années d'archives ne bloque pas
      * l'application pendant un temps indéterminé. Assez large pour qu'aucun compte réel ne
      * l'atteigne — il s'agit d'un garde-fou, pas d'une limite de conception.
@@ -960,14 +960,84 @@ class PressRepository(
     }
 
     /**
-     * Approvisionnement d'un compte nouvellement connecté : remonte tout son historique.
+     * Première synchronisation d'un compte nouvellement connecté, en un seul passage.
      *
-     * Distinct de [syncDown], qui ne descend que la fenêtre récente pour rester rapide. Voir
-     * [backfillAccount] pour la raison des pages successives et des bornes de sécurité.
+     * L'historique remonte flux par flux depuis le plus récent ([backfillArticles], bornes
+     * quota / fenêtre / plafond) : le récent est inclus, aucune synchro préalable ne
+     * retélécharge les mêmes pages. Suivent ce que la synchro faisait en plus — file
+     * montante d'abord (actions hors-ligne en attente), réconciliation du lu/non-lu,
+     * rejeux de restauration, taille, puis miniatures + « Read later » en parallèle et
+     * favicons — avec un seul récit au bandeau et un seul [Prefs.LAST_SYNC_AT].
+     *
+     * Seul le compte connecté est couvert : les autres comptes et les flux locaux suivent
+     * leur rythme (synchros manuelle / lancement), sans repasser par le réseau ici.
+     * Le verrou partagé est tenu pendant toute la passe : une synchro manuelle entre-temps
+     * est refusée (« déjà en cours ») au lieu de s'entrelacer.
      */
-    suspend fun backfill(accountId: String): Int = withContext(Dispatchers.IO) {
-        val account = cloudAccounts().firstOrNull { it.id == accountId } ?: return@withContext 0
-        backfillAccount(account)
+    suspend fun initialSync(accountId: String): Int = withSyncLock {
+        withContext(Dispatchers.IO) {
+            syncRateLimit = null
+            val account = cloudAccounts().firstOrNull { it.id == accountId } ?: return@withContext 0
+            if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
+            pushQueue()
+            syncStep.value = "Réception des articles…"
+            val n = backfillArticles(account)
+            syncStep.value = "Réconciliation…"
+            reconcileAccount(account, n)
+            replayRestoredStarred()
+            replayRestoredRead()
+            // Même ordre que la synchro normale : la taille avant les miniatures (ni images
+            // pour des lignes aussitôt supprimées), listes à jour avant la longue passe.
+            syncStep.value = "Application du quota…"
+            trimToMax()
+            pokeLists()
+            val withThumbs = imagesAllowed()
+            if (withThumbs) syncStep.value = "Téléchargement des miniatures…"
+            supervisorScope {
+                val thumbs = async {
+                    if (withThumbs) syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+                }
+                val later = async { syncReadLater() }
+                thumbs.await()
+                later.await()
+            }
+            if (withThumbs && dao.subscriptions().isNotEmpty()) {
+                syncStep.value = "Récupération des favicons…"
+                syncFavicons()
+            }
+            prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+            n
+        }
+    }
+
+    /**
+     * Réconciliation du lu/non-lu distant d'un compte : les articles ne redescendent que par
+     * fenêtre récente, les lus / non lus d'ailleurs plus anciens n'y figureraient jamais sans
+     * elle — d'où la comparaison aux non-lus du compte sur 30 jours (borné : au-delà, on ne
+     * fait que rouvrir, jamais passer en lu à l'aveugle — de toute façon le local ne conserve
+     * que ça, et Feedly marque lu à 31 j). Énumération sautée si la passe n'a rien apporté,
+     * sans action locale en attente et total distant inchangé : 1 appel léger au lieu de N
+     * pages (voir `reconcileUnchanged`). Partagée par la synchro normale et la première
+     * synchronisation (qui remonte l'historique en un seul passage).
+     */
+    private suspend fun reconcileAccount(account: CloudAccount, added: Int) {
+        val p = providerFor(account.provider)
+        runCatching {
+            val total = p.unreadTotal(account.token)
+            val pending = dao.pendingSync().isNotEmpty()
+            val last = reconcileTotals()[account.id]
+            if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, total)) {
+                android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $total inchangé)")
+            } else {
+                val (read, unread) = reconcileReadState(account)
+                if (total != null) storeReconcileTotal(account.id, total)
+                if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
+            }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            noteRateLimit(it, account.label)
+            android.util.Log.e("PressIA", "reconcile ${account.id} failed", it)
+        }
     }
 
     /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
@@ -978,28 +1048,7 @@ class PressRepository(
             val page = p.stream(account.token, feedId, categoryId, max)
         var added = storeArticles(page.articles)
         if (feedId == null && categoryId == null) {
-            // Sync globale : les articles ne redescendent que par fenêtre récente, les lus / non lus
-            // d'ailleurs plus anciens n'y figureraient jamais. On réconcilie donc avec les non-lus
-            // du compte sur 30 jours (borné : au-delà, on ne fait que rouvrir, jamais passer en lu
-            // à l'aveugle — de toute façon le local ne conserve que ça, et Feedly marque lu à 31 j).
-            // Énumération sautée si la sync n'a rien apporté, sans action locale en attente et
-            // total distant inchangé : 1 appel léger au lieu de N pages (voir `reconcileUnchanged`).
-            runCatching {
-                val total = p.unreadTotal(account.token)
-                val pending = dao.pendingSync().isNotEmpty()
-                val last = reconcileTotals()[account.id]
-                if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, total)) {
-                    android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $total inchangé)")
-                } else {
-                    val (read, unread) = reconcileReadState(account)
-                    if (total != null) storeReconcileTotal(account.id, total)
-                    if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
-                }
-            }.onFailure {
-                if (it is CancellationException) throw it
-                noteRateLimit(it, account.label)
-                android.util.Log.e("PressIA", "reconcile ${account.id} failed", it)
-            }
+            reconcileAccount(account, added)
             val cats = p.categories(account.token).map { it.copy(provider = account.id) }
             replaceCategories(account.id, cats)
             val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
@@ -1126,30 +1175,7 @@ class PressRepository(
     }
 
     /**
-     * Synchronisation d'approvisionnement : remonte tout l'historique disponible, page après page.
-     *
-     * La récupération ne ramène que ce qui sera gardé : au plus le quota par flux
-     * (« Articles conservés ») et jamais plus vieux que la fenêtre d'historique
-     * (« Historique remonté », mois calendaires, 0 = sans limite) — le plafond de sécurité
-     * borne le tout en absolu. Sans ces bornes, il faudrait tout télécharger pour presque
-     * tout supprimer juste après. Le périmètre reste large parce que les synchronisations
-     * suivantes ne redescendent que la fenêtre la plus récente : ce qui n'est pas pris ici
-     * n'arrivera jamais. On suit donc [StreamPage.continuation] jusqu'à épuisement, en
-     * gardant [pageSize] articles par page — la limite de l'API.
-     *
-     * En revanche la rétention s'applique à la fin ([trimToMax] avant les miniatures) : sans
-     * elle on téléchargerait les images de lignes aussitôt supprimées — et une synchro
-     * concurrente dont la taille passe au milieu de l'approvisionnement laisserait repousser
-     * la queue sans jamais la retailler après.
-     *
-     * La boucle s'arrête dans quatre cas, tous sûrs : plus de jeton de continuation, une page
-     * vide (le compte renvoie indéfiniment la même page), une page entièrement plus vieille
-     * que la fenêtre d'historique, ou [safetyCap] articles lus au total. Ce dernier
-     * garde la mémoire et le temps de calcul bornés sur un compte des années d'archives ; il est
-     * assez large pour qu'aucun compte réel ne l'atteigne.
-     */
-    /**
-     * Synchronisation d'approvisionnement : remonte l'historique flux par flux, page après page.
+     * Remontée d'historique flux par flux, page après page (moteur de [initialSync]).
      *
      * La récupération ne ramène que ce qui sera gardé : au plus le quota par flux
      * (« Articles conservés ») et jamais plus vieux que la fenêtre d'historique
@@ -1160,11 +1186,8 @@ class PressRepository(
      * la fenêtre la plus récente : ce qui n'est pas pris ici n'arrivera jamais. On suit
      * [StreamPage.continuation] jusqu'à épuisement, en gardant [pageSize] articles
      * par page — la limite de l'API. Sans abonnement connu, repli sur une passe globale.
-     *
-     * En revanche la rétention s'applique à la fin ([trimToMax] avant les miniatures) : sans
-     * elle on téléchargerait les images de lignes aussitôt supprimées — et une synchro
-     * concurrente dont la taille passe au milieu de l'approvisionnement laisserait repousser
-     * la queue sans jamais la retailler après.
+     * La taille et les miniatures sont à l'appelant ([initialSync]) : sans la taille d'abord,
+     * on téléchargerait les images de lignes aussitôt supprimées.
      *
      * Chaque passe s'arrête dans cinq cas, tous sûrs : quota du flux atteint sans rien de
      * nouveau à rafraîchir, plus de jeton de continuation, une page vide (le compte renvoie
@@ -1173,7 +1196,7 @@ class PressRepository(
      * temps de calcul bornés sur un compte des années d'archives ; il est assez large pour
      * qu'aucun compte réel ne l'atteigne.
      */
-    private suspend fun backfillAccount(account: CloudAccount): Int = withContext(Dispatchers.IO) {
+    private suspend fun backfillArticles(account: CloudAccount): Int = withContext(Dispatchers.IO) {
         try {
             val p = providerFor(account.provider)
             val cats = p.categories(account.token).map { it.copy(provider = account.id) }
@@ -1197,11 +1220,12 @@ class PressRepository(
         val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
         val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
         // Progression (lus / plafond, jamais l'inverse : le total réel est inconnu d'avance,
-        // chaque passe s'arrête avant si épuisée) — tue seulement si aucune synchro ne tient
-        // déjà le bandeau (sinon les deux récits se mélangent). `base` cumule les flux
-        // précédents : le compteur ne repart jamais de zéro en cours de route.
+        // chaque passe s'arrête avant si épuisée). Toujours annoncée : l'unique appelant
+        // ([initialSync]) tient le bandeau pour cette passe (la découverte en synchro passe
+        // par [backfillPages] avec un récit nul, elle reste silencieuse). `base` cumule les
+        // flux précédents : le compteur ne repart jamais de zéro en cours de route.
         fun progress(base: Int): (Int) -> Unit = { seenNow ->
-            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(base + seenNow, backfillSafetyCap)}/$backfillSafetyCap"
+            syncStep.value = "Récupération de l'historique… ${minOf(base + seenNow, backfillSafetyCap)}/$backfillSafetyCap"
         }
         val feeds = subs.map { it.id }
         if (feeds.isEmpty()) {
@@ -1217,21 +1241,8 @@ class PressRepository(
             }
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
-        // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
-        // supprimées, ni repousse non retaillée après une taille concurrente. Ces deux
-        // passes sont longues : elles annoncent leurs étapes comme le pipeline, sinon le
-        // bandeau reste figé sur le compteur final.
-        if (!isSyncLocked) syncStep.value = "Application du quota…"
-        trimToMax()
-        // Compteurs et listes à jour avant la longue passe miniatures : sans cela l'accueil
-        // affiche des compteurs périmés (pris à la fin du pipeline, avant l'historique),
-        // corrigés seulement à la prochaine ouverture d'écran.
-        pokeLists()
-        if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures…"
-        syncThumbs { done, total ->
-            if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures… $done/$total"
-        }
         // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
+        // Taille, miniatures et « Read later » : à l'appelant (voir initialSync).
         if (!authFailed) clearAccountExpired(account.id)
         added
         } catch (e: Exception) {
