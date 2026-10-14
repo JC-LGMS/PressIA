@@ -613,6 +613,13 @@ class PressLogicTest {
         assertTrue(com.pressia.data.discoverFeeds(listOf("a"), setOf("a")).isEmpty())
     }
 
+    @Test fun `flux desabonnes detectes par difference`() {
+        assertEquals(setOf("vieux"), com.pressia.data.removedFeeds(setOf("vieux", "garde"), setOf("garde")))
+        // Rien de parti : rien à supprimer (cas courant, coût nul).
+        assertTrue(com.pressia.data.removedFeeds(setOf("a"), setOf("a", "b")).isEmpty())
+        assertTrue(com.pressia.data.removedFeeds(emptySet(), setOf("a")).isEmpty())
+    }
+
     @Test fun `fenetre d'historique hors favoris`() {
         val now = cal(2026, java.util.Calendar.OCTOBER, 14)
         val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 14 sept. 2026

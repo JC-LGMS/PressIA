@@ -98,6 +98,12 @@ fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
     if (subIds.any { it in knownIds }) subIds.filter { it !in knownIds } else emptyList()
 
 /**
+ * Flux désabonnés côté compte : présents avant, absents après. Leurs articles partent avec
+ * eux (voir syncAccount) — sinon ils survivraient comme orphelins visibles partout.
+ */
+fun removedFeeds(before: Set<String>, after: Set<String>): Set<String> = before - after
+
+/**
  * Ne garde que les articles à insérer sans dépasser le quota par flux : au-delà de [keep]
  * articles comptés pour un flux, les suivants sont sautés (la taille les supprimerait de
  * toute façon). Les compteurs [counts] (issus de [PressDao.quotaCounts]) sont incrémentés
@@ -949,8 +955,8 @@ class PressRepository(
         backfillAccount(account)
     }
 
-    /** Synchronise un compte : flux d'articles, puis dossiers, abonnements et historique
-     * des flux découverts si vue globale. */
+    /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
+     * et miniatures des flux désabonnés) et historique des flux découverts si vue globale. */
     private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
         try {
             val p = providerFor(account.provider)
@@ -986,9 +992,22 @@ class PressRepository(
             // les flux RSS locaux ajoutés à la main, doivent survivre.
             // Même raison que pour les dossiers : le rang choisi par l'utilisateur est réinjecté,
             // sinon la réinsertion le remettrait à zéro et l'ordre saisi disparaîtrait.
-            val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
+            val current = dao.subscriptions()
+            val ranks = current.associate { it.id to it.sortOrder }
+            val gone = removedFeeds(
+                current.filter { sameAccount(it.provider, account.id) }.map { it.id }.toSet(),
+                subs.map { it.id }.toSet()
+            )
             dao.clearSubscriptionsOf(account.id)
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+            // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
+            // visibles partout : global, non-lus, favoris), puis leurs miniatures orphelines.
+            // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
+            if (gone.isNotEmpty()) {
+                android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
+                gone.forEach { dao.deleteArticlesOfFeed(it) }
+                gcThumbs()
+            }
             // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
             // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
             // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
