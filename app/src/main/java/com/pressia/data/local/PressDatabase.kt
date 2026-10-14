@@ -304,6 +304,9 @@ interface PressDao {
      */
     @Query("SELECT id FROM articles WHERE feedId = :feed AND starred = 0 AND laterSaved = 0 ORDER BY published DESC, id DESC LIMIT -1 OFFSET :keep")
     suspend fun overflowArticleIds(feed: String, keep: Int): List<String>
+    /** Nombre d'articles comptés dans le quota par flux (hors favoris et « Read later »). */
+    @Query("SELECT feedId AS feedId, COUNT(*) AS c FROM articles WHERE starred = 0 AND laterSaved = 0 GROUP BY feedId")
+    suspend fun quotaCounts(): List<FeedCount>
     /** Suppression par paquets (limite de variables SQLite) du trop-plein par flux. */
     @Query("DELETE FROM articles WHERE id IN (:ids)")
     suspend fun deleteArticlesByIds(ids: List<String>): Int
@@ -411,6 +414,8 @@ data class CategorySeconds(val categoryId: String?, val secs: Int)
 data class FeedSeconds(val feedId: String, val secs: Int, val c: Int)
 data class ExtractCount(val ok: Boolean, val c: Int)
 data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolean, val readAt: Long?, val feedId: String)
+/** Articles comptés dans le quota par flux (voir [PressDao.quotaCounts]). */
+data class FeedCount(val feedId: String, val c: Int)
 /** État lu d'un article local à sauvegarder (voir [PressDao.localReadStates]). */
 data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
 /** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */

@@ -454,6 +454,7 @@ fun SettingsScreen(vm: PressVM) {
     var justify by remember { mutableStateOf(false) }
     var wifiOnly by remember { mutableStateOf(true) }
     var maxItems by remember { mutableStateOf(1000) }
+    var historyMonths by remember { mutableStateOf(Prefs.HISTORY_MONTHS_DEFAULT) }
     var imagesOffline by remember { mutableStateOf(true) }
     var interval by remember { mutableStateOf(Prefs.SYNC_INTERVAL_DEFAULT) }
     var openMode by remember { mutableStateOf("internal") }
@@ -492,6 +493,7 @@ fun SettingsScreen(vm: PressVM) {
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
         dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
         wifiOnly = get(Prefs.WIFI_ONLY, true); maxItems = get(Prefs.MAX_ITEMS, 1000)
+        historyMonths = get(Prefs.HISTORY_MONTHS, Prefs.HISTORY_MONTHS_DEFAULT)
         imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
@@ -555,6 +557,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
         vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
         vm.repo.prefs.set(Prefs.WIFI_ONLY, wifiOnly); vm.repo.prefs.set(Prefs.MAX_ITEMS, maxItems)
+        vm.repo.prefs.set(Prefs.HISTORY_MONTHS, historyMonths)
         vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
         vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
@@ -797,6 +800,13 @@ fun SettingsScreen(vm: PressVM) {
         }
         Text("Articles conservés par flux : $maxItems (hors-ligne)")
         Slider(maxItems.toFloat(), { maxItems = it.toInt(); save() }, valueRange = 100f..10000f, steps = 99)
+        Text(
+            if (historyMonths <= 0) "Historique remonté à la connexion : sans limite de temps"
+            else "Historique remonté à la connexion : $historyMonths mois"
+        )
+        // 0 = illimité, 1..36 mois calendaires (défaut 12) : ne joue qu'à la connexion d'un
+        // compte — le quota par flux reste le garde-fou dans tous les cas.
+        Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
         Text(
             if (interval <= 0) "Fréquence de synchronisation : manuelle"
             else "Fréquence de synchronisation : toutes les $interval min"

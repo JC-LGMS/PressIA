@@ -443,6 +443,8 @@ class PressLogicTest {
         listOf("inoreader_app_id", "feedly_client_id", "accounts", "active_account").forEach {
             assertTrue("$it doit figurer dans ENTRIES", it in names)
         }
+        // Réglage exporté : l'historique remonté doit survivre à une restauration.
+        assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()
@@ -563,6 +565,44 @@ class PressLogicTest {
             localUnread, remoteUnread, emptySet(), emptySet(), true, true
         )
         assertTrue(mall.markRead.isEmpty())
+    }
+
+    @Test fun `fenetre d'historique en mois calendaires`() {
+        // 14 oct. 2026, midi UTC : fields lus dans le même fuseau des deux côtés.
+        val cal = java.util.Calendar.getInstance()
+        cal.clear(); cal.set(2026, java.util.Calendar.OCTOBER, 14, 12, 0, 0)
+        val now = cal.timeInMillis
+        // 0 ou négatif = sans limite.
+        assertEquals(0L, com.pressia.data.historyCutoffMs(now, 0))
+        assertEquals(0L, com.pressia.data.historyCutoffMs(now, -3))
+        // 12 mois : même jour un an plus tôt (mois calendaires, pas 365 jours).
+        val cut12 = java.util.Calendar.getInstance()
+        cut12.timeInMillis = com.pressia.data.historyCutoffMs(now, 12)
+        assertEquals(2025, cut12.get(java.util.Calendar.YEAR))
+        assertEquals(java.util.Calendar.OCTOBER, cut12.get(java.util.Calendar.MONTH))
+        assertEquals(14, cut12.get(java.util.Calendar.DAY_OF_MONTH))
+        // 1 mois : mois précédent, jour conservé.
+        val cut1 = java.util.Calendar.getInstance()
+        cut1.timeInMillis = com.pressia.data.historyCutoffMs(now, 1)
+        assertEquals(2026, cut1.get(java.util.Calendar.YEAR))
+        assertEquals(java.util.Calendar.SEPTEMBER, cut1.get(java.util.Calendar.MONTH))
+    }
+
+    @Test fun `plafond du quota par flux a l'import`() {
+        fun art(id: String, feed: String, starred: Boolean = false) =
+            com.pressia.data.local.ArticleEntity(id = id, feedId = feed, title = "t$id", starred = starred)
+        val counts = mutableMapOf("f" to 1)
+        // Quota de 2 avec 1 déjà compté : un seul inédit accepté, le suivant saute ;
+        // déjà connu et étoile passent toujours (contenu rafraîchi, drapeau préservé).
+        val kept = com.pressia.data.capByQuota(
+            listOf(art("n1", "f"), art("n2", "f"), art("old", "f"), art("s", "f", starred = true)),
+            counts, setOf("old"), keep = 2
+        )
+        assertEquals(listOf("n1", "old", "s"), kept.map { it.id })
+        assertEquals(2, counts["f"])
+        // Autre flux : compteur indépendant.
+        val other = com.pressia.data.capByQuota(listOf(art("x", "g")), mutableMapOf(), emptySet(), keep = 2)
+        assertEquals(listOf("x"), other.map { it.id })
     }
 
     @Test fun `publishedMs comprend secondes et millisecondes`() {

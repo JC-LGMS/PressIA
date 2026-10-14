@@ -59,6 +59,40 @@ fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
     lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
 
 /**
+ * Début de la fenêtre d'historique à la connexion : [nowMs] moins [months] mois
+ * calendaires (même jour du mois, pas 30 jours arrondis). Zéro ou négatif = sans limite
+ * de temps (0 ms : aucun article n'est plus vieux).
+ */
+fun historyCutoffMs(nowMs: Long, months: Int): Long {
+    if (months <= 0) return 0L
+    val c = java.util.Calendar.getInstance()
+    c.timeInMillis = nowMs
+    c.add(java.util.Calendar.MONTH, -months)
+    return c.timeInMillis
+}
+
+/**
+ * Ne garde que les articles à insérer sans dépasser le quota par flux : au-delà de [keep]
+ * articles comptés pour un flux, les suivants sont sautés (la taille les supprimerait de
+ * toute façon). Les compteurs [counts] (issus de [PressDao.quotaCounts]) sont incrémentés
+ * au fil de l'acceptation ; les articles déjà connus ou marqués (favoris, « Read later »)
+ * passent toujours — les connus pour rafraîchir leur contenu, les marqués car la taille
+ * les exempte de toute façon.
+ */
+fun capByQuota(
+    articles: List<ArticleEntity>,
+    counts: MutableMap<String, Int>,
+    known: Set<String>,
+    keep: Int
+): List<ArticleEntity> = articles.filter { a ->
+    if (a.id in known || a.starred || a.laterSaved) true
+    else if ((counts[a.feedId] ?: 0) < keep) {
+        counts[a.feedId] = (counts[a.feedId] ?: 0) + 1
+        true
+    } else false
+}
+
+/**
  * Repository offline-first façon Press :
  * - lecture depuis Room (hors-ligne OK)
  * - sync descendante : cloud/RSS → Room (limitée par taille max)
@@ -999,19 +1033,23 @@ class PressRepository(
     /**
      * Synchronisation d'approvisionnement : remonte tout l'historique disponible, page après page.
      *
-     * La récupération ne se limite pas au quota : à la connexion d'un compte, 250 articles par
-     * flux ne rempliraient que quelques heures de lecture, et le reste de l'historique du
-     * compte n'arriverait jamais puisque les synchronisations suivantes ne redescendent que
-     * la fenêtre la plus récente. On suit donc [StreamPage.continuation] jusqu'à épuisement,
-     * en gardant [pageSize] articles par page — la limite de l'API.
+     * La récupération ne ramène que ce qui sera gardé : au plus le quota par flux
+     * (« Articles conservés ») et jamais plus vieux que la fenêtre d'historique
+     * (« Historique remonté », mois calendaires, 0 = sans limite) — le plafond de sécurité
+     * borne le tout en absolu. Sans ces bornes, il faudrait tout télécharger pour presque
+     * tout supprimer juste après. Le périmètre reste large parce que les synchronisations
+     * suivantes ne redescendent que la fenêtre la plus récente : ce qui n'est pas pris ici
+     * n'arrivera jamais. On suit donc [StreamPage.continuation] jusqu'à épuisement, en
+     * gardant [pageSize] articles par page — la limite de l'API.
      *
      * En revanche la rétention s'applique à la fin ([trimToMax] avant les miniatures) : sans
      * elle on téléchargerait les images de lignes aussitôt supprimées — et une synchro
      * concurrente dont la taille passe au milieu de l'approvisionnement laisserait repousser
      * la queue sans jamais la retailler après.
      *
-     * La boucle s'arrête dans trois cas, tous sûrs : plus de jeton de continuation, une page vide
-     * (le compte renvoie indéfiniment la même page), ou [safetyCap] articles lus au total. Ce dernier
+     * La boucle s'arrête dans quatre cas, tous sûrs : plus de jeton de continuation, une page
+     * vide (le compte renvoie indéfiniment la même page), une page entièrement plus vieille
+     * que la fenêtre d'historique, ou [safetyCap] articles lus au total. Ce dernier
      * garde la mémoire et le temps de calcul bornés sur un compte des années d'archives ; il est
      * assez large pour qu'aucun compte réel ne l'atteigne.
      */
@@ -1032,6 +1070,16 @@ class PressRepository(
         var continuation: String? = null
         var seen = 0
         var authFailed = false
+        // Quota et fenêtre temporelle : l'approvisionnement n'insère jamais au-delà du
+        // quota par flux (la taille le supprimerait aussitôt), ni plus vieux que le réglage
+        // d'historique — le plafond de sécurité reste le garde-fou absolu.
+        val prefsData = prefs.data.first()
+        val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
+        val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
+        val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+        // Total affiché : majorant de ce qui sera gardé (quota × flux, plafonné) — l'historique
+        // réel par flux est inconnu d'avance, la passe s'arrête avant si épuisé.
+        val totalEst = minOf(backfillSafetyCap, keep * subs.size.coerceAtLeast(1))
         while (seen < backfillSafetyCap) {
             // `getOrNull` et non `getOrElse` : sortir de la boucle depuis une lambda inline
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
@@ -1045,11 +1093,18 @@ class PressRepository(
                 }
                 .getOrNull() ?: break
             if (page.articles.isEmpty()) break
-            added += storeArticles(page.articles)
+            // Pages triées du plus récent au plus ancien : une page entièrement plus vieille
+            // que la fenêtre termine (même motif que la réconciliation).
+            if (cutoff > 0) {
+                val oldest = page.articles.minOf { publishedMs(it.published) }
+                if (oldest in 1 until cutoff) break
+            }
+            val known = page.articles.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
+            added += storeArticles(capByQuota(page.articles, counts, known, keep))
             seen += page.articles.size
             // Progression de l'historique — tue seulement si aucune synchro ne tient déjà
             // le bandeau (sinon les deux récits se mélangent).
-            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… $seen"
+            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… $seen/$totalEst"
             val next = page.continuation
             // Une continuation identique ferait boucler la même page indéfiniment.
             if (next.isNullOrBlank() || next == continuation) break
