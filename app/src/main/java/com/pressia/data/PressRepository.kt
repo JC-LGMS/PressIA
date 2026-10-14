@@ -1125,6 +1125,7 @@ class PressRepository(
                     .filter { it !in fresh }
                 if (lagging.isNotEmpty()) {
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
+                    val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
                     lagging.forEach { feedId ->
                         val (a, s, _) = backfillPages(account, feedId, counts, keep, cutoff)
                         added += a
@@ -1132,6 +1133,15 @@ class PressRepository(
                         // déjà connus) d'un compteur serveur fantôme (non-lus annoncés que le
                         // flux ne rend jamais, même hors fenêtre).
                         android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
+                        // Flux propre muet mais dossier connu : repli par le flux du dossier
+                        // (autre index côté compte — le global prouve que le contenu existe).
+                        if (a == 0 && s == 0) {
+                            folders[feedId]?.let { catId ->
+                                val (fa, fs, _) = backfillCategoryForFeed(account, feedId, catId, counts, keep, cutoff)
+                                added += fa
+                                android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
+                            }
+                        }
                     }
                 }
             }
@@ -1295,6 +1305,64 @@ class PressRepository(
             if (isAuthFailure(e)) markAccountExpired(account.id)
             throw e
         }
+    }
+
+    /**
+     * Repli par dossier pour un flux dont le flux propre rend vide ([backfillPages] +0/0) :
+     * remonte le flux du DOSSIER page après page et ne garde que les lignes du flux visé
+     * (mêmes bornes quota / fenêtre / plafond, même retour). Le global prouve qu'un index
+     * par flux peut être muet alors que le contenu existe — le dossier suit un autre
+     * chemin. Silencieux (récit nul) : seul le rattrapage l'appelle.
+     * Stoppe aussi après 10 pages sans ligne du flux (déplacé, autre dossier) : un flux
+     * clairsemé dans un dossier prolifique ne doit pas faire marcher toute la catégorie.
+     */
+    private suspend fun backfillCategoryForFeed(
+        account: CloudAccount,
+        feedId: String,
+        categoryId: String,
+        counts: MutableMap<String, Int>,
+        keep: Int,
+        cutoff: Long
+    ): Triple<Int, Int, Boolean> {
+        val p = providerFor(account.provider)
+        var added = 0
+        var seen = 0
+        var missingStreak = 0
+        var continuation: String? = null
+        var authFailed = false
+        while (seen < backfillSafetyCap) {
+            val page = runCatching { p.stream(account.token, null, categoryId, pageSize, continuation) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    noteRateLimit(it, account.label)
+                    android.util.Log.e("PressIA", "backfill ${account.id} page failed", it)
+                    if (isAuthFailure(it)) {
+                        authFailed = true
+                        markAccountExpired(account.id)
+                    }
+                }
+                .getOrNull() ?: break
+            val next = page.continuation
+            val advanced = !next.isNullOrBlank() && next != continuation
+            val mine = page.articles.filter { it.feedId == feedId }
+            if (mine.isEmpty()) {
+                if (advanced && ++missingStreak <= 10) { continuation = next; continue }
+                break
+            }
+            missingStreak = 0
+            if (cutoff > 0) {
+                val oldest = page.articles.minOf { publishedMs(it.published) }
+                if (oldest in 1 until cutoff) break
+            }
+            val known = mine.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
+            val fresh = withinHistory(mine, cutoff, known)
+            added += storeArticles(capByQuota(fresh, counts, known, keep))
+            seen += page.articles.size
+            if (feedSaturated(counts[feedId] ?: 0, keep, mine.any { it.id in known })) break
+            if (!advanced) break
+            continuation = next
+        }
+        return Triple(added, seen, authFailed)
     }
 
     /**
