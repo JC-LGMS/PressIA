@@ -153,7 +153,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var instapaperPickerFor by mutableStateOf<ArticleEntity?>(null)
     val homeScreen: StateFlow<String> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, "subs")
     val justify: StateFlow<Boolean> = prefs.flow(Prefs.JUSTIFY, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    val unreadOnly: StateFlow<Boolean> = prefs.flow(Prefs.SHOW_UNREAD_ONLY, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")
     val hasCloudAccounts: Boolean get() = accounts.isNotEmpty()
@@ -195,6 +194,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         viewModelScope.launch {
             provider.collect { p -> if (isLocalProvider(p)) repo.purgeQueue() }
         }
+        // Filtre du périmètre de démarrage : sans cela l'œil partirait du défaut global.
+        refreshUnreadOnly()
     }
 
     /** Apparence choisie dans le drawer : auto / jour / nuit. */
@@ -238,6 +239,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun switchScope(s: Scope) {
         if (s.feedId != scope.feedId || s.categoryId != scope.categoryId) keepIds.value = emptySet()
         scope = s
+        refreshUnreadOnly()
     }
 
     /**
@@ -247,6 +249,45 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     fun clearKept() {
         keepIds.value = emptySet()
+    }
+
+    /**
+     * Filtre « non-lus seuls » du périmètre courant : chaque flux rouvre avec son dernier
+     * choix d'œil ([Prefs.UNREAD_ONLY_BY_FEED]), les périmètres jamais réglés suivent le
+     * défaut global ([Prefs.SHOW_UNREAD_ONLY]). L'écran Favoris garde son propre filtre
+     * local, hors persistance.
+     */
+    var unreadOnly by mutableStateOf(true)
+        private set
+
+    private fun unreadScopeKey(s: Scope): String = when {
+        s.feedId != null -> "feed:${s.feedId}"
+        s.categoryId != null -> "cat:${s.categoryId}"
+        else -> "all"
+    }
+
+    /** Recharge le filtre du périmètre courant (démarrage, changement de flux, import). */
+    fun refreshUnreadOnly() = viewModelScope.launch {
+        val data = prefs.data.first()
+        val key = unreadScopeKey(scope)
+        val per: Boolean? = runCatching {
+            val o = org.json.JSONObject(data[Prefs.UNREAD_ONLY_BY_FEED].orEmpty())
+            if (o.has(key)) o.optBoolean(key) else null
+        }.getOrNull()
+        unreadOnly = per ?: data[Prefs.SHOW_UNREAD_ONLY] ?: true
+    }
+
+    /** Pose le filtre du périmètre courant (œil), sans toucher aux autres flux. */
+    fun setUnreadOnly(next: Boolean) = viewModelScope.launch {
+        // Même « collant » que le flux principal : réactiver le filtre oublie les lus.
+        if (next) clearKept()
+        val key = unreadScopeKey(scope)
+        val raw = prefs.data.first()[Prefs.UNREAD_ONLY_BY_FEED].orEmpty()
+        val o = runCatching { org.json.JSONObject(raw) }.getOrDefault(org.json.JSONObject())
+        o.put(key, next)
+        prefs.set(Prefs.UNREAD_ONLY_BY_FEED, o.toString())
+        unreadOnly = next
+        refreshNow()
     }
 
     /**
@@ -282,7 +323,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         subs = repo.subscriptions()
         unreads = repo.unreadByFeed()
         folderUnreads = repo.unreadByFolder()
-        articles = repo.stream(scope.feedId, scope.categoryId, unreadOnly.value)
+        articles = repo.stream(scope.feedId, scope.categoryId, unreadOnly)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
         } finally {

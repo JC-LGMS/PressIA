@@ -80,7 +80,15 @@ class Prefs(private val ctx: Context) {
          * dans les deux cas.
          */
         val FAVICON_SOURCE = stringPreferencesKey("favicon_source")
+        /** « Non-lus seuls » : défaut pour les périmètres jamais réglés (voir [UNREAD_ONLY_BY_FEED]). */
         val SHOW_UNREAD_ONLY = booleanPreferencesKey("show_unread_only")
+        /**
+         * Choix d'œil posés par périmètre (JSON `{clé: bool}`) : chaque flux rouvre avec son
+         * dernier choix, flux (`feed:<id>`), dossier (`cat:<id>`) ou global (`all`). Absent =
+         * [SHOW_UNREAD_ONLY]. Une entrée par périmètre visité, chaînes minuscules : pas de
+         * migration à écrire, un JSON abîmé repart simplement du défaut.
+         */
+        val UNREAD_ONLY_BY_FEED = stringPreferencesKey("unread_only_by_feed")
 
         /** Synchronisation automatique au lancement de l'application. */
         val SYNC_ON_LAUNCH = booleanPreferencesKey("sync_on_launch")
@@ -191,6 +199,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.IntPref("history_months", HISTORY_MONTHS),
             PrefEntry.Str("favicon_source", FAVICON_SOURCE),
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
+            PrefEntry.Str("unread_only_by_feed", UNREAD_ONLY_BY_FEED),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
             PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),

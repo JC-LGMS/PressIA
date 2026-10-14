@@ -17,15 +17,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.pressia.data.local.Prefs
 import kotlinx.coroutines.launch
 
 /** Écran flux façon Press : titre périmètre + actions sync / tout-lu / filtre lus. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.ArticleEntity) -> Unit, onMenu: () -> Unit) {
+    // Filtre mémorisé par périmètre (voir PressVM.unreadOnly) : suit le flux courant.
     val viewMode by vm.viewMode.collectAsState()
-    val unreadOnly by vm.unreadOnly.collectAsState()
+    val unreadOnly = vm.unreadOnly
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
@@ -55,14 +55,9 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     actions = {
                         IconButton({
                             val next = !unreadOnly
-                            scope.launch {
-                                // Repasser en « non-lus seuls » masque les lus de la session : on oublie
-                                // les articles gardés « collants », sinon l'œil semblait inopérant.
-                                if (next) vm.clearKept()
-                                vm.repo.prefs.set(Prefs.SHOW_UNREAD_ONLY, next)
-                                toast(ctx, if (next) "Non-lus seuls" else "Tous les articles, lus inclus")
-                                vm.refresh()
-                            }
+                            // Pose persistée par flux (voir PressVM.setUnreadOnly), toast immédiat.
+                            vm.setUnreadOnly(next)
+                            toast(ctx, if (next) "Non-lus seuls" else "Tous les articles, lus inclus")
                         }) {
                             Icon(
                                 if (unreadOnly) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,

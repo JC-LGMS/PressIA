@@ -900,8 +900,8 @@ fun BackupScreen(vm: PressVM) {
                 backupMsg = "Import terminé : ${r.prefs} option(s), ${r.accounts} compte(s), " +
                     "${r.stats} statistique(s), ${r.read} favori(s)."
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
-                // listes et compte affichés suivent ici même.
-                vm.refresh(); vm.loadAccount()
+                // listes et compte affichés suivent ici même, filtre œil y compris.
+                vm.refresh(); vm.loadAccount(); vm.refreshUnreadOnly()
                 toast(ctx, "Sauvegarde importée")
             } catch (e: Exception) {
                 backupMsg = "Import impossible : ${e.message}"
