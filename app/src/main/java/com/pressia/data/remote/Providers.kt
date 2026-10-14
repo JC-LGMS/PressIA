@@ -187,6 +187,10 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
         api.unreadCounts(auth(token)).unreadcounts.sumOf { it.count }
     }.getOrNull()
+    /** Non-lus par flux (`markers/counts` donne aussi le détail : catégories et flux). */
+    override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
+        api.unreadCounts(auth(token)).unreadcounts.associate { it.id to it.count }
+    }.getOrNull()
     override suspend fun profile(token: String?): String? {
         val p = api.profile(auth(token))
         return listOfNotNull(p.userName?.takeIf { it.isNotBlank() }, p.email?.takeIf { it.isNotBlank() })
@@ -247,6 +251,10 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
         api.unreadCount(auth(token)).unreadcounts.sumOf { it.count }
+    }.getOrNull()
+    /** Non-lus par flux (`unread-count` donne aussi le détail par flux). */
+    override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
+        api.unreadCount(auth(token)).unreadcounts.associate { it.id to it.count }
     }.getOrNull()
     /** Étoiles du compte (« Starred items » chez Inoreader), paginées jusqu'à épuisement. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {

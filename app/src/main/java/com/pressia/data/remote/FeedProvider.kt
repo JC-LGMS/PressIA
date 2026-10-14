@@ -42,6 +42,13 @@ interface FeedProvider {
      */
     suspend fun unreadTotal(token: String?): Int? = null
     /**
+     * Non-lus par flux côté compte (`{feedId: count}`), en un appel léger : détecte les flux
+     * sous-approvisionnés (le compte dit plus de non-lus que le local n'en connaît) pour les
+     * rattraper avec les mêmes bornes, au lieu d'attendre une reconnexion. Null = non
+     * supporté ou refusé → pas de rattrapage, la synchro suit son cours.
+     */
+    suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = null
+    /**
      * Tableau « à lire plus tard » du compte, à distinguer des étoiles PressIA. Vide par défaut :
      * les flux RSS saisis à la main n'ont pas de compte, donc rien à y rattacher.
      * [max] est la taille de page : les implémentations paginent jusqu'à épuisement pour

@@ -634,6 +634,34 @@ class PressLogicTest {
         assertTrue(com.pressia.data.removedFeeds(emptySet(), setOf("a")).isEmpty())
     }
 
+    @Test fun `flux en retard a rattraper`() {
+        // Le compte dit 13 non-lus, le local n'en connaît que 3 avec de la place : à remonter.
+        assertEquals(
+            listOf("mini"),
+            com.pressia.data.laggingFeeds(
+                mapOf("mini" to 13, "monde" to 104),
+                mapOf("mini" to 3, "monde" to 104),
+                mapOf("mini" to 3, "monde" to 500),
+                keep = 1000
+            )
+        )
+        // À jour ou au quota (la taille annulerait le rattrapage) : rien.
+        assertTrue(
+            com.pressia.data.laggingFeeds(
+                mapOf("ok" to 5, "plein" to 99),
+                mapOf("ok" to 5, "plein" to 0),
+                mapOf("plein" to 1000),
+                keep = 1000
+            ).isEmpty()
+        )
+        // Sans aucune ligne locale : à rattraper aussi (l'appelant exclut ceux que la
+        // découverte vient déjà de couvrir dans la même passe).
+        assertEquals(
+            listOf("vide"),
+            com.pressia.data.laggingFeeds(mapOf("vide" to 7), emptyMap(), emptyMap(), keep = 1000)
+        )
+    }
+
     @Test fun `fenetre d'historique hors favoris`() {
         val now = cal(2026, java.util.Calendar.OCTOBER, 14)
         val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 14 sept. 2026

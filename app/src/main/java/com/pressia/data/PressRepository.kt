@@ -104,6 +104,22 @@ fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
 fun removedFeeds(before: Set<String>, after: Set<String>): Set<String> = before - after
 
 /**
+ * Flux sous-approvisionnés à rattraper : le compte dit plus de non-lus que le local n'en
+ * connaît, alors que le flux n'a pas atteint son quota (il reste de la place pour
+ * l'historique manquant). Un flux au quota est exclu : la taille supprime au-delà du
+ * quota de toute façon, le rattrapage n'y changerait rien.
+ * Les flux déjà couverts par la découverte ([discoverFeeds]) sont exclus par l'appelant.
+ */
+fun laggingFeeds(
+    serverUnread: Map<String, Int>,
+    localUnread: Map<String, Int>,
+    quota: Map<String, Int>,
+    keep: Int
+): List<String> = serverUnread
+    .filter { (id, count) -> count > (localUnread[id] ?: 0) && (quota[id] ?: 0) < keep }
+    .keys.toList()
+
+/**
  * Flux saturé : le quota est atteint et la page n'apporte rien à rafraîchir — inutile
  * d'aller chercher plus vieux, tout serait jeté. Un flux jamais rempli ou dont la page
  * recroise du connu continue (rafraîchissement du contenu).
@@ -1041,7 +1057,8 @@ class PressRepository(
     }
 
     /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
-     * et miniatures des flux désabonnés) et historique des flux découverts si vue globale. */
+     * et miniatures des flux désabonnés), historique des flux découverts et rattrapage des
+     * flux sous-approvisionnés si vue globale. */
     private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
         try {
             val p = providerFor(account.provider)
@@ -1082,14 +1099,40 @@ class PressRepository(
             // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
             // le bandeau dit déjà « Réception… ». Les nouveaux comptent dans le total.
             val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
+            val prefsData = prefs.data.first()
+            val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
+            val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
+            val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
             if (fresh.isNotEmpty()) {
                 android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
-                val prefsData = prefs.data.first()
-                val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
-                val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
-                val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
                 fresh.forEach { feedId ->
                     added += backfillPages(account, feedId, counts, keep, cutoff).first
+                }
+            }
+            // Flux sous-approvisionnés (page vide transitoire à la connexion, passe
+            // interrompue) : le compte dit plus de non-lus que le local n'en connaît — on
+            // remonte leur historique avec les mêmes bornes, au lieu d'attendre une
+            // reconnexion qui n'arrivera jamais (la découverte ne couvre que les flux
+            // vides). Flux au quota exclus (voir laggingFeeds), déjà découverts aussi.
+            // Rien à faire dans le cas courant (une différence de cartes en mémoire +,
+            // au pire, un appel compteurs déjà payé par la réconciliation voisine).
+            val subIds = subs.map { it.id }.toSet()
+            val serverUnread = p.unreadCountsByFeed(account.token)
+                ?.filterKeys { it in subIds }.orEmpty()
+            if (serverUnread.isNotEmpty()) {
+                val localUnread = dao.unreadByFeed().associate { it.feedId to it.c }
+                val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
+                    .filter { it !in fresh }
+                if (lagging.isNotEmpty()) {
+                    android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
+                    lagging.forEach { feedId ->
+                        val (a, s, _) = backfillPages(account, feedId, counts, keep, cutoff)
+                        added += a
+                        // +A/L par flux : distingue « rien de plus côté flux » (0/0 ou 0/lus
+                        // déjà connus) d'un compteur serveur fantôme (non-lus annoncés que le
+                        // flux ne rend jamais, même hors fenêtre).
+                        android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
+                    }
                 }
             }
         }
@@ -1190,9 +1233,9 @@ class PressRepository(
      * on téléchargerait les images de lignes aussitôt supprimées.
      *
      * Chaque passe s'arrête dans cinq cas, tous sûrs : quota du flux atteint sans rien de
-     * nouveau à rafraîchir, plus de jeton de continuation, une page vide (le compte renvoie
-     * indéfiniment la même page), une page entièrement plus vieille que la fenêtre
-     * d'historique, ou [safetyCap] articles lus au total. Ce dernier garde la mémoire et le
+     * nouveau à rafraîchir, plus de jeton de continuation, 3 pages vides d'affilée (une
+     * isolée ne vaut pas un flux vide : le compte hoquette parfois), une page entièrement
+     * plus vieille que la fenêtre d'historique, ou [safetyCap] articles lus au total. Ce dernier garde la mémoire et le
      * temps de calcul bornés sur un compte des années d'archives ; il est assez large pour
      * qu'aucun compte réel ne l'atteigne.
      */
@@ -1238,6 +1281,9 @@ class PressRepository(
                 val base = seen
                 val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, progress(base))
                 added += a; seen += s; authFailed = authFailed || f
+                // Flux sans aucune page : visible dans le log (un flux vide à la connexion
+                // est anormal — soit il est vraiment vide, soit une page a calé en silence).
+                if (a == 0 && s == 0) android.util.Log.i("PressIA", "backfill ${account.id} : $feedId sans article (0 lu)")
             }
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
@@ -1252,11 +1298,12 @@ class PressRepository(
     }
 
     /**
-     * Pages d'historique pour un périmètre (global à la connexion, ou un flux nouvellement
-     * découvert) : mêmes bornes partout — quota par flux, fenêtre d'historique, plafond de
-     * sécurité — et mêmes garanties (jamais d'avalage d'annulation, 429 signalé). [onProgress]
-     * reçoit les articles lus au fil de l'eau (bandeau) ; null = silencieux (le récit courant
-     * du bandeau reste). Renvoie (nouveaux, lus, échec d'authentification).
+     * Pages d'historique pour un périmètre (première synchro, ou un flux nouvellement
+     * découvert ou en retard) : mêmes bornes partout — quota par flux, fenêtre d'historique,
+     * plafond de sécurité — et mêmes garanties (jamais d'avalage d'annulation, 429 signalé,
+     * pages vides isolées suivies jusqu'à 3 d'affilée). [onProgress] reçoit les articles lus
+     * au fil de l'eau (bandeau) ; null = silencieux (le récit courant du bandeau reste).
+     * Renvoie (nouveaux, lus, échec d'authentification).
      */
     private suspend fun backfillPages(
         account: CloudAccount,
@@ -1269,6 +1316,7 @@ class PressRepository(
         val p = providerFor(account.provider)
         var added = 0
         var seen = 0
+        var emptyStreak = 0
         var continuation: String? = null
         var authFailed = false
         while (seen < backfillSafetyCap) {
@@ -1285,7 +1333,18 @@ class PressRepository(
                     }
                 }
                 .getOrNull() ?: break
-            if (page.articles.isEmpty()) break
+            val next = page.continuation
+            // Jeton neuf (ni absent ni identique : il ferait boucler la même page) ?
+            val advanced = !next.isNullOrBlank() && next != continuation
+            if (page.articles.isEmpty()) {
+                // Page vide isolée avec un jeton neuf : le compte hoquette parfois, et une
+                // page vide ne vaut pas un flux vide — on suit le jeton, au plus 3 vides
+                // d'affilée, sinon une première page vide transitoire effaçait tout un flux
+                // en silence. Au-delà, c'est vraiment la fin.
+                if (advanced && ++emptyStreak <= 3) { continuation = next; continue }
+                break
+            }
+            emptyStreak = 0
             // Pages triées du plus récent au plus ancien : une page entièrement plus vieille
             // que la fenêtre termine (même motif que la réconciliation).
             if (cutoff > 0) {
@@ -1303,9 +1362,8 @@ class PressRepository(
             // suivantes (plus vieilles) seraient intégralement jetées. En passe globale les
             // flux se mélangent : on ne peut pas conclure, on continue.
             if (feedId != null && feedSaturated(counts[feedId] ?: 0, keep, page.articles.any { it.id in known })) break
-            val next = page.continuation
-            // Une continuation identique ferait boucler la même page indéfiniment.
-            if (next.isNullOrBlank() || next == continuation) break
+            // Jeton épuisé ou identique (même page en boucle) : fin de la passe.
+            if (!advanced) break
             continuation = next
         }
         return Triple(added, seen, authFailed)
