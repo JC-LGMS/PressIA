@@ -91,6 +91,16 @@ par son text / content-desc / resource-id, calculer le centre de son bounds, pui
 
 Méthodologie : dump après chaque action, attendre 1–3 s selon la transition, re-dumper.
 
+**Touches dans une WebView : viser ~90 px plus bas.** `input tap` atterrit environ 90 px
+trop haut dans le contenu web (constaté : le bouton gris « Sign in with Google » se prenait
+pour le vert « Sign in with Email » juste en dessous, les touches « Suivant » ouvraient les
+CGU voisines). La WebView n'expose aucun node (opaque pour uiautomator) : passer par
+capture d'écran (`screencap` + `read` du PNG, 1:1 avec l'écran 1080×2424) et compenser
+`tap(X, Y+90)`. Champs hauts tolérants ; boutons ~80 px : rater = page voisine, revenir
+en arrière via la flèche retour de l'app (jamais `KEYCODE_BACK` dans une page web : il
+risque de quitter l'écran au lieu de fermer le clavier — préférer toucher une zone neutre
+pour le replier).
+
 ## Images / miniatures (non intuitif, tout est là)
 
 - Stockage : `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans
