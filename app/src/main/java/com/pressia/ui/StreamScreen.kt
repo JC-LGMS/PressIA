@@ -1,20 +1,12 @@
 package com.pressia.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -87,7 +79,7 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                 // Tirer la liste vers le bas synchronise, comme le bouton d'en haut : le rond ne
                 // reflète que le geste puis s'efface au relâchement — la synchro en cours garde ses
                 // deux indicateurs (barre sous le titre, bouton).
-                // Le composant exige l'alternance vrai→faux de isRefreshing pour refermer son état
+                // Le composant exige l'alternance vrai→faux de isRefreshing pour fermer son état
                 // interne : on l'impulse brièvement au relâchement pendant que la synchro continue
                 // sans lui.
                 var gestureRefresh by remember { mutableStateOf(false) }
@@ -110,203 +102,5 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                 }
             }
         }
-    }
-}
-
-/**
- * Écran Favoris : le périmètre affiché est explicite et modifiable, comme celui de la recherche.
- *
- * Deux dimensions sont exposées, parce que les deux sont ambiguës d'elles-mêmes :
- *  - le **jeu de favoris** : les étoiles de PressIA, le tableau « Read later » du compte, ou les deux ;
- *  - le **flux** couvert : tous, un dossier, ou un flux donné.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun FavorisScreen(vm: PressVM, onOpen: (com.pressia.data.local.ArticleEntity) -> Unit, onMenu: () -> Unit) {
-    val viewMode by vm.viewMode.collectAsState()
-    val set by vm.favSet.collectAsState()
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
-    var favUnreadOnly by remember { mutableStateOf(false) }
-    var showSet by remember { mutableStateOf(false) }
-    var showFeed by remember { mutableStateOf(false) }
-    // Le flux couvert n'est pas celui du flux principal : les favoris se consultent souvent
-    // « tous flux » alors qu'on se trouve dans un dossier précis.
-    var feedScope by remember { mutableStateOf(Scope(label = "Tous les articles")) }
-    val fav = FavScope(set, feedScope)
-
-    LaunchedEffect(vm.favSet, vm.hasCloudAccounts) {
-        if (vm.favSet.value == "later" && !vm.hasCloudAccounts) {
-            vm.setFavSet("all")
-        }
-    }
-    val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
-    val articles by live.collectAsState(initial = emptyList())
-
-    val feed = vm.subs.firstOrNull { it.id == feedScope.feedId }
-    Scaffold(
-        topBar = {
-            // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
-            // slot topBar et le titre opaque couvre la barre.
-            Column {
-                // Barre de synchro tout en haut de l'écran, au-dessus du titre.
-                if (vm.syncing) SyncProgress()
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            drawerIconFor("starred")?.let {
-                            Icon(it, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        if (feed != null) {
-                            FeedAvatar(feed, 28)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text("Favoris", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                },
-                navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
-                actions = {
-                    IconButton({
-                        val next = !favUnreadOnly
-                        favUnreadOnly = next
-                        // Même « collant » que le flux principal : réactiver le filtre oublie les lus.
-                        if (next) vm.clearKept()
-                        toast(ctx, if (next) "Non-lus seuls" else "Tous les favoris, lus inclus")
-                    }) {
-                        Icon(
-                            if (favUnreadOnly) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            if (favUnreadOnly) "afficher aussi les favoris lus" else "ne montrer que les favoris non lus"
-                        )
-                    }
-                    // Pas de périmètre pour la synchronisation, même sur le tableau distant :
-                    // c'est toujours une synchro complète (qui inclut le « Read later »).
-                    SyncButton(vm, "actualiser les favoris") { vm.sync() }
-                }
-            )
-            }
-        }
-    ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                FavScopeChip(Icons.Filled.Star, "Favoris : ${favSetLabel(set)}") { showSet = !showSet; if (showSet) showFeed = false }
-                if (showSet) {
-                    FavScopeChooser(
-                        vm = vm,
-                        set = set,
-                        showSet = true,
-                        onPickSet = { vm.setFavSet(it); showSet = false },
-                        onPickFeed = { feedScope = it; showFeed = false }
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                FavScopeChip(Icons.Filled.RssFeed, "Flux : ${feedScope.label}") { showFeed = !showFeed; if (showFeed) showSet = false }
-                if (showFeed) {
-                    FavScopeChooser(
-                        vm = vm,
-                        set = set,
-                        showSet = false,
-                        onPickSet = { vm.setFavSet(it); showSet = false },
-                        onPickFeed = { feedScope = it; showFeed = false }
-                    )
-                }
-            }
-            when {
-                articles.isEmpty() && vm.loaded && !vm.syncing -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                    Text(
-                        when (set) {
-                            "later" -> "Rien dans le tableau « Read later » — touchez l'actualisation pour le recharger."
-                            "all" -> "Aucun favori dans ce périmètre : ni étoile PressIA, ni article dans « Read later »."
-                            else -> "Aucun favori PressIA dans ce périmètre."
-                        },
-                        modifier = Modifier.padding(24.dp),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                else -> ArticleList(articles, viewMode, onOpen, vm, showSource = feedScope.feedId == null)
-            }
-        }
-    }
-}
-
-@Composable
-private fun FavScopeChip(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            label, style = MaterialTheme.typography.bodySmall,
-            maxLines = 1, overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-/**
- * Sélecteur du périmètre affiché, déplié sous le bandeau. Le jeu de favoris offre les deux
- * ensembles plus leur réunion ; le flux couvert offre l'ensemble, puis chaque dossier et chaque flux.
- */
-@Composable
-private fun FavScopeChooser(
-    vm: PressVM,
-    set: String,
-    showSet: Boolean,
-    onPickSet: (String) -> Unit,
-    onPickFeed: (Scope) -> Unit
-) {
-    Surface(tonalElevation = 2.dp) {
-        Column(
-            Modifier
-                .padding(vertical = 4.dp)
-                .verticalScroll(rememberScrollState())
-                .heightIn(max = 320.dp)
-        ) {
-            if (showSet) {
-                FavChoiceRow("Tous les favoris", set == "all") { onPickSet("all") }
-                FavChoiceRow("Favoris PressIA", set == "app") { onPickSet("app") }
-                if (vm.hasCloudAccounts) {
-                    FavChoiceRow("À lire plus tard - Feedly", set == "later") { onPickSet("later") }
-                }
-            } else {
-                FavChoiceRow("Tous les articles") { onPickFeed(Scope(label = "Tous les articles")) }
-                vm.folders.forEach { f ->
-                    FavChoiceRow(f.label) { onPickFeed(Scope(categoryId = f.id, label = f.label)) }
-                }
-                vm.subs.forEach { s ->
-                    val pretty = prettyFeedTitle(s.title)
-                    FavChoiceRow(pretty) { onPickFeed(Scope(feedId = s.id, label = pretty)) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FavChoiceRow(label: String, selected: Boolean = false, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick)
-            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-            .padding(horizontal = 16.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (selected) {
-            Icon(
-                Icons.Filled.Check, null, Modifier.size(15.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(
-            label, style = MaterialTheme.typography.bodySmall,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
-        )
     }
 }
