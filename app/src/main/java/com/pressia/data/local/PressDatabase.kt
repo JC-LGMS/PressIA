@@ -307,6 +307,9 @@ interface PressDao {
      */
     @Query("SELECT feedId FROM articles WHERE starred = 0 AND laterSaved = 0 GROUP BY feedId HAVING COUNT(*) > :keep")
     suspend fun overQuotaFeedIds(keep: Int): List<String>
+    /** Flux ayant des articles : détecte les abonnements jamais approvisionnés. */
+    @Query("SELECT DISTINCT feedId FROM articles")
+    suspend fun articleFeedIds(): List<String>
     /**
      * Trop-plein d'un flux au-delà du quota : les plus anciens d'abord (favoris et
      * « Read later » déjà exclus). OFFSET seul exige LIMIT -1 sous SQLite.

@@ -90,6 +90,14 @@ fun withinHistory(
 }
 
 /**
+ * Flux d'un compte sans aucun article : jamais approvisionnés (le global ne couvre que les
+ * flux déjà connus au moment de la connexion). Vide quand le compte n'a encore aucun
+ * article du tout — c'est alors l'approvisionnement global qui s'en charge, pas encore passé.
+ */
+fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
+    if (subIds.any { it in knownIds }) subIds.filter { it !in knownIds } else emptyList()
+
+/**
  * Ne garde que les articles à insérer sans dépasser le quota par flux : au-delà de [keep]
  * articles comptés pour un flux, les suivants sont sautés (la taille les supprimerait de
  * toute façon). Les compteurs [counts] (issus de [PressDao.quotaCounts]) sont incrémentés
@@ -941,7 +949,8 @@ class PressRepository(
         backfillAccount(account)
     }
 
-    /** Synchronise un compte : flux d'articles, puis dossiers et abonnements si vue globale. */
+    /** Synchronise un compte : flux d'articles, puis dossiers, abonnements et historique
+     * des flux découverts si vue globale. */
     private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
         try {
             val p = providerFor(account.provider)
@@ -980,6 +989,21 @@ class PressRepository(
             val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
             dao.clearSubscriptionsOf(account.id)
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+            // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
+            // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
+            // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
+            // le bandeau dit déjà « Réception… ». Les nouveaux comptent dans le total.
+            val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
+            if (fresh.isNotEmpty()) {
+                android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
+                val prefsData = prefs.data.first()
+                val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
+                val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
+                val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+                fresh.forEach { feedId ->
+                    added += backfillPages(account, feedId, counts, keep, cutoff).first
+                }
+            }
         }
         // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
         clearAccountExpired(account.id)
@@ -1099,9 +1123,6 @@ class PressRepository(
         pokeLists()
 
         var added = 0
-        var continuation: String? = null
-        var seen = 0
-        var authFailed = false
         // Quota et fenêtre temporelle : l'approvisionnement n'insère jamais au-delà du
         // quota par flux (la taille le supprimerait aussitôt), ni plus vieux que le réglage
         // d'historique — le plafond de sécurité reste le garde-fou absolu.
@@ -1109,12 +1130,62 @@ class PressRepository(
         val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
         val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
         val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+        val (addedPages, seenPages, failed) = backfillPages(account, null, counts, keep, cutoff) { seenNow ->
+            // Progression de l'historique (lus / plafond, jamais l'inverse : le total réel
+            // est inconnu d'avance, la passe s'arrête avant si épuisée) — tue seulement si
+            // aucune synchro ne tient déjà le bandeau (sinon les deux récits se mélangent).
+            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(seenNow, backfillSafetyCap)}/$backfillSafetyCap"
+        }
+        added += addedPages
+        val seen = seenPages
+        val authFailed = failed
+        android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
+        // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
+        // supprimées, ni repousse non retaillée après une taille concurrente. Ces deux
+        // passes sont longues : elles annoncent leurs étapes comme le pipeline, sinon le
+        // bandeau reste figé sur le compteur final.
+        if (!isSyncLocked) syncStep.value = "Application du quota…"
+        trimToMax()
+        if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures…"
+        syncThumbs { done, total ->
+            if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures… $done/$total"
+        }
+        // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
+        if (!authFailed) clearAccountExpired(account.id)
+        added
+        } catch (e: Exception) {
+            if (isAuthFailure(e)) markAccountExpired(account.id)
+            throw e
+        }
+    }
+
+    /**
+     * Pages d'historique pour un périmètre (global à la connexion, ou un flux nouvellement
+     * découvert) : mêmes bornes partout — quota par flux, fenêtre d'historique, plafond de
+     * sécurité — et mêmes garanties (jamais d'avalage d'annulation, 429 signalé). [onProgress]
+     * reçoit les articles lus au fil de l'eau (bandeau) ; null = silencieux (le récit courant
+     * du bandeau reste). Renvoie (nouveaux, lus, échec d'authentification).
+     */
+    private suspend fun backfillPages(
+        account: CloudAccount,
+        feedId: String?,
+        counts: MutableMap<String, Int>,
+        keep: Int,
+        cutoff: Long,
+        onProgress: ((seen: Int) -> Unit)? = null
+    ): Triple<Int, Int, Boolean> {
+        val p = providerFor(account.provider)
+        var added = 0
+        var seen = 0
+        var continuation: String? = null
+        var authFailed = false
         while (seen < backfillSafetyCap) {
             // `getOrNull` et non `getOrElse` : sortir de la boucle depuis une lambda inline
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
-            val page = runCatching { p.stream(account.token, null, null, pageSize, continuation) }
+            val page = runCatching { p.stream(account.token, feedId, null, pageSize, continuation) }
                 .onFailure {
                     if (it is CancellationException) throw it
+                    noteRateLimit(it, account.label)
                     android.util.Log.e("PressIA", "backfill ${account.id} page failed", it)
                     if (isAuthFailure(it)) {
                         authFailed = true
@@ -1135,33 +1206,13 @@ class PressRepository(
             val fresh = withinHistory(page.articles, cutoff, known)
             added += storeArticles(capByQuota(fresh, counts, known, keep))
             seen += page.articles.size
-            // Progression de l'historique (lus / plafond, jamais l'inverse : le total réel
-            // est inconnu d'avance, la passe s'arrête avant si épuisée) — tue seulement si
-            // aucune synchro ne tient déjà le bandeau (sinon les deux récits se mélangent).
-            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(seen, backfillSafetyCap)}/$backfillSafetyCap"
+            onProgress?.invoke(seen)
             val next = page.continuation
             // Une continuation identique ferait boucler la même page indéfiniment.
             if (next.isNullOrBlank() || next == continuation) break
             continuation = next
         }
-        android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
-        // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
-        // supprimées, ni repousse non retaillée après une taille concurrente. Ces deux
-        // passes sont longues : elles annoncent leurs étapes comme le pipeline, sinon le
-        // bandeau reste figé sur le compteur final.
-        if (!isSyncLocked) syncStep.value = "Application du quota…"
-        trimToMax()
-        if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures…"
-        syncThumbs { done, total ->
-            if (!isSyncLocked) syncStep.value = "Téléchargement des miniatures… $done/$total"
-        }
-        // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
-        if (!authFailed) clearAccountExpired(account.id)
-        added
-        } catch (e: Exception) {
-            if (isAuthFailure(e)) markAccountExpired(account.id)
-            throw e
-        }
+        return Triple(added, seen, authFailed)
     }
 
     /**

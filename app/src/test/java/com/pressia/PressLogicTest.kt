@@ -601,6 +601,18 @@ class PressLogicTest {
         starred = starred, laterSaved = laterSaved, published = published
     )
 
+    @Test fun `decouverte des flux jamais approvisionnes`() {
+        // Compte déjà provisionné : seuls les flux sans articles partent en rattrapage.
+        assertEquals(
+            listOf("neuf"),
+            com.pressia.data.discoverFeeds(listOf("vieux", "neuf"), setOf("vieux", "autre"))
+        )
+        // Aucun article nulle part : c'est l'approvisionnement global qui s'en charge.
+        assertTrue(com.pressia.data.discoverFeeds(listOf("a", "b"), emptySet()).isEmpty())
+        // Rien de neuf : rien à faire.
+        assertTrue(com.pressia.data.discoverFeeds(listOf("a"), setOf("a")).isEmpty())
+    }
+
     @Test fun `fenetre d'historique hors favoris`() {
         val now = cal(2026, java.util.Calendar.OCTOBER, 14)
         val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 14 sept. 2026
