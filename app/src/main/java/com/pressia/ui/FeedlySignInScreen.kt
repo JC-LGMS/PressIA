@@ -169,9 +169,13 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
     suspend fun findSession(): String? = webView?.storageSession() ?: nativeSession() ?: webView?.documentCookie()
 
     /**
-     * Vérifie le jeton, enregistre le compte, puis lance une vraie synchronisation. Sans ce
-     * dernier passage le compte restait connecté mais vide : on restait sur une page Feedly et
-     * aucun article n'arrivait jamais.
+     * Vérifie le jeton, enregistre le compte, puis revient à l'accueil avant de lancer
+     * une vraie synchronisation. Sans ce dernier passage le compte restait connecté mais
+     * vide : on restait sur une page Feedly et aucun article n'arrivait jamais.
+     *
+     * Ordre impératif : retour d'abord, synchro ensuite. La synchro part dans le scope du
+     * modèle (qui survit à la navigation) via [PressVM.sync] — lancée ici avant le retour,
+     * elle tournerait dans le scope de cet écran, annulé dès sa sortie.
      */
     suspend fun tryConnect(token: String): Boolean {
         if (busy || done || token.isBlank()) return false
@@ -187,11 +191,11 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
         // TOKEN/PROVIDER le ferait disparaître de la liste des comptes.
         vm.connectAccount("feedly", token, label)
         status = "Connexion réussie — récupération de vos flux…"
-        val msg = vm.syncNow()
         vm.loadAccount()
         busy = false
         done = true
-        onDone("Connecté à Feedly ✓ — $msg")
+        onDone("Connecté à Feedly ✓")
+        vm.sync()
         return true
     }
 

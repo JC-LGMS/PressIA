@@ -320,8 +320,9 @@ class MainActivity : ComponentActivity() {
                                     FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
                                         onDone = { msg ->
                                             vm.authMsg = msg
-                                            // Retour automatique sur la liste des comptes.
-                                            nav.popBackStack("login", inclusive = false)
+                                            // Retour à l'accueil avant la première synchro (lancée
+                                            // par l'écran après ce retour), pas à la page des comptes.
+                                            goHome()
                                         })
                                 }
                                 composable("oauth/{provider}") { backStack ->
