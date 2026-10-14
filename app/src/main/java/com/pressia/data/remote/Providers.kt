@@ -86,8 +86,18 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val scope = userId(token)
         if (scope.isBlank()) return emptyList()
-        val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500))
-        return s.items.map { it.toEntity().copy(laterSaved = true) }
+        // Paginé jusqu'à épuisement : un grand tableau ne doit pas être tronqué à la page.
+        val out = ArrayList<ArticleEntity>()
+        var cont: String? = null
+        while (true) {
+            val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500), cont = cont)
+            if (s.items.isEmpty()) break
+            out += s.items.map { it.toEntity().copy(laterSaved = true) }
+            val next = s.continuation
+            if (next.isNullOrBlank() || next == cont) break
+            cont = next
+        }
+        return out
     }
     /**
      * IDs seuls du tableau (même endpoint léger que les non-lus) : une page au même plafond
@@ -98,8 +108,17 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         val scope = userId(token)
         if (scope.isBlank()) return null
         return runCatching {
-            val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500))
-            IdSet(page.ids.toSet(), page.continuation.isNullOrBlank())
+            val ids = HashSet<String>()
+            var cont: String? = null
+            while (true) {
+                val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500), cont = cont)
+                if (page.ids.isEmpty()) break
+                ids += page.ids
+                val next = page.continuation
+                if (next.isNullOrBlank() || next == cont) break
+                cont = next
+            }
+            IdSet(ids, true)
         }.getOrNull()
     }
     /**
@@ -229,18 +248,37 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
         api.unreadCount(auth(token)).unreadcounts.sumOf { it.count }
     }.getOrNull()
-    /** Étoiles du compte (« Starred items » chez Inoreader). */
+    /** Étoiles du compte (« Starred items » chez Inoreader), paginées jusqu'à épuisement. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
-        val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
-        return s.items.map { it.toEntity().copy(laterSaved = true) }
+        val out = ArrayList<ArticleEntity>()
+        var cont: String? = null
+        while (true) {
+            val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont)
+            if (s.items.isEmpty()) break
+            out += s.items.map { it.toEntity().copy(laterSaved = true) }
+            val next = s.continuation
+            if (next.isNullOrBlank() || next == cont) break
+            cont = next
+        }
+        return out
     }
     /**
      * IDs seuls des « Starred items » (voie légère, même plafond de 200 que les contenus,
-     * les plus récents d'abord des deux côtés) — voir Feedly.
+     * les plus récents d'abord des deux côtés) — voir Feedly. Paginés jusqu'à épuisement
+     * pour que l'empreinte couvre tout le tableau.
      */
     override suspend fun readLaterIds(token: String?, max: Int): IdSet? = runCatching {
-        val page = api.itemsIds(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200))
-        IdSet(page.itemRefs.map { it.id }.toSet(), page.continuation.isNullOrBlank())
+        val ids = HashSet<String>()
+        var cont: String? = null
+        while (true) {
+            val page = api.itemsIds(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont)
+            if (page.itemRefs.isEmpty()) break
+            page.itemRefs.mapTo(ids) { it.id }
+            val next = page.continuation
+            if (next.isNullOrBlank() || next == cont) break
+            cont = next
+        }
+        IdSet(ids, true)
     }.getOrNull()
     /**
      * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus

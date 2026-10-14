@@ -44,6 +44,8 @@ interface FeedProvider {
     /**
      * Tableau « à lire plus tard » du compte, à distinguer des étoiles PressIA. Vide par défaut :
      * les flux RSS saisis à la main n'ont pas de compte, donc rien à y rattacher.
+     * [max] est la taille de page : les implémentations paginent jusqu'à épuisement pour
+     * tout prendre, quel que soit le volume du tableau.
      */
     suspend fun readLater(token: String?, max: Int = 500): List<ArticleEntity> = emptyList()
     /**

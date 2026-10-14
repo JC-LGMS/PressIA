@@ -104,6 +104,14 @@ fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
 fun removedFeeds(before: Set<String>, after: Set<String>): Set<String> = before - after
 
 /**
+ * Flux saturé : le quota est atteint et la page n'apporte rien à rafraîchir — inutile
+ * d'aller chercher plus vieux, tout serait jeté. Un flux jamais rempli ou dont la page
+ * recroise du connu continue (rafraîchissement du contenu).
+ */
+fun feedSaturated(count: Int, keep: Int, hasKnown: Boolean): Boolean =
+    count >= keep && !hasKnown
+
+/**
  * Ne garde que les articles à insérer sans dépasser le quota par flux : au-delà de [keep]
  * articles comptés pour un flux, les suivants sont sautés (la taille les supprimerait de
  * toute façon). Les compteurs [counts] (issus de [PressDao.quotaCounts]) sont incrémentés
@@ -1128,6 +1136,31 @@ class PressRepository(
      * garde la mémoire et le temps de calcul bornés sur un compte des années d'archives ; il est
      * assez large pour qu'aucun compte réel ne l'atteigne.
      */
+    /**
+     * Synchronisation d'approvisionnement : remonte l'historique flux par flux, page après page.
+     *
+     * La récupération ne ramène que ce qui sera gardé : au plus le quota par flux
+     * (« Articles conservés ») et jamais plus vieux que la fenêtre d'historique
+     * (« Historique remonté », mois calendaires, 0 = sans limite) — le plafond de sécurité
+     * borne le tout en absolu. Chaque flux s'arrête dès son quota atteint (sans recroiser
+     * que du déjà-connu à rafraîchir) : pas de pages téléchargées pour être aussitôt jetées.
+     * Le périmètre reste large parce que les synchronisations suivantes ne redescendent que
+     * la fenêtre la plus récente : ce qui n'est pas pris ici n'arrivera jamais. On suit
+     * [StreamPage.continuation] jusqu'à épuisement, en gardant [pageSize] articles
+     * par page — la limite de l'API. Sans abonnement connu, repli sur une passe globale.
+     *
+     * En revanche la rétention s'applique à la fin ([trimToMax] avant les miniatures) : sans
+     * elle on téléchargerait les images de lignes aussitôt supprimées — et une synchro
+     * concurrente dont la taille passe au milieu de l'approvisionnement laisserait repousser
+     * la queue sans jamais la retailler après.
+     *
+     * Chaque passe s'arrête dans cinq cas, tous sûrs : quota du flux atteint sans rien de
+     * nouveau à rafraîchir, plus de jeton de continuation, une page vide (le compte renvoie
+     * indéfiniment la même page), une page entièrement plus vieille que la fenêtre
+     * d'historique, ou [safetyCap] articles lus au total. Ce dernier garde la mémoire et le
+     * temps de calcul bornés sur un compte des années d'archives ; il est assez large pour
+     * qu'aucun compte réel ne l'atteigne.
+     */
     private suspend fun backfillAccount(account: CloudAccount): Int = withContext(Dispatchers.IO) {
         try {
             val p = providerFor(account.provider)
@@ -1142,6 +1175,8 @@ class PressRepository(
         pokeLists()
 
         var added = 0
+        var seen = 0
+        var authFailed = false
         // Quota et fenêtre temporelle : l'approvisionnement n'insère jamais au-delà du
         // quota par flux (la taille le supprimerait aussitôt), ni plus vieux que le réglage
         // d'historique — le plafond de sécurité reste le garde-fou absolu.
@@ -1149,15 +1184,26 @@ class PressRepository(
         val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
         val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
         val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-        val (addedPages, seenPages, failed) = backfillPages(account, null, counts, keep, cutoff) { seenNow ->
-            // Progression de l'historique (lus / plafond, jamais l'inverse : le total réel
-            // est inconnu d'avance, la passe s'arrête avant si épuisée) — tue seulement si
-            // aucune synchro ne tient déjà le bandeau (sinon les deux récits se mélangent).
-            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(seenNow, backfillSafetyCap)}/$backfillSafetyCap"
+        // Progression (lus / plafond, jamais l'inverse : le total réel est inconnu d'avance,
+        // chaque passe s'arrête avant si épuisée) — tue seulement si aucune synchro ne tient
+        // déjà le bandeau (sinon les deux récits se mélangent). `base` cumule les flux
+        // précédents : le compteur ne repart jamais de zéro en cours de route.
+        fun progress(base: Int): (Int) -> Unit = { seenNow ->
+            if (!isSyncLocked) syncStep.value = "Récupération de l'historique… ${minOf(base + seenNow, backfillSafetyCap)}/$backfillSafetyCap"
         }
-        added += addedPages
-        val seen = seenPages
-        val authFailed = failed
+        val feeds = subs.map { it.id }
+        if (feeds.isEmpty()) {
+            // Sans abonnement connu : passe globale historique (rien à perdre, rien à arrêter).
+            val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0))
+            added += a; seen += s; authFailed = f
+        } else {
+            feeds.forEach { feedId ->
+                if (seen >= backfillSafetyCap) return@forEach
+                val base = seen
+                val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, progress(base))
+                added += a; seen += s; authFailed = authFailed || f
+            }
+        }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
         // Taille avant les miniatures (voir KDoc) : ni images pour des lignes aussitôt
         // supprimées, ni repousse non retaillée après une taille concurrente. Ces deux
@@ -1230,6 +1276,10 @@ class PressRepository(
             added += storeArticles(capByQuota(fresh, counts, known, keep))
             seen += page.articles.size
             onProgress?.invoke(seen)
+            // Passe par flux : quota atteint sans rien de nouveau à rafraîchir — les pages
+            // suivantes (plus vieilles) seraient intégralement jetées. En passe globale les
+            // flux se mélangent : on ne peut pas conclure, on continue.
+            if (feedId != null && feedSaturated(counts[feedId] ?: 0, keep, page.articles.any { it.id in known })) break
             val next = page.continuation
             // Une continuation identique ferait boucler la même page indéfiniment.
             if (next.isNullOrBlank() || next == continuation) break

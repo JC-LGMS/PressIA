@@ -601,6 +601,15 @@ class PressLogicTest {
         starred = starred, laterSaved = laterSaved, published = published
     )
 
+    @Test fun `saturation d'un flux au quota`() {
+        // Quota atteint sans rien à rafraîchir : les pages suivantes seraient jetées.
+        assertTrue(com.pressia.data.feedSaturated(count = 100, keep = 100, hasKnown = false))
+        // Quota non atteint, ou page recroisant du connu : on continue.
+        assertFalse(com.pressia.data.feedSaturated(count = 99, keep = 100, hasKnown = false))
+        assertFalse(com.pressia.data.feedSaturated(count = 100, keep = 100, hasKnown = true))
+        assertFalse(com.pressia.data.feedSaturated(count = 0, keep = 100, hasKnown = false))
+    }
+
     @Test fun `decouverte des flux jamais approvisionnes`() {
         // Compte déjà provisionné : seuls les flux sans articles partent en rattrapage.
         assertEquals(
