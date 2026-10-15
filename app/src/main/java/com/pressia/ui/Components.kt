@@ -536,6 +536,28 @@ fun groupByDay(articles: List<ArticleEntity>, now: Long = System.currentTimeMill
     return out
 }
 
+/**
+ * Cible du bouton « descendre » : au 1er appui on s'arrête à la fin des non-lus quand la
+ * liste mélange lus et non-lus, au 2e (déjà à la fin des non-lus ou au-delà) on va tout en bas.
+ * [lastUnread] vaut -1 sans non-lu (tout en bas direct) ; [firstVisible] est le 1er élément
+ * visible courant. Pur et testé (voir `PressLogicTest`).
+ */
+fun downTarget(firstVisible: Int, lastUnread: Int, last: Int, stopAtUnread: Boolean): Int =
+    if (stopAtUnread && lastUnread >= 0 && firstVisible < lastUnread) lastUnread else last
+
+/**
+ * Index paresseux du dernier non-lu (en-têtes de jour ET intercalaires comptés : la LazyColumn
+ * ajoute un espace avant chaque en-tête sauf le premier, donc l'index affiché dépasse celui
+ * dans [items]). Vaut -1 si aucun non-lu. Pur et testé (voir `PressLogicTest`).
+ */
+fun lastUnreadLazyIndex(items: List<StreamItem>): Int {
+    val p = items.indexOfLast { it is StreamItem.Art && it.article.unread }
+    if (p < 0) return -1
+    val gaps = items.subList(0, p).count { it is StreamItem.Day } -
+        if (items.firstOrNull() is StreamItem.Day) 1 else 0
+    return p + gaps.coerceAtLeast(0)
+}
+
 /** Nom d'origine lisible : « https://www.lemonde.fr/rss/une.xml » → « lemonde.fr ». */
 fun prettyFeedTitle(title: String?): String {
     if (title.isNullOrBlank()) return ""
@@ -693,7 +715,12 @@ fun ArticleList(
     mode: String,
     onOpen: (ArticleEntity) -> Unit,
     vm: PressVM,
-    showSource: Boolean = true
+    showSource: Boolean = true,
+    /**
+     * Arrêt à la fin des non-lus au 1er appui sur « bas » (voir [downTarget]). Faux pour les
+     * Favoris et le tableau « Read later », qui vont toujours tout en bas directement.
+     */
+    stopAtUnread: Boolean = true
 ) {
     val trailing by vm.trailingAction.collectAsState()
     val swipe by vm.swipeAction.collectAsState()
@@ -717,6 +744,10 @@ fun ArticleList(
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
         val scope = rememberCoroutineScope()
+        // Position du dernier non-lu (la grille n'a pas d'en-têtes : index direct).
+        val unreadStopPos = remember(articles, stopAtUnread) {
+            if (stopAtUnread) articles.indexOfLast { it.unread } else -1
+        }
         Box(Modifier.fillMaxSize()) {
             LazyVerticalGrid(
                 GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp),
@@ -730,7 +761,9 @@ fun ArticleList(
                     onBottom = {
                         scope.launch {
                             val last = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                            gridState.animateScrollToItem(last)
+                            gridState.animateScrollToItem(
+                                downTarget(gridState.firstVisibleItemIndex, unreadStopPos, last, stopAtUnread)
+                            )
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -746,6 +779,11 @@ fun ArticleList(
         val grouped = remember(articles, now) { groupByDay(articles, now) }
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
+        // Position du dernier non-lu, en-têtes de jour ET intercalaires inclus (voir
+        // lastUnreadLazyIndex : l'index affiché n'est pas celui dans `grouped`).
+        val unreadStopPos = remember(grouped, stopAtUnread) {
+            if (stopAtUnread) lastUnreadLazyIndex(grouped) else -1
+        }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
@@ -774,7 +812,9 @@ fun ArticleList(
                     onBottom = {
                         scope.launch {
                             val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
-                            listState.animateScrollToItem(last)
+                            listState.animateScrollToItem(
+                                downTarget(listState.firstVisibleItemIndex, unreadStopPos, last, stopAtUnread)
+                            )
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)

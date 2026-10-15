@@ -147,7 +147,10 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                else -> ArticleList(articles, viewMode, onOpen, vm, showSource = feedScope.feedId == null)
+                else -> ArticleList(articles, viewMode, onOpen, vm, showSource = feedScope.feedId == null,
+                    // Favoris et « Read later » : le bouton « bas » va toujours tout en bas
+                    // directement, sans arrêt à la fin des non-lus.
+                    stopAtUnread = false)
             }
         }
     }

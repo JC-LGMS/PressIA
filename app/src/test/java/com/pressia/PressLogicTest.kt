@@ -563,6 +563,34 @@ class PressLogicTest {
         assertEquals("", com.pressia.data.AccountStore.parse("""[{"provider":"feedly","token":"t1"}]""")[0].userId)
     }
 
+    @Test fun `bouton bas s arrete a la fin des non-lus`() {
+        // Liste mixte : 1er appui depuis le haut → dernier non-lu, 2e appui → tout en bas.
+        assertEquals(5, com.pressia.ui.downTarget(0, 5, 9, true))
+        assertEquals(9, com.pressia.ui.downTarget(5, 5, 9, true))
+        // Déjà au-delà de la fin des non-lus (défilement manuel) : tout en bas direct.
+        assertEquals(9, com.pressia.ui.downTarget(7, 5, 9, true))
+        // Aucun non-lu, ou arrêt coupé (favoris / read later) : tout en bas direct.
+        assertEquals(9, com.pressia.ui.downTarget(0, -1, 9, true))
+        assertEquals(9, com.pressia.ui.downTarget(0, 5, 9, false))
+    }
+
+    @Test fun `index paresseux du dernier non-lu compte les intercalaires`() {
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        fun art(id: String, daysAgo: Long, unread: Boolean) =
+            com.pressia.data.local.ArticleEntity(id = id, feedId = "f", title = id, published = now - daysAgo * day, unread = unread)
+        // Jour 1 : 2 non-lus ; jour 2 : 1 lu puis 1 non-lu.
+        val items = com.pressia.ui.groupByDay(listOf(
+            art("a", 0, true), art("b", 0, true),
+            art("c", 3, false), art("d", 3, true)
+        ), now)
+        // Groupés : [Jour, a, b, Jour, c, d] → affichés : [Jour, a, b, espace, Jour, c, d] : d en 6.
+        assertEquals(6, com.pressia.ui.lastUnreadLazyIndex(items))
+        // Tout lu : -1 (le bouton va tout en bas direct).
+        val lus = com.pressia.ui.groupByDay(listOf(art("a", 0, false), art("b", 3, false)), now)
+        assertEquals(-1, com.pressia.ui.lastUnreadLazyIndex(lus))
+    }
+
     @Test fun `libelle du jeu de favoris`() {
         assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("app"))
         assertEquals("Read later", com.pressia.ui.favSetLabel("later"))
