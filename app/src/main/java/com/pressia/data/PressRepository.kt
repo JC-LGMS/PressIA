@@ -1138,11 +1138,12 @@ class PressRepository(
         cutoff: Long
     ): Int {
         var added = 0
+        val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
         val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
             fresh.forEach { feedId ->
-                added += backfillPages(account, feedId, counts, keep, cutoff).first
+                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff).first
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
@@ -1166,23 +1167,12 @@ class PressRepository(
                 .filter { it !in fresh }
             if (lagging.isNotEmpty()) {
                 android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
-                val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
                 lagging.forEach { feedId ->
-                    val (a, s, _) = backfillPages(account, feedId, counts, keep, cutoff)
+                    // healFeed refait la passe par flux (rapide si déjà connue) puis le repli :
+                    // le +A/L distingue un compteur fantôme d'un vrai manque.
+                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff)
                     added += a
-                    // +A/L par flux : distingue « rien de plus côté flux » (0/0 ou 0/lus
-                    // déjà connus) d'un compteur serveur fantôme (non-lus annoncés que le
-                    // flux ne rend jamais, même hors fenêtre).
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
-                    // Flux propre muet mais dossier connu : repli par le flux du dossier
-                    // (autre index côté compte — le global prouve que le contenu existe).
-                    if (a == 0 && s == 0) {
-                        folders[feedId]?.let { catId ->
-                            val (fa, fs, _) = backfillCategoryForFeed(account, feedId, catId, counts, keep, cutoff)
-                            added += fa
-                            android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
-                        }
-                    }
                 }
             }
         }
@@ -1377,14 +1367,12 @@ class PressRepository(
             val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0))
             added += a; seen += s; authFailed = f
         } else {
+            val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
             feeds.forEach { feedId ->
                 if (seen >= backfillSafetyCap) return@forEach
                 val base = seen
-                val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, progress(base))
+                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base))
                 added += a; seen += s; authFailed = authFailed || f
-                // Flux sans aucune page : visible dans le log (un flux vide à la connexion
-                // est anormal — soit il est vraiment vide, soit une page a calé en silence).
-                if (a == 0 && s == 0) android.util.Log.i("PressIA", "backfill ${account.id} : $feedId sans article (0 lu)")
             }
         }
         android.util.Log.i("PressIA", "backfill ${account.id}: $added articles, $seen lus")
@@ -1454,6 +1442,32 @@ class PressRepository(
             continuation = next
         }
         return Triple(added, seen, authFailed)
+    }
+
+    /**
+     * Passe d'historique d'un flux + repli dossier s'il est muet (voir
+     * [backfillCategoryForFeed]). Renvoie (nouveaux, lus, échec d'authentification).
+     * Un flux sans aucune page lue est anormal (soit vraiment vide, soit page vide
+     * transitoire) : visible dans le log, puis réparé aussitôt si son dossier est connu —
+     * sans attendre les compteurs serveur (injoignables une fois sous la rafale de
+     * connexion). [onProgress] suit la passe par flux ; le repli reste silencieux.
+     */
+    private suspend fun healFeed(
+        account: CloudAccount,
+        feedId: String,
+        categoryId: String?,
+        counts: MutableMap<String, Int>,
+        keep: Int,
+        cutoff: Long,
+        onProgress: ((seen: Int) -> Unit)? = null
+    ): Triple<Int, Int, Boolean> {
+        val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, onProgress)
+        if (a != 0 || s != 0) return Triple(a, s, f)
+        android.util.Log.i("PressIA", "backfill ${account.id} : $feedId sans article (0 lu)")
+        if (categoryId == null) return Triple(a, s, f)
+        val (fa, fs, ff) = backfillCategoryForFeed(account, feedId, categoryId, counts, keep, cutoff)
+        android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
+        return Triple(a + fa, s + fs, f || ff)
     }
 
     /**
