@@ -563,15 +563,21 @@ class PressLogicTest {
         assertEquals("", com.pressia.data.AccountStore.parse("""[{"provider":"feedly","token":"t1"}]""")[0].userId)
     }
 
-    @Test fun `bouton bas s arrete a la fin des non-lus`() {
-        // Liste mixte : 1er appui depuis le haut → dernier non-lu, 2e appui → tout en bas.
-        assertEquals(5, com.pressia.ui.downTarget(0, 5, 9, true))
-        assertEquals(9, com.pressia.ui.downTarget(5, 5, 9, true))
-        // Déjà au-delà de la fin des non-lus (défilement manuel) : tout en bas direct.
-        assertEquals(9, com.pressia.ui.downTarget(7, 5, 9, true))
+    @Test fun `bouton bas s arrete au milieu des non-lus`() {
+        // Liste mixte, écran de 10 : 1er appui depuis le haut → arrêt centré sur le dernier
+        // non-lu (20 - 5 = 15), 2e appui (arrêt atteint) → tout en bas, sans état mémorisé.
+        assertEquals(15, com.pressia.ui.downTarget(0, 20, 29, 10, true))
+        assertEquals(29, com.pressia.ui.downTarget(15, 20, 29, 10, true))
+        // Déjà au-delà de l'arrêt (défilement manuel) : tout en bas direct.
+        assertEquals(29, com.pressia.ui.downTarget(16, 20, 29, 10, true))
+        // Dernier non-lu déjà visible (arrêt 0) : tout en bas direct, pas d'arrêt inutile.
+        assertEquals(29, com.pressia.ui.downTarget(0, 3, 29, 10, true))
         // Aucun non-lu, ou arrêt coupé (favoris / read later) : tout en bas direct.
-        assertEquals(9, com.pressia.ui.downTarget(0, -1, 9, true))
-        assertEquals(9, com.pressia.ui.downTarget(0, 5, 9, false))
+        assertEquals(29, com.pressia.ui.downTarget(0, -1, 29, 10, true))
+        assertEquals(29, com.pressia.ui.downTarget(0, 20, 29, 10, false))
+        // Centrage : demi-écran avant, plancher 0.
+        assertEquals(15, com.pressia.ui.centeredStopIndex(20, 10))
+        assertEquals(0, com.pressia.ui.centeredStopIndex(3, 10))
     }
 
     @Test fun `index paresseux du dernier non-lu compte les intercalaires`() {
@@ -589,6 +595,9 @@ class PressLogicTest {
         // Tout lu : -1 (le bouton va tout en bas direct).
         val lus = com.pressia.ui.groupByDay(listOf(art("a", 0, false), art("b", 3, false)), now)
         assertEquals(-1, com.pressia.ui.lastUnreadLazyIndex(lus))
+        // Non-lu étoilé ou « read later » en fin de liste : ignoré, l'arrêt recule au dernier
+        // non-lu simple (ici b).
+        assertEquals(2, com.pressia.ui.lastUnreadLazyIndex(items) { it.id == "d" })
     }
 
     @Test fun `libelle du jeu de favoris`() {

@@ -537,21 +537,36 @@ fun groupByDay(articles: List<ArticleEntity>, now: Long = System.currentTimeMill
 }
 
 /**
- * Cible du bouton « descendre » : au 1er appui on s'arrête à la fin des non-lus quand la
- * liste mélange lus et non-lus, au 2e (déjà à la fin des non-lus ou au-delà) on va tout en bas.
- * [lastUnread] vaut -1 sans non-lu (tout en bas direct) ; [firstVisible] est le 1er élément
- * visible courant. Pur et testé (voir `PressLogicTest`).
+ * Cible du bouton « descendre » : au 1er appui on s'arrête sur la fin des non-lus quand la
+ * liste mélange lus et non-lus, au 2e (arrêt déjà atteint ou dépassé) on va tout en bas.
+ * L'arrêt est calculé par [centeredStopIndex] : dès qu'on l'a atteint, `firstVisible < stop`
+ * devient faux et l'appui suivant file en bas — sans état à mémoriser.
+ * [lastUnread] vaut -1 sans non-lu pris en compte (tout en bas direct). Pur et testé.
  */
-fun downTarget(firstVisible: Int, lastUnread: Int, last: Int, stopAtUnread: Boolean): Int =
-    if (stopAtUnread && lastUnread >= 0 && firstVisible < lastUnread) lastUnread else last
+fun downTarget(firstVisible: Int, lastUnread: Int, last: Int, visibleCount: Int, stopAtUnread: Boolean): Int {
+    if (!stopAtUnread || lastUnread < 0) return last
+    val stop = centeredStopIndex(lastUnread, visibleCount)
+    return if (firstVisible < stop) stop else last
+}
 
 /**
- * Index paresseux du dernier non-lu (en-têtes de jour ET intercalaires comptés : la LazyColumn
- * ajoute un espace avant chaque en-tête sauf le premier, donc l'index affiché dépasse celui
- * dans [items]). Vaut -1 si aucun non-lu. Pur et testé (voir `PressLogicTest`).
+ * Pour que le dernier non-lu apparaisse au milieu de l'écran plutôt que collé en haut quand
+ * des lus suivent : on vise un premier visible décalé d'un demi-écran avant lui. En fin de
+ * liste le défilement bute avant (l'arrêt reste visible en bas) ; sans place devant on
+ * retombe à 0 — auquel cas [downTarget] va directement en bas, le non-lu étant déjà visible.
+ * Pur et testé.
  */
-fun lastUnreadLazyIndex(items: List<StreamItem>): Int {
-    val p = items.indexOfLast { it is StreamItem.Art && it.article.unread }
+fun centeredStopIndex(lastUnread: Int, visibleCount: Int): Int =
+    (lastUnread - visibleCount / 2).coerceAtLeast(0)
+
+/**
+ * Index paresseux du dernier non-lu « simple » (un non-lu étoilé ou rangé dans « Read later »
+ * ne compte pas : [isExcluded], typiquement l'étoile effective qui couvre les deux), en-têtes
+ * de jour ET intercalaires comptés : la LazyColumn ajoute un espace avant chaque en-tête sauf
+ * le premier, donc l'index affiché dépasse celui dans [items]. Vaut -1 si aucun. Pur et testé.
+ */
+fun lastUnreadLazyIndex(items: List<StreamItem>, isExcluded: (ArticleEntity) -> Boolean = { false }): Int {
+    val p = items.indexOfLast { it is StreamItem.Art && it.article.unread && !isExcluded(it.article) }
     if (p < 0) return -1
     val gaps = items.subList(0, p).count { it is StreamItem.Day } -
         if (items.firstOrNull() is StreamItem.Day) 1 else 0
@@ -744,9 +759,9 @@ fun ArticleList(
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
         val scope = rememberCoroutineScope()
-        // Position du dernier non-lu (la grille n'a pas d'en-têtes : index direct).
+        // Position du dernier non-lu « simple » (la grille n'a pas d'en-têtes : index direct).
         val unreadStopPos = remember(articles, stopAtUnread) {
-            if (stopAtUnread) articles.indexOfLast { it.unread } else -1
+            if (stopAtUnread) articles.indexOfLast { it.unread && !vm.starState(it) } else -1
         }
         Box(Modifier.fillMaxSize()) {
             LazyVerticalGrid(
@@ -760,9 +775,13 @@ fun ArticleList(
                     onTop = { scope.launch { gridState.animateScrollToItem(0) } },
                     onBottom = {
                         scope.launch {
-                            val last = (gridState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            val info = gridState.layoutInfo
+                            val last = (info.totalItemsCount - 1).coerceAtLeast(0)
                             gridState.animateScrollToItem(
-                                downTarget(gridState.firstVisibleItemIndex, unreadStopPos, last, stopAtUnread)
+                                downTarget(
+                                    gridState.firstVisibleItemIndex, unreadStopPos, last,
+                                    info.visibleItemsInfo.size, stopAtUnread
+                                )
                             )
                         }
                     },
@@ -779,10 +798,10 @@ fun ArticleList(
         val grouped = remember(articles, now) { groupByDay(articles, now) }
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
-        // Position du dernier non-lu, en-têtes de jour ET intercalaires inclus (voir
-        // lastUnreadLazyIndex : l'index affiché n'est pas celui dans `grouped`).
+        // Position du dernier non-lu « simple » (ni étoile ni « Read later »), en-têtes de
+        // jour ET intercalaires inclus (voir lastUnreadLazyIndex).
         val unreadStopPos = remember(grouped, stopAtUnread) {
-            if (stopAtUnread) lastUnreadLazyIndex(grouped) else -1
+            if (stopAtUnread) lastUnreadLazyIndex(grouped) { vm.starState(it) } else -1
         }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
@@ -811,9 +830,13 @@ fun ArticleList(
                     onTop = { scope.launch { listState.animateScrollToItem(0) } },
                     onBottom = {
                         scope.launch {
-                            val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            val info = listState.layoutInfo
+                            val last = (info.totalItemsCount - 1).coerceAtLeast(0)
                             listState.animateScrollToItem(
-                                downTarget(listState.firstVisibleItemIndex, unreadStopPos, last, stopAtUnread)
+                                downTarget(
+                                    listState.firstVisibleItemIndex, unreadStopPos, last,
+                                    info.visibleItemsInfo.size, stopAtUnread
+                                )
                             )
                         }
                     },
