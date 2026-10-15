@@ -404,14 +404,15 @@ private fun MetaLine(
 /**
  * Couleur du rond lu / non lu — et, plus généralement, de l'action en bout de ligne.
  *
- * Le bouton doit signaler sans jamais dominer la ligne : on part du contour du thème et on
- * l'assombrit légèrement, dans les deux thèmes. En sombre il restait trop clair (quasi blanc),
- * en clair il tirait vers un gris trop pâle.
+ * Le bouton doit rester discret : en sombre on prend le gris atténué natif du thème
+ * (`outlineVariant`), bien en retrait du contour ; en clair, le contour assombri légèrement.
+ * (Les interpolations fines vers `onSurface` — 0,4, 0,25, 0,15 — étaient mesurées justes à
+ * l'écran mais imperceptibles à l'œil : ~10 points par canal.)
  */
 @Composable
 fun readDotTint(): Color {
     val cs = MaterialTheme.colorScheme
-    return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.0f)
+    return if (cs.background.luminance() < 0.5f) cs.outlineVariant
     else lerp(cs.outlineVariant, Color.Black, 0.07f)
 }
 
