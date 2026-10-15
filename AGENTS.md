@@ -91,6 +91,41 @@ par son text / content-desc / resource-id, calculer le centre de son bounds, pui
 
 Méthodologie : dump après chaque action, attendre 1–3 s selon la transition, re-dumper.
 
+Tailles de dump typiques pour identifier l'écran :
+- Menu contextuel (DropdownMenu) : ~4 KB (`ui.xml` ≈ 4061 octets)
+- Liste d'articles : ~35–45 KB
+- Détail d'article (WebView) : ~45–50 KB
+
+### Simuler un appui long (long-press)
+
+Sur l'émulateur, `input swipe X Y X Y DURATION` (même point de départ et d'arrivée) est
+parfois interprété comme un simple tap, pas un vrai long-press. Deux astuces :
+
+1. **`input motionevent DOWN` / `input motionevent UP`** — plus fiable :
+
+   ```powershell
+   & $adb -s emulator-5554 shell "input motionevent DOWN 540 473"
+   Start-Sleep -Seconds 2
+   & $adb -s emulator-5554 shell "input motionevent UP 540 473"
+   Start-Sleep -Seconds 1
+   ```
+
+2. **Warm-up mandatory** — après `am force-stop` + redémarrage, le ComposeView
+   n'enregistre pas immédiatement les gestes longs. Toujours faire un `input tap`
+   (et `KEYCODE_BACK` pour revenir) **avant** de tenter le long-press :
+
+   ```powershell
+   & $adb -s emulator-5554 shell "input tap 540 473"     # warm-up
+   Start-Sleep -Seconds 2
+   & $adb -s emulator-5554 shell input keyevent KEYCODE_BACK  # retour liste
+   Start-Sleep -Seconds 2
+   & $adb -s emulator-5554 shell "input swipe 540 473 540 473 3000"  # long-press
+   ```
+
+3. Utiliser `monkey -p com.pressia -c android.intent.category.LAUNCHER 1` pour
+   relancer l'app sans `force-stop` (plus rapide, le warm-up est déjà fait
+   si l'app était au premier plan).
+
 **Touches dans une WebView : viser ~90 px plus bas.** `input tap` atterrit environ 90 px
 trop haut dans le contenu web (constaté : le bouton gris « Sign in with Google » se prenait
 pour le vert « Sign in with Email » juste en dessous, les touches « Suivant » ouvraient les
