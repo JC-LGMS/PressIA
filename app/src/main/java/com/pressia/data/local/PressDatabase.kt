@@ -354,6 +354,11 @@ interface PressDao {
     suspend fun pendingSync(): List<SyncActionEntity>
     @Query("DELETE FROM sync_queue WHERE rowId = :rowId")
     suspend fun dequeue(rowId: Long)
+    /** Oublie les actions d'un compte supprimé : sans flux, elles partiraient chez un
+     * compte survivant (voir `accountFor`), en pure perte. Ne jamais appeler avec une
+     * liste vide (`IN ()` invalide) — l'appelant garde le cas courant. */
+    @Query("DELETE FROM sync_queue WHERE feedId IN (:feedIds)")
+    suspend fun deleteQueueOfFeeds(feedIds: List<String>): Int
     @Query("UPDATE sync_queue SET tries = tries + 1 WHERE rowId = :rowId")
     suspend fun bumpTry(rowId: Long)
     @Query("DELETE FROM sync_queue")

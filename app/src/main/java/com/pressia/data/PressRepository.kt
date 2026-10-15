@@ -238,7 +238,11 @@ class PressRepository(
      * Ordre voulu : registre, base, préférences, fichiers. Les suppressions SQL sont rapides ;
      * le ménage des fichiers est lent (milliers de miniatures) et passe en dernier pour
      * qu'une interruption ne laisse que des fichiers orphelins (inoffensifs, repris par le
-     * prochain nettoyage) au lieu d'abonnements fantômes. Les préférences héritées suivent,
+     * prochain nettoyage) au lieu d'abonnements fantômes. Le cache Coil (favicons, images
+     * plein format des articles) part aussi : sans cela « Cache utilisé » restait
+     * plein de Mo orphelins après la déconnexion. Idem pour la file de sync du compte :
+     * sans flux, ses actions partiraient chez un compte survivant, en pure perte.
+     * Les préférences héritées suivent,
      * et c'est indispensable : [Prefs.TOKEN] est le repli de [cloudAccounts] quand le registre
      * est vide. Un jeton laissé en place après la suppression ferait réapparaître le compte
      * supprimé à la prochaine lecture ; à l'inverse, [Prefs.PROVIDER] pouvait désigner un
@@ -248,8 +252,8 @@ class PressRepository(
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         clearAccountExpired(accountId)
-        // Flux du compte avant leur effacement : leurs traces d'extraction/lecture partent
-        // avec leurs articles (même motif que le désabonnement en synchro).
+        // Flux du compte avant leur effacement : leurs traces d'extraction/lecture et leur
+        // file de sync partent avec leurs articles (même motif que le désabonnement en synchro).
         val feedsOfAccount = dao.subscriptions().filter { it.provider == accountId }.map { it.id }
         dao.clearArticlesOf(accountId)
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
@@ -262,6 +266,7 @@ class PressRepository(
         if (feedsOfAccount.isNotEmpty()) {
             dao.deleteExtractEventsOfFeeds(feedsOfAccount)
             dao.deleteReadingEventsOfFeeds(feedsOfAccount)
+            dao.deleteQueueOfFeeds(feedsOfAccount)
         }
 
         if (accounts.isEmpty()) {
@@ -277,6 +282,8 @@ class PressRepository(
             if (activeWasRemoved) setActiveAccount(accounts.first().id)
         }
         // Fichiers en dernier (lent, tuable sans casse) : ne restent au pire que des orphelins.
+        // Coil d'abord (favicons, plein format) : testé, il gardait ~2 Mo après déconnexion.
+        runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
         gcThumbs()
     }
 
@@ -1068,6 +1075,23 @@ class PressRepository(
     }
 
     /**
+     * Compteurs de non-lus par flux du compte, restreints à ses abonnements. Null si
+     * l'appel échoue (le rattrapage est sauté, pas la synchro) — voir l'essai unique
+     * dans [provisionHistory] : sous la rafale de la connexion, cet appel flanche parfois.
+     */
+    private suspend fun fetchServerUnread(
+        account: CloudAccount,
+        subIds: Set<String>
+    ): Map<String, Int>? =
+        runCatching { providerFor(account.provider).unreadCountsByFeed(account.token) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                noteRateLimit(it, account.label)
+                android.util.Log.w("PressIA", "rattrapage ${account.id} : compteurs injoignables ($it)")
+            }
+            .getOrNull()?.filterKeys { it in subIds }
+
+    /**
      * Approvisionne l'historique manquant d'un compte : découverte des flux jamais vus +
      * rattrapage des flux sous-approvisionnés (dont repli dossier quand le flux propre est
      * muet), mêmes bornes partout (quota, fenêtre, plafond). Silencieux (récit nul) :
@@ -1096,9 +1120,17 @@ class PressRepository(
         // laggingFeeds), déjà découverts aussi. Rien à faire dans le cas courant (une
         // différence de cartes en mémoire + un appel compteurs léger).
         val subIds = subs.map { it.id }.toSet()
-        val serverUnread = providerFor(account.provider).unreadCountsByFeed(account.token)
-            ?.filterKeys { it in subIds }.orEmpty()
-        if (serverUnread.isNotEmpty()) {
+        var serverUnread = fetchServerUnread(account, subIds)
+        if (serverUnread == null) {
+            // Compteurs injoignables sous la rafale (constaté à la connexion : la passe
+            // manuelle suivante les obtient sans faute) — un seul nouvel essai après une
+            // courte pause, sinon le rattrapage sauterait en silence. Annulable (déconnexion).
+            kotlinx.coroutines.delay(3000)
+            serverUnread = fetchServerUnread(account, subIds)
+        }
+        if (serverUnread == null) {
+            android.util.Log.w("PressIA", "rattrapage ${account.id} : compteurs toujours injoignables, passé (prochaine synchro)")
+        } else if (serverUnread.isNotEmpty()) {
             val localUnread = dao.unreadByFeed().associate { it.feedId to it.c }
             val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
                 .filter { it !in fresh }
