@@ -837,7 +837,7 @@ fun SettingsScreen(vm: PressVM) {
         FaviconSourceRow(
             faviconSource == com.pressia.data.FAVICON_SOURCE_DIRECT,
             "Sources en direct",
-            "Icônes demandées aux sites eux-mêmes (/favicon.ico).",
+            "Icônes déclarées par les sites eux-mêmes (repli : /favicon.ico).",
             refreshing = vm.refreshingFavicons
         ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
         HorizontalDivider()

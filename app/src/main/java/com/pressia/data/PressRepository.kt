@@ -1933,6 +1933,11 @@ class PressRepository(
         // pour les deux, sinon le préchargement remplirait le cache d'URL jamais affichées.
         val direct = prefs.data.first()[Prefs.FAVICON_SOURCE] == FAVICON_SOURCE_DIRECT
         val subs = dao.subscriptions()
+        // Source directe : l'icône déclarée par chaque site (lue dans son HTML, en cache —
+        // `/favicon.ico` seul ne suffit pas, beaucoup de sites n'en exposent pas et l'icône
+        // du compte peut être périmée). Déjà résolus = réutilisés, sans nouveau téléchargement.
+        val resolved = if (direct) parseResolved(prefs.data.first()[Prefs.FAVICON_RESOLVED]).toMutableMap()
+        else mutableMapOf()
         // En parallèle (borné) : des icônes de quelques Ko sur des hôtes variés — 1 par 1,
         // chaque favicon lent retardait tous les suivants.
         val permits = Semaphore(6)
@@ -1941,7 +1946,10 @@ class PressRepository(
             subs.map { sub ->
                 async {
                     permits.withPermit {
-                        val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct) ?: return@async
+                        val siteIcon = if (direct) {
+                            resolved[sub.id] ?: resolveSiteIcon(sub)?.also { resolved[sub.id] = it }
+                        } else null
+                        val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct, siteIcon) ?: return@async
                         // Préchargement Coil : télécharge et met en cache disque sans afficher.
                         val ok = runCatching {
                             loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
@@ -1953,9 +1961,48 @@ class PressRepository(
                 }
             }.awaitAll()
         }
+        if (direct) prefs.set(Prefs.FAVICON_RESOLVED, encodeResolved(resolved))
         val n = done.get()
         android.util.Log.i("PressIA", "favicons : $n/${subs.size}")
         n
+    }
+
+    private val iconHttp: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * Icône déclarée par le site de l'abonnement (`<link rel="icon">` de sa page d'accueil),
+     * ou null. Ne lit que le début du HTML (les icônes vivent dans `<head>`) : rapide même
+     * sur les pages lourdes. Échec silencieux (null) : l'appelant retombe sur l'icône du
+     * compte puis `/favicon.ico`.
+     */
+    private suspend fun resolveSiteIcon(sub: SubscriptionEntity): String? = withContext(Dispatchers.IO) {
+        val page = sitePageUrl(sub.siteUrl, sub.url, sub.id) ?: return@withContext null
+        val html = runCatching {
+            iconHttp.newCall(okhttp3.Request.Builder().url(page).header("User-Agent", "PressIA").get().build())
+                .execute().use { res ->
+                    if (!res.isSuccessful) return@withContext null
+                    val stream = res.body?.byteStream() ?: return@withContext null
+                    stream.use { s ->
+                        val out = java.io.ByteArrayOutputStream(128 * 1024)
+                        val buf = ByteArray(32 * 1024)
+                        var total = 0
+                        while (total < 128 * 1024) {
+                            val n = s.read(buf, 0, minOf(buf.size, 128 * 1024 - total))
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            total += n
+                        }
+                        out.toByteArray().toString(Charsets.UTF_8)
+                    }
+                }
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withContext null
+        runCatching { parseSiteIcon(html, page) }.getOrNull()
     }
 
     /**
@@ -1971,6 +2018,9 @@ class PressRepository(
             try {
                 if (!imagesAllowed()) return@withContext -1
                 runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
+                // Les icônes résolues aussi : une refonte du site change son icône, l'ancienne
+                // résolue serait périmée — tout est redécouvert (voir `syncFavicons`).
+                prefs.set(Prefs.FAVICON_RESOLVED, "")
                 syncStep.value = "Favicons en cours…"
                 syncFavicons()
             } finally {

@@ -316,6 +316,43 @@ class PressLogicTest {
         assertEquals("Mon blog", com.pressia.ui.prettyFeedTitle("Mon blog"))
         assertEquals("", com.pressia.ui.prettyFeedTitle(null))
     }
+    @Test fun `favicon direct lit l icone declaree du site`() {
+        // Tête réelle de Frandroid : plusieurs icônes (48, 192), apple-touch-icon, ms-tile
+        // et splash screens → la 192 déclarée `rel="icon"` gagne.
+        val head = "<link rel=\"manifest\" href=\"/pwa-manifest.json\">" +
+            "<link rel=\"icon\" href=\"https://images.frandroid.com/x/cropped-60x60.png\" sizes=\"48x48\" />" +
+            "<link rel=\"icon\" href=\"https://images.frandroid.com/x/cropped-192x192.png\" sizes=\"192x192\" />" +
+            "<link rel=\"apple-touch-icon\" href=\"https://images.frandroid.com/x/cropped-180x180.png\" />" +
+            "<link rel=\"mask-icon\" href=\"https://ex.com/mask.svg\" color=\"#000\" />" +
+            "<meta name=\"msapplication-TileImage\" content=\"https://ex.com/tile.png\" />"
+        assertEquals("https://images.frandroid.com/x/cropped-192x192.png",
+            com.pressia.data.parseSiteIcon(head, "https://www.frandroid.com/"))
+        // Href relatif + apple seule en repli.
+        assertEquals("https://ex.com/icons/i.png",
+            com.pressia.data.parseSiteIcon("<link REL=\"Apple-Touch-Icon\" href=\"/icons/i.png\">", "https://ex.com/blog/"))
+        assertEquals("https://ex.com/blog/favicon.png",
+            com.pressia.data.parseSiteIcon("<link rel='icon' href='favicon.png'>", "https://ex.com/blog/"))
+        // Rien de déclarable : null (l'appelant retombe sur l'icône du compte / /favicon.ico).
+        assertNull(com.pressia.data.parseSiteIcon("<link rel=\"stylesheet\" href=\"/s.css\">", "https://ex.com/"))
+        assertNull(com.pressia.data.parseSiteIcon("pas du html", "https://ex.com/"))
+        // Ordre direct : résolue > compte > /favicon.ico ; cache aller-retour.
+        assertEquals("https://site.com/real.png",
+            com.pressia.data.directIconUrl("https://site.com/real.png", "https://cdn.com/old.png", "site.com"))
+        assertEquals("https://cdn.com/old.png",
+            com.pressia.data.directIconUrl(null, "https://cdn.com/old.png", "site.com"))
+        assertEquals("https://site.com/favicon.ico",
+            com.pressia.data.directIconUrl(null, null, "site.com"))
+        val map = mapOf("a" to "https://x.com/i.png")
+        assertEquals(map, com.pressia.data.parseResolved(com.pressia.data.encodeResolved(map)))
+        assertTrue(com.pressia.data.parseResolved("corrompu").isEmpty())
+        // Le compte garde la priorité en agrégateur, la résolue en direct.
+        val sub = com.pressia.data.local.SubscriptionEntity(
+            id = "f1", title = "x", url = "https://site.com/rss", siteUrl = "https://site.com",
+            iconUrl = "https://cdn.com/old.png")
+        assertEquals("https://cdn.com/old.png", com.pressia.ui.feedFaviconUrl(sub))
+        assertEquals("https://site.com/real.png",
+            com.pressia.ui.feedFaviconUrl(sub, direct = true, resolved = "https://site.com/real.png"))
+    }
     @Test fun `favicon depuis host`() {
         val sub = com.pressia.data.local.SubscriptionEntity(
             id = "https://www.lemonde.fr/rss/une.xml", title = "x",

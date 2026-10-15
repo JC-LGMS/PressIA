@@ -433,18 +433,32 @@ fun thumbModel(ctx: Context, url: String?): Any? {
  * identique au pré-téléchargement ([PressRepository.syncFavicons]).
  */
 val LocalFaviconDirect = compositionLocalOf { false }
+/** Icônes de sites résolues (`feedId → URL`, voir `Prefs.FAVICON_RESOLVED`), même descente. */
+val LocalFaviconResolved = compositionLocalOf { emptyMap<String, String>() }
 
 /** Favicon de l'abonnement : icône fournie (Feedly/Inoreader), sinon favicon du site via son host, sinon initiale. */
-fun feedFaviconUrl(sub: SubscriptionEntity?, direct: Boolean = false): String? {
+fun feedFaviconUrl(sub: SubscriptionEntity?, direct: Boolean = false, resolved: String? = null): String? {
     if (sub == null) return null
     // Même résolution que le pré-téléchargement (PressRepository.refreshFavicons).
-    return faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct)
+    return faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct, resolved ?: "")
 }
 
 /** Favicon de l'abonnement, sinon pastille avec l'initiale (100 % hors-ligne). */
 @Composable
 fun FeedAvatar(sub: SubscriptionEntity?, sizeDp: Int = 28) {
-    FeedAvatarContent(prettyFeedTitle(sub?.title), feedFaviconUrl(sub, LocalFaviconDirect.current), sizeDp)
+    FeedAvatarContent(prettyFeedTitle(sub?.title),
+        feedFaviconUrl(sub, LocalFaviconDirect.current, LocalFaviconResolved.current[sub?.id]), sizeDp)
+}
+
+/** Pastille avec l'initiale : repli quand il n'y a pas d'icône, ou quand elle ne charge pas. */
+@Composable
+private fun LetterAvatar(feedTitle: String?, sizeDp: Int) {
+    val letter = prettyFeedTitle(feedTitle).firstOrNull()?.uppercase() ?: "•"
+    val bg = MaterialTheme.colorScheme.primaryContainer
+    Box(Modifier.size(sizeDp.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+        Text(letter, fontSize = (sizeDp / 2).sp, fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimaryContainer)
+    }
 }
 
 @Composable
@@ -453,19 +467,18 @@ private fun FeedAvatarContent(feedTitle: String?, iconUrl: String?, sizeDp: Int 
     if (!iconUrl.isNullOrBlank()) {
         // En thème sombre, les favicons clairs (fond blanc) agressent l'œil : on les assombrit.
         val night = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        AsyncImage(
-            iconUrl, feedTitle,
-            Modifier.size(s).clip(CircleShape),
+        // En échec (404 du `/favicon.ico` en direct, site injoignable…), l'initiale plutôt
+        // que du vide : avant, l'avatar restait transparent.
+        coil.compose.SubcomposeAsyncImage(
+            model = iconUrl,
+            contentDescription = feedTitle,
+            modifier = Modifier.size(s).clip(CircleShape),
             contentScale = ContentScale.Crop,
-            colorFilter = if (night) ColorFilter.colorMatrix(ColorMatrix().apply { setToScale(0.78f, 0.78f, 0.78f, 1f) }) else null
+            colorFilter = if (night) ColorFilter.colorMatrix(ColorMatrix().apply { setToScale(0.78f, 0.78f, 0.78f, 1f) }) else null,
+            error = { LetterAvatar(feedTitle, sizeDp) }
         )
     } else {
-        val letter = prettyFeedTitle(feedTitle).firstOrNull()?.uppercase() ?: "•"
-        val bg = MaterialTheme.colorScheme.primaryContainer
-        Box(Modifier.size(s).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
-            Text(letter, fontSize = (sizeDp / 2).sp, fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
+        LetterAvatar(feedTitle, sizeDp)
     }
 }
 

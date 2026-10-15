@@ -179,6 +179,14 @@ class Prefs(private val ctx: Context) {
          */
         val RESTORED_READ = stringPreferencesKey("restored_read")
 
+        /**
+         * Icônes de sites résolues (`feedId → URL lue dans le HTML`, voir `parseSiteIcon`) :
+         * cache local de la source « en direct », re-résolu à chaque actualisation manuelle
+         * des favicons. Même statut que [RESTORED_STARRED] : hors [ENTRIES], jamais exporté
+         * (rouvrir un export sur un autre appareil re-résout, les icônes pouvant changer).
+         */
+        val FAVICON_RESOLVED = stringPreferencesKey("favicon_resolved")
+
         /** Toutes les préférences, typées : sauvegarde / restauration par nom. */
         val ENTRIES: List<PrefEntry> = listOf(
             PrefEntry.Str("provider", PROVIDER), PrefEntry.Str("token", TOKEN),

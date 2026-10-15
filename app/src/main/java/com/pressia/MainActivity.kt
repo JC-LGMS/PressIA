@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.pressia.data.FAVICON_SOURCE_AGGREGATOR
 import com.pressia.data.FAVICON_SOURCE_DIRECT
+import com.pressia.data.parseResolved
 import com.pressia.data.local.Prefs
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -240,9 +241,16 @@ class MainActivity : ComponentActivity() {
                     val faviconDirect by remember(vm.repo.prefs) {
                         vm.repo.prefs.flow(Prefs.FAVICON_SOURCE, FAVICON_SOURCE_AGGREGATOR)
                     }.collectAsState(initial = FAVICON_SOURCE_AGGREGATOR)
+                    // Icônes de sites résolues (source directe) : décodées une fois ici, lues par
+                    // les avatars via le CompositionLocal (voir `FeedAvatar`).
+                    val faviconResolved by remember(vm.repo.prefs) {
+                        vm.repo.prefs.flow(Prefs.FAVICON_RESOLVED, "")
+                    }.collectAsState(initial = "")
+                    val resolvedIcons = remember(faviconResolved) { parseResolved(faviconResolved) }
                     CompositionLocalProvider(
                         LocalBannerLift provides bannerLift,
-                        LocalFaviconDirect provides (faviconDirect == FAVICON_SOURCE_DIRECT)
+                        LocalFaviconDirect provides (faviconDirect == FAVICON_SOURCE_DIRECT),
+                        LocalFaviconResolved provides resolvedIcons
                     ) {
                     ModalNavigationDrawer(
                         drawerState = drawer,
