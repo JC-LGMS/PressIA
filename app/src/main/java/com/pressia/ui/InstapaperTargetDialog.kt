@@ -39,9 +39,11 @@ fun InstapaperTargetDialog(vm: PressVM, articleId: String, articleTitle: String,
     var busy by remember(articleId) { mutableStateOf(false) }
     var createError by remember(articleId) { mutableStateOf<String?>(null) }
 
+    var tagSearch by remember(articleId) { mutableStateOf("") }
+
     LaunchedEffect(articleId) {
         folders = vm.instapaperFolders()
-        tags = vm.instapaperTags()
+        tags = vm.instapaperTags().sortedBy { it.name.lowercase() }
         loaded = true
     }
 
@@ -67,7 +69,7 @@ fun InstapaperTargetDialog(vm: PressVM, articleId: String, articleTitle: String,
 
     androidx.compose.ui.window.Dialog(onDismissRequest = { vm.cancelInstapaperPicker() }) {
         Card {
-            Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Envoyer vers Instapaper", style = MaterialTheme.typography.titleLarge)
                 Text(
                     articleTitle.ifBlank { "(sans titre)" },
@@ -78,86 +80,102 @@ fun InstapaperTargetDialog(vm: PressVM, articleId: String, articleTitle: String,
                 if (!loaded) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else {
-                    // ---- Dossier ----
-                    Text("Dossier", style = MaterialTheme.typography.titleSmall)
-                    ExposedDropdownMenuBox(expanded = folderMenu, onExpandedChange = { folderMenu = it }) {
-                        OutlinedTextField(
-                            value = folders.firstOrNull { it.id == folderId }?.title ?: "Accueil",
-                            onValueChange = {},
-                            readOnly = true,
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(folderMenu) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                            singleLine = true
-                        )
-                        ExposedDropdownMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Accueil") },
-                                onClick = { folderId = null; folderMenu = false },
-                                trailingIcon = { if (folderId == null) Icon(Icons.Filled.Check, null) }
-                            )
-                            folders.forEach { f ->
-                                DropdownMenuItem(
-                                    text = { Text(f.title) },
-                                    onClick = { folderId = f.id; folderMenu = false },
-                                    trailingIcon = { if (folderId == f.id) Icon(Icons.Filled.Check, null) }
-                                )
-                            }
-                        }
-                    }
-                    if (!creating) {
-                        TextButton({ creating = true; createError = null }) { Text("+ Nouveau dossier…") }
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Content scrollable
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // ---- Dossier ----
+                        Text("Dossier", style = MaterialTheme.typography.titleSmall)
+                        ExposedDropdownMenuBox(expanded = folderMenu, onExpandedChange = { folderMenu = it }) {
                             OutlinedTextField(
-                                newFolder, { newFolder = it; createError = null },
-                                label = { Text("Nom du dossier") },
-                                modifier = Modifier.weight(1f), singleLine = true
+                                value = folders.firstOrNull { it.id == folderId }?.title ?: "Accueil",
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(folderMenu) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                                singleLine = true
                             )
-                            Spacer(Modifier.width(8.dp))
-                            IconButton({
-                                scope.launch {
-                                    val f = vm.createInstapaperFolder(newFolder)
-                                    if (f == null) createError = "Création refusée (titre déjà pris ?)"
-                                    else {
-                                        folders = folders + f
-                                        folderId = f.id
-                                        newFolder = ""
-                                        creating = false
-                                    }
+                            ExposedDropdownMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Accueil") },
+                                    onClick = { folderId = null; folderMenu = false },
+                                    trailingIcon = { if (folderId == null) Icon(Icons.Filled.Check, null) }
+                                )
+                                folders.forEach { f ->
+                                    DropdownMenuItem(
+                                        text = { Text(f.title) },
+                                        onClick = { folderId = f.id; folderMenu = false },
+                                        trailingIcon = { if (folderId == f.id) Icon(Icons.Filled.Check, null) }
+                                    )
                                 }
-                            }, enabled = newFolder.isNotBlank()) { Icon(Icons.Filled.Add, "créer le dossier") }
+                            }
                         }
-                        if (createError != null) {
-                            Text(createError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        if (!creating) {
+                            TextButton({ creating = true; createError = null }) { Text("+ Nouveau dossier…") }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    newFolder, { newFolder = it; createError = null },
+                                    label = { Text("Nom du dossier") },
+                                    modifier = Modifier.weight(1f), singleLine = true
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                IconButton({
+                                    scope.launch {
+                                        val f = vm.createInstapaperFolder(newFolder)
+                                        if (f == null) createError = "Création refusée (titre déjà pris ?)"
+                                        else {
+                                            folders = folders + f
+                                            folderId = f.id
+                                            newFolder = ""
+                                            creating = false
+                                        }
+                                    }
+                                }, enabled = newFolder.isNotBlank()) { Icon(Icons.Filled.Add, "créer le dossier") }
+                            }
+                            if (createError != null) {
+                                Text(createError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
-                    }
-                    // ---- Tags ----
-                    Text("Tags", style = MaterialTheme.typography.titleSmall)
-                    if (tags.isNotEmpty()) {
-                        @OptIn(ExperimentalLayoutApi::class)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            tags.forEach { t ->
-                                val on = t.name in checkedTags
-                                FilterChip(
-                                    selected = on,
-                                    onClick = { checkedTags = if (on) checkedTags - t.name else checkedTags + t.name },
-                                    label = { Text(t.name) },
-                                    leadingIcon = { if (on) Icon(Icons.Filled.Check, null, Modifier.size(16.dp)) }
+                        // ---- Tags ----
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tags", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            if (tags.isNotEmpty()) {
+                                OutlinedTextField(
+                                    tagSearch, { tagSearch = it },
+                                    label = { Text("Rechercher") },
+                                    modifier = Modifier.weight(1.5f), singleLine = true
                                 )
                             }
                         }
+                        val filteredTags = remember(tags, tagSearch) {
+                            if (tagSearch.isBlank()) tags else tags.filter { it.name.contains(tagSearch, ignoreCase = true) }
+                        }
+                        if (filteredTags.isNotEmpty()) {
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                filteredTags.forEach { t ->
+                                    val on = t.name in checkedTags
+                                    FilterChip(
+                                        selected = on,
+                                        onClick = { checkedTags = if (on) checkedTags - t.name else checkedTags + t.name },
+                                        label = { Text(t.name) },
+                                        leadingIcon = { if (on) Icon(Icons.Filled.Check, null, Modifier.size(16.dp)) }
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            freeTags, { freeTags = it },
+                            label = { Text("Autres tags, séparés par des virgules") },
+                            modifier = Modifier.fillMaxWidth(), singleLine = true
+                        )
+                        Text(
+                            "Les tags inexistants sont créés automatiquement.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    OutlinedTextField(
-                        freeTags, { freeTags = it },
-                        label = { Text("Autres tags, séparés par des virgules") },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true
-                    )
-                    Text(
-                        "Les tags inexistants sont créés automatiquement.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
+                // Fixed buttons at bottom
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton({ vm.cancelInstapaperPicker() }) { Text("Annuler") }
                     Spacer(Modifier.width(8.dp))
