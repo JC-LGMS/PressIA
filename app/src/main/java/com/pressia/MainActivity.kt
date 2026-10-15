@@ -79,11 +79,6 @@ class MainActivity : ComponentActivity() {
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
                     if (current in CONTENT_ROUTES) lastContent = current
-                    // Revenir à l'accueil, c'est revenir à « Tous les articles » (la recherche
-                    // suit vm.scope) : à l'arrivée seulement. Le changer avant la navigation
-                    // repeignait l'écran quitté (titre + sources sur chaque ligne) pendant que
-                    // l'accueil se composait (~1 s) — l'écran quitté garde ses visuels.
-                    if (current == "home") vm.switchScope(Scope(label = "Tous les articles"))
                 }
 
                 /**
@@ -264,6 +259,19 @@ class MainActivity : ComponentActivity() {
                             NavHost(nav, startDestination = startRoute) {
                                 composable("home") {
                                     BackRule()
+                                    // Revenir à l'accueil, c'est revenir à « Tous les articles »
+                                    // (la recherche suit vm.scope) : une fois la sortie de l'écran
+                                    // précédent terminée seulement. La navigation joue un fondu de
+                                    // 700 ms par défaut (navigation-compose 2.7) pendant lequel
+                                    // l'écran quitté reste composé : tout reset plus tôt le
+                                    // repeignait (titre « Tous les articles », sources sur chaque
+                                    // ligne) sous les yeux de l'utilisateur. Le délai couvre le
+                                    // fondu avec de la marge ; invisible sur l'accueil, il ne sert
+                                    // qu'aux écrans ouverts ensuite (recherche…).
+                                    LaunchedEffect(Unit) {
+                                        kotlinx.coroutines.delay(1000)
+                                        vm.switchScope(Scope(label = "Tous les articles"))
+                                    }
                                     SubscriptionsScreen(vm,
                                         onOpenStream = { openContent("stream") },
                                         onMenu = { openDrawer() })
