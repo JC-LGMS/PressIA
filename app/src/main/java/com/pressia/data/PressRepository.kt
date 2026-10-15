@@ -2063,6 +2063,8 @@ class PressRepository(
     /**
      * Désabonne un flux. Un flux appartenant à un compte est retiré chez ce compte ; un flux RSS
      * local est simplement effacé de la base, avec ses articles, ses HTML extraits et ses traces.
+     * Puis les miniatures orphelines (même motif que le désabonnement en synchro : sinon les
+     * images du flux supprimé resteraient sur disque, sans article pour les réclamer).
      */
     suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext
@@ -2071,6 +2073,7 @@ class PressRepository(
         dao.deleteArticlesOfFeed(feedId)
         dao.deleteExtractEventsOfFeeds(listOf(feedId))
         dao.deleteReadingEventsOfFeeds(listOf(feedId))
+        gcThumbs()
     }
 
     /**
