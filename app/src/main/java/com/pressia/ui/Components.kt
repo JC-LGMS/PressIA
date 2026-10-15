@@ -116,6 +116,9 @@ fun ArticleRow(
     val leadTap: () -> Unit = if (tapFaviconRead) ({ onToggleRead() }) else ({ onOpen() })
     // Pendant un glissement, le rond lu/non-lu laisse la place à l'étoile du geste (dessinée
     // derrière la ligne) : une seule étoile, jamais deux.
+    // Quelle que soit l'action choisie pour cet emplacement (rond, partage, Instapaper, favori),
+    // elle porte la même teinte discrète : l'accent reste réservé aux compteurs et aux états actifs.
+    val trailTint = readDotTint()
     val trail: @Composable (Boolean) -> Unit = { swiping ->
         if (swiping) Unit else when (trailing) {
             "none" -> Unit
@@ -125,18 +128,18 @@ fun ArticleRow(
                         // Non lu = plein, lu = vide.
                         if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
                         if (a.unread) "marquer lu" else "marquer non lu",
-                        tint = readDotTint(),
+                        tint = trailTint,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
-            "share" -> if (dotAtStart) Unit else IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager") }
-            "instapaper" -> if (dotAtStart) Unit else IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper") }
+            "share" -> if (dotAtStart) Unit else IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager", tint = trailTint) }
+            "instapaper" -> if (dotAtStart) Unit else IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper", tint = trailTint) }
             "star" -> if (dotAtStart) Unit else IconButton(onToggleStar) {
                 Icon(
                     if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
                     if (a.starred) "Retirer des favoris" else "Ajouter aux favoris",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = trailTint
                 )
             }
             else -> Unit
@@ -399,16 +402,17 @@ private fun MetaLine(
 }
 
 /**
- * Couleur du rond lu / non lu.
+ * Couleur du rond lu / non lu — et, plus généralement, de l'action en bout de ligne.
  *
- * Le rond doit signaler l'état sans jamais dominer la ligne : on part du contour du thème et on
- * l'éclaircit franchement. En thème sombre, le contour seul était quasi invisible ; en thème
- * clair, il tires vers le gris plombe et paraissait « sale ».
+ * Le bouton doit signaler sans jamais dominer la ligne : on part du contour du thème et on
+ * l'assombrit légèrement, dans les deux thèmes. En sombre il restait trop clair (quasi blanc),
+ * en clair il tirait vers un gris trop pâle.
  */
 @Composable
 fun readDotTint(): Color {
     val cs = MaterialTheme.colorScheme
-    return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.40f) else cs.outlineVariant
+    return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.25f)
+    else lerp(cs.outlineVariant, Color.Black, 0.15f)
 }
 
 /**
