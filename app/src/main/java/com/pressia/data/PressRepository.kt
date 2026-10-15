@@ -980,10 +980,12 @@ class PressRepository(
      *
      * L'historique remonte flux par flux depuis le plus récent ([backfillArticles], bornes
      * quota / fenêtre / plafond) : le récent est inclus, aucune synchro préalable ne
-     * retélécharge les mêmes pages. Suivent ce que la synchro faisait en plus — file
-     * montante d'abord (actions hors-ligne en attente), réconciliation du lu/non-lu,
-     * rejeux de restauration, taille, puis miniatures + « Read later » en parallèle et
-     * favicons — avec un seul récit au bandeau et un seul [Prefs.LAST_SYNC_AT].
+     * retélécharge les mêmes pages. Suivent la vérification des flux ([provisionHistory] :
+     * un flux dont la première page est vide restait sinon vide jusqu'à la prochaine
+     * synchro), puis ce que la synchro faisait en plus — file montante d'abord (actions
+     * hors-ligne en attente), réconciliation du lu/non-lu, rejeux de restauration, taille,
+     * puis miniatures + « Read later » en parallèle et favicons — avec un seul récit au
+     * bandeau et un seul [Prefs.LAST_SYNC_AT].
      *
      * Seul le compte connecté est couvert : les autres comptes et les flux locaux suivent
      * leur rythme (synchros manuelle / lancement), sans repasser par le réseau ici.
@@ -998,8 +1000,17 @@ class PressRepository(
             pushQueue()
             syncStep.value = "Réception des articles…"
             val n = backfillArticles(account)
+            // Vérification des flux (découverte + rattrapage, mêmes bornes) : à la connexion,
+            // un flux muet reste sinon vide — et ses non-lus avec.
+            syncStep.value = "Vérification des flux…"
+            val prefsData = prefs.data.first()
+            val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
+            val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
+            val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+            val subs = dao.subscriptions().filter { sameAccount(it.provider, account.id) }
+            val completed = n + provisionHistory(account, subs, counts, keep, cutoff)
             syncStep.value = "Réconciliation…"
-            reconcileAccount(account, n)
+            reconcileAccount(account, completed)
             replayRestoredStarred()
             replayRestoredRead()
             // Même ordre que la synchro normale : la taille avant les miniatures (ni images
@@ -1022,7 +1033,7 @@ class PressRepository(
                 syncFavicons()
             }
             prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
-            n
+            completed
         }
     }
 
@@ -1054,6 +1065,66 @@ class PressRepository(
             noteRateLimit(it, account.label)
             android.util.Log.e("PressIA", "reconcile ${account.id} failed", it)
         }
+    }
+
+    /**
+     * Approvisionne l'historique manquant d'un compte : découverte des flux jamais vus +
+     * rattrapage des flux sous-approvisionnés (dont repli dossier quand le flux propre est
+     * muet), mêmes bornes partout (quota, fenêtre, plafond). Silencieux (récit nul) :
+     * l'appelant tient le bandeau. Renvoie les nouveaux articles.
+     * Partagé par la synchro normale et la première synchronisation : un flux dont la
+     * première page est vide à la connexion est réparé dans la même passe, pas à la
+     * synchro suivante.
+     */
+    private suspend fun provisionHistory(
+        account: CloudAccount,
+        subs: List<SubscriptionEntity>,
+        counts: MutableMap<String, Int>,
+        keep: Int,
+        cutoff: Long
+    ): Int {
+        var added = 0
+        val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
+        if (fresh.isNotEmpty()) {
+            android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
+            fresh.forEach { feedId ->
+                added += backfillPages(account, feedId, counts, keep, cutoff).first
+            }
+        }
+        // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
+        // dit plus de non-lus que le local n'en connaît. Flux au quota exclus (voir
+        // laggingFeeds), déjà découverts aussi. Rien à faire dans le cas courant (une
+        // différence de cartes en mémoire + un appel compteurs léger).
+        val subIds = subs.map { it.id }.toSet()
+        val serverUnread = providerFor(account.provider).unreadCountsByFeed(account.token)
+            ?.filterKeys { it in subIds }.orEmpty()
+        if (serverUnread.isNotEmpty()) {
+            val localUnread = dao.unreadByFeed().associate { it.feedId to it.c }
+            val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
+                .filter { it !in fresh }
+            if (lagging.isNotEmpty()) {
+                android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
+                val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
+                lagging.forEach { feedId ->
+                    val (a, s, _) = backfillPages(account, feedId, counts, keep, cutoff)
+                    added += a
+                    // +A/L par flux : distingue « rien de plus côté flux » (0/0 ou 0/lus
+                    // déjà connus) d'un compteur serveur fantôme (non-lus annoncés que le
+                    // flux ne rend jamais, même hors fenêtre).
+                    android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
+                    // Flux propre muet mais dossier connu : repli par le flux du dossier
+                    // (autre index côté compte — le global prouve que le contenu existe).
+                    if (a == 0 && s == 0) {
+                        folders[feedId]?.let { catId ->
+                            val (fa, fs, _) = backfillCategoryForFeed(account, feedId, catId, counts, keep, cutoff)
+                            added += fa
+                            android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
+                        }
+                    }
+                }
+            }
+        }
+        return added
     }
 
     /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
@@ -1098,53 +1169,11 @@ class PressRepository(
             // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
             // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
             // le bandeau dit déjà « Réception… ». Les nouveaux comptent dans le total.
-            val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
             val prefsData = prefs.data.first()
             val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
             val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
             val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-            if (fresh.isNotEmpty()) {
-                android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
-                fresh.forEach { feedId ->
-                    added += backfillPages(account, feedId, counts, keep, cutoff).first
-                }
-            }
-            // Flux sous-approvisionnés (page vide transitoire à la connexion, passe
-            // interrompue) : le compte dit plus de non-lus que le local n'en connaît — on
-            // remonte leur historique avec les mêmes bornes, au lieu d'attendre une
-            // reconnexion qui n'arrivera jamais (la découverte ne couvre que les flux
-            // vides). Flux au quota exclus (voir laggingFeeds), déjà découverts aussi.
-            // Rien à faire dans le cas courant (une différence de cartes en mémoire +,
-            // au pire, un appel compteurs déjà payé par la réconciliation voisine).
-            val subIds = subs.map { it.id }.toSet()
-            val serverUnread = p.unreadCountsByFeed(account.token)
-                ?.filterKeys { it in subIds }.orEmpty()
-            if (serverUnread.isNotEmpty()) {
-                val localUnread = dao.unreadByFeed().associate { it.feedId to it.c }
-                val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
-                    .filter { it !in fresh }
-                if (lagging.isNotEmpty()) {
-                    android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
-                    val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
-                    lagging.forEach { feedId ->
-                        val (a, s, _) = backfillPages(account, feedId, counts, keep, cutoff)
-                        added += a
-                        // +A/L par flux : distingue « rien de plus côté flux » (0/0 ou 0/lus
-                        // déjà connus) d'un compteur serveur fantôme (non-lus annoncés que le
-                        // flux ne rend jamais, même hors fenêtre).
-                        android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
-                        // Flux propre muet mais dossier connu : repli par le flux du dossier
-                        // (autre index côté compte — le global prouve que le contenu existe).
-                        if (a == 0 && s == 0) {
-                            folders[feedId]?.let { catId ->
-                                val (fa, fs, _) = backfillCategoryForFeed(account, feedId, catId, counts, keep, cutoff)
-                                added += fa
-                                android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
-                            }
-                        }
-                    }
-                }
-            }
+            added += provisionHistory(account, subs, counts, keep, cutoff)
         }
         // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
         clearAccountExpired(account.id)
