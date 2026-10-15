@@ -48,6 +48,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -783,8 +785,6 @@ fun ArticleList(
     // Article sous le doigt (appui long) : le menu « plus récents/anciens » s'ouvre.
     var menuFor by remember { mutableStateOf<ArticleEntity?>(null) }
     val row: @Composable (ArticleEntity) -> Unit = { a ->
-        // Étoile effective : un article Feedly affiche son « Read later » (jamais de favori
-        // local), basculé par le même geste que l'étoile des autres flux.
         val star = vm.starState(a)
         ArticleRow(a.copy(starred = star), mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !star) },
@@ -829,7 +829,11 @@ fun ArticleList(
                 gridState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, vm) { menuFor = null }
+            val anchorOffset = menuFor?.let { target ->
+                val item = gridState.layoutInfo.visibleItemsInfo.find { it.key == target.id }
+                item?.offset ?: IntOffset.Zero
+            } ?: IntOffset.Zero
+            ArticleLongPressMenu(articles, menuFor, vm, anchorOffset) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -885,7 +889,11 @@ fun ArticleList(
                 listState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, vm) { menuFor = null }
+            val anchorOffset = menuFor?.let { target ->
+                val item = listState.layoutInfo.visibleItemsInfo.find { it.key == target.id }
+                IntOffset(0, item?.offset ?: 0)
+            } ?: IntOffset.Zero
+            ArticleLongPressMenu(articles, menuFor, vm, anchorOffset) { menuFor = null }
         }
     }
 }
@@ -893,20 +901,21 @@ fun ArticleList(
 /**
  * Menu d'appui long sur un article : « marquer lus les plus récents / plus anciens »
  * (ordre d'affichage, ancre exclue). Ne touche jamais les favoris ni le « Read later »
- * (voir `starState`), comme le « tout marquer lu ». Centré à l'écran : pas de suivi du
- * doigt, pas de calcul d'ancre — et le balayage reste prioritaire sur le geste.
+ * (voir `starState`), comme le « tout marquer lu ». Ancé au doigt — et le balayage
+ * reste prioritaire sur le geste.
  */
 @Composable
 private fun BoxScope.ArticleLongPressMenu(
     articles: List<ArticleEntity>,
     anchor: ArticleEntity?,
     vm: PressVM,
+    anchorOffset: IntOffset,
     onDismiss: () -> Unit
 ) {
-    if (anchor == null) return
+    val article = anchor ?: return
     val ctx = LocalContext.current
     val ids = remember(articles) { articles.map { it.id } }
-    val (newerIds, olderIds) = remember(ids, anchor.id) { splitAround(ids, anchor.id) }
+    val (newerIds, olderIds) = remember(ids, article.id) { splitAround(ids, article.id) }
     // Non-lus seuls, jamais les favoris/read later : l'ancre et les exclus restent non lus.
     val newer = remember(articles, newerIds) {
         val byId = articles.associateBy { it.id }
@@ -922,28 +931,34 @@ private fun BoxScope.ArticleLongPressMenu(
         vm.markIdsRead(sel)
         toast(ctx, if (sel.size == 1) "1 article marqué lu" else "${sel.size} articles marqués lus")
     }
-    Box(Modifier.align(Alignment.Center)) {
-        DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-            DropdownMenuItem(
-                text = {
-                    Text(cleanTitle(anchor.title).ifBlank { "(sans titre)" },
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall)
-                },
-                onClick = {}, enabled = false
-            )
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Marquer lus les plus récents (${newer.size})") },
-                enabled = newer.isNotEmpty(),
-                onClick = { send(newer) }
-            )
-            DropdownMenuItem(
-                text = { Text("Marquer lus les plus anciens (${older.size})") },
-                enabled = older.isNotEmpty(),
-                onClick = { send(older) }
-            )
-        }
+    val density = LocalDensity.current
+    val dpOffset = with(density) {
+        DpOffset(anchorOffset.x.toDp(), anchorOffset.y.toDp())
+    }
+    DropdownMenu(
+        expanded = true,
+        onDismissRequest = onDismiss,
+        offset = dpOffset
+    ) {
+        DropdownMenuItem(
+            text = {
+                Text(cleanTitle(article.title).ifBlank { "(sans titre)" },
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall)
+            },
+            onClick = {}, enabled = false
+        )
+        HorizontalDivider()
+        DropdownMenuItem(
+            text = { Text("Marquer lus les plus récents (${newer.size})") },
+            enabled = newer.isNotEmpty(),
+            onClick = { send(newer) }
+        )
+        DropdownMenuItem(
+            text = { Text("Marquer lus les plus anciens (${older.size})") },
+            enabled = older.isNotEmpty(),
+            onClick = { send(older) }
+        )
     }
 }
 
