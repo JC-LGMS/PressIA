@@ -59,8 +59,9 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("keepUnread", "entries", entryIds = articleIds))
     }
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {
-        // Feedly : markAsRead sur category/feed — on boucle simplement.
-        feedIds.forEach { f -> api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = listOf(f))) }
+        // Un seul appel pour tous les flux (l'API accepte la liste) : la file groupée
+        // n'émet déjà qu'un appel par compte, sans cette boucle elle en referait un par flux.
+        if (feedIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = feedIds))
     }
     /**
      * Étoile d'un article Feedly = son « Read later » (`global.saved`, « starring » côté Google

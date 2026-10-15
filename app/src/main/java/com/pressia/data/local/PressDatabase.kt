@@ -228,14 +228,14 @@ interface PressDao {
     @Query("UPDATE articles SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
     /**
-     * Drapeaux locaux d'articles déjà connus, à relire avant une réinsertion.
-     *
-     * `upsertArticles` remplace la ligne entière : sans cette relecture, chaque synchronisation
-     * effacerait les étoiles PressIA et le tableau « Read later », que le serveur ne connaît pas
-     * en tant que tels.
+     * Drapeaux locaux d'articles déjà connus, relus avant une réinsertion en une seule
+     * requête : `upsertArticles` remplace la ligne entière, et sans cette relecture chaque
+     * synchronisation effacerait les étoiles PressIA, le tableau « Read later » (que le
+     * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
+     * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved FROM articles WHERE id IN (:ids)")
-    suspend fun favFlagsOf(ids: List<String>): List<FavFlags>
+    @Query("SELECT id, starred, laterSaved, imageCached FROM articles WHERE id IN (:ids)")
+    suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
@@ -305,13 +305,6 @@ interface PressDao {
     /** Cache vidé : tout est à récupérer à la prochaine synchronisation. */
     @Query("UPDATE articles SET imageCached = 0")
     suspend fun resetThumbsCached()
-    /**
-     * Suivi « miniature stockée » des articles déjà connus, à relire avant une réinsertion.
-     * Comme les étoiles, `imageCached` serait écrasé par `upsertArticles` (REPLACE) à chaque
-     * synchronisation, ce qui retéléchargerait toutes les images à chaque fois.
-     */
-    @Query("SELECT id, imageCached FROM articles WHERE id IN (:ids)")
-    suspend fun thumbFlagsOf(ids: List<String>): List<ThumbFlags>
     /** Purge : les favoris et le « Read later » du compte sont toujours conservés. */
     @Query("DELETE FROM articles WHERE published < :olderThan AND starred = 0 AND laterSaved = 0")
     suspend fun prune(olderThan: Long): Int
@@ -456,11 +449,8 @@ data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
 data class ExtractKey(val articleId: String, val createdAt: Long)
 
-/** Drapeaux de favoris d'un article déjà en base (voir [PressDao.favFlagsOf]). */
-data class FavFlags(val id: String, val starred: Boolean, val laterSaved: Boolean)
-
-/** Suivi « miniature stockée » d'un article déjà en base (voir [PressDao.thumbFlagsOf]). */
-data class ThumbFlags(val id: String, val imageCached: Boolean)
+/** Drapeaux locaux d'un article déjà en base, relus avant réinsertion (voir [PressDao.flagsOf]). */
+data class ArticleFlags(val id: String, val starred: Boolean, val laterSaved: Boolean, val imageCached: Boolean)
 
 /** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
 data class ReconcileState(val id: String, val unread: Boolean)

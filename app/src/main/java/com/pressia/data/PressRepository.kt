@@ -104,6 +104,14 @@ fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
 fun removedFeeds(before: Set<String>, after: Set<String>): Set<String> = before - after
 
 /**
+ * Regroupe une file montante par sorte pour les poussées par lot (voir `pushQueue`) :
+ * les API acceptent des listes, 1 appel par sorte suffit. Les lignes « star » / « unstar »
+ * d'anciennes versions sont exclues (état local : rien à pousser, juste à vider).
+ */
+fun batchSyncActions(actions: List<SyncActionEntity>): Map<String, List<SyncActionEntity>> =
+    actions.filter { it.kind != "star" && it.kind != "unstar" }.groupBy { it.kind }
+
+/**
  * Flux sous-approvisionnés à rattraper : le compte dit plus de non-lus que le local n'en
  * connaît, alors que le flux n'a pas atteint son quota (il reste de la place pour
  * l'historique manquant). Un flux au quota est exclu : la taille supprime au-delà du
@@ -821,10 +829,14 @@ class PressRepository(
         // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
         // en cours, lu par le message final.
         syncRateLimit = null
+        val t0 = System.currentTimeMillis()
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
+        val tPush = System.currentTimeMillis()
         pushQueue()
+        val tDown = System.currentTimeMillis()
         syncStep.value = "Réception des articles…"
         val n = syncDown(withThumbs = false, onSource = { src -> syncStep.value = "Réception des articles… ($src)" })
+        val tImg = System.currentTimeMillis()
         val withThumbs = imagesAllowed()
         if (withThumbs) syncStep.value = "Téléchargement des miniatures…"
         supervisorScope {
@@ -835,6 +847,7 @@ class PressRepository(
             thumbs.await()
             later.await()
         }
+        val tFav = System.currentTimeMillis()
         if (withFavicons && withThumbs && dao.subscriptions().isNotEmpty()) {
             syncStep.value = "Récupération des favicons…"
             syncFavicons()
@@ -842,6 +855,9 @@ class PressRepository(
         // Toute synchro bien finie recule le garde-fou : le lancement suivant saute si
         // elle date de moins de X minutes.
         prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+        // Chronométrage par phase (poussée, descente, images+tableau, favicons) : la descente
+        // et les images dominent à tour de rôle selon les nouveautés — sans lui on optimise à l'aveugle.
+        android.util.Log.i("PressIA", "pipeline: montée=${tDown - tPush}ms descente=${tImg - tDown}ms images+tableau=${tFav - tImg}ms favicons=${System.currentTimeMillis() - tFav}ms total=${System.currentTimeMillis() - t0}ms")
         return n
     }
 
@@ -1510,18 +1526,20 @@ class PressRepository(
     private suspend fun storeArticles(articles: List<ArticleEntity>): Int {
         if (articles.isEmpty()) return 0
         val known = HashSet<String>()
-        val prev = HashMap<String, FavFlags>()
-        val thumbs = HashMap<String, Boolean>()
+        val prev = HashMap<String, ArticleFlags>()
+        // Une seule requête par paquet (drapeaux + existence) au lieu de trois : les
+        // drapeaux ne portent que sur des lignes existantes, leurs IDs suffisent.
         articles.map { it.id }.chunked(500).forEach { chunk ->
-            known += dao.existingIds(chunk)
-            dao.favFlagsOf(chunk).forEach { prev[it.id] = it }
-            dao.thumbFlagsOf(chunk).forEach { thumbs[it.id] = it.imageCached }
+            dao.flagsOf(chunk).forEach {
+                known += it.id
+                prev[it.id] = it
+            }
         }
         val merged = articles.map { a ->
             val p = prev[a.id]
             // La miniature déjà stockée survit à la réinsertion : sans cela chaque
             // synchronisation (REPLACE) oublierait le fichier local et tout retéléchargerait.
-            val cached = thumbs[a.id] ?: a.imageCached
+            val cached = p?.imageCached ?: a.imageCached
             if (p == null) return@map if (cached) a.copy(imageCached = true) else a
             a.copy(starred = p.starred, laterSaved = p.laterSaved || a.laterSaved, imageCached = cached)
         }
@@ -1713,25 +1731,65 @@ class PressRepository(
         val accounts = cloudAccounts()
         if (accounts.isEmpty()) { pending.forEach { dao.dequeue(it.rowId) }; return@withContext pending.size }
         var done = 0
-        pending.forEach { a ->
-            val account = accountFor(a, accounts) ?: run { dao.bumpTry(a.rowId); return@forEach }
+        // Regroupées par compte puis par sorte : 1 appel réseau par sorte (les API acceptent
+        // des listes) au lieu d'1 par article — une file hors-ligne de 50 lus part en ~4 appels.
+        pending.groupBy { accountFor(it, accounts) }.forEach { (account, actions) ->
+            if (account == null) { actions.forEach { dao.bumpTry(it.rowId) }; return@forEach }
             val p = providerFor(account.provider)
-            try {
-                when (a.kind) {
-                    "read" -> p.markRead(account.token, listOf(a.articleId))
-                    "unread" -> p.markUnread(account.token, listOf(a.articleId))
-                    "save" -> p.markSaved(account.token, listOf(a.articleId))
-                    "unsave" -> p.markUnsaved(account.token, listOf(a.articleId))
-                    "star", "unstar" -> Unit // état local : rien à pousser
-                    "markAllRead" -> p.markAllRead(account.token, listOfNotNull(a.feedId))
-                }
-                dao.dequeue(a.rowId); done++
+            suspend fun drop(rows: List<SyncActionEntity>) {
+                rows.forEach { dao.dequeue(it.rowId); done++ }
                 clearAccountExpired(account.id)
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
+            }
+            suspend fun postpone(rows: List<SyncActionEntity>, e: Throwable) {
                 noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
-                dao.bumpTry(a.rowId)
+                rows.forEach { dao.bumpTry(it.rowId) }
+            }
+            // Un lot en échec retombe à l'unité (ancien comportement) : un seul identifiant
+            // rejeté ne bloque pas le lot. Sauf session morte ou quota : réessayer à l'unité
+            // n'apporterait rien (et aggraverait le 429) — on reporte tout le lot.
+            suspend fun flushIds(kind: String, ids: List<String>, call: suspend (List<String>) -> Unit) {
+                if (ids.isEmpty()) return
+                val rows = actions.filter { it.kind == kind && it.articleId in ids }
+                runCatching { call(ids) }
+                    .onSuccess { drop(rows) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        if (isAuthFailure(it) || rateLimitOf(it, account.label) != null) {
+                            postpone(rows, it)
+                        } else {
+                            ids.forEach { id ->
+                                val one = rows.filter { it.articleId == id }
+                                runCatching { call(listOf(id)) }
+                                    .onSuccess { drop(one) }
+                                    .onFailure { e ->
+                                        if (e is CancellationException) throw e
+                                        postpone(one, e)
+                                    }
+                            }
+                        }
+                    }
+            }
+            val byKind = batchSyncActions(actions)
+            // États locaux d'anciennes versions : rien à pousser, juste à vider.
+            actions.filter { it.kind == "star" || it.kind == "unstar" }.forEach { dao.dequeue(it.rowId); done++ }
+            flushIds("read", byKind["read"].orEmpty().map { it.articleId }) { p.markRead(account.token, it) }
+            flushIds("unread", byKind["unread"].orEmpty().map { it.articleId }) { p.markUnread(account.token, it) }
+            flushIds("save", byKind["save"].orEmpty().map { it.articleId }) { p.markSaved(account.token, it) }
+            flushIds("unsave", byKind["unsave"].orEmpty().map { it.articleId }) { p.markUnsaved(account.token, it) }
+            // « Tout marquer lu » : un appel par flux (liste acceptée), les lignes globales
+            // (sans flux : file d'une ancienne version) partent sans réseau, comme avant.
+            val markAll = byKind["markAllRead"].orEmpty()
+            val markAllFeeds = markAll.mapNotNull { it.feedId }.distinct()
+            if (markAllFeeds.isNotEmpty()) {
+                runCatching { p.markAllRead(account.token, markAllFeeds) }
+                    .onSuccess { drop(markAll) }
+                    .onFailure {
+                        if (it is CancellationException) throw it
+                        postpone(markAll, it)
+                    }
+            } else {
+                drop(markAll)
             }
         }
         done
@@ -1831,19 +1889,29 @@ class PressRepository(
         // pour les deux, sinon le préchargement remplirait le cache d'URL jamais affichées.
         val direct = prefs.data.first()[Prefs.FAVICON_SOURCE] == FAVICON_SOURCE_DIRECT
         val subs = dao.subscriptions()
-        var done = 0
-        subs.forEach { sub ->
-            val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct) ?: return@forEach
-            // Préchargement Coil : télécharge et met en cache disque sans afficher.
-            val ok = runCatching {
-                loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
-            }.onFailure {
-                android.util.Log.w("PressIA", "favicon ${sub.title} <$url> : $it")
-            }.getOrNull() is coil.request.SuccessResult
-            if (ok) done++
+        // En parallèle (borné) : des icônes de quelques Ko sur des hôtes variés — 1 par 1,
+        // chaque favicon lent retardait tous les suivants.
+        val permits = Semaphore(6)
+        val done = AtomicInteger(0)
+        coroutineScope {
+            subs.map { sub ->
+                async {
+                    permits.withPermit {
+                        val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct) ?: return@async
+                        // Préchargement Coil : télécharge et met en cache disque sans afficher.
+                        val ok = runCatching {
+                            loader.execute(coil.request.ImageRequest.Builder(ctx).data(url).build())
+                        }.onFailure {
+                            android.util.Log.w("PressIA", "favicon ${sub.title} <$url> : $it")
+                        }.getOrNull() is coil.request.SuccessResult
+                        if (ok) done.incrementAndGet()
+                    }
+                }
+            }.awaitAll()
         }
-        android.util.Log.i("PressIA", "favicons : $done/${subs.size}")
-        done
+        val n = done.get()
+        android.util.Log.i("PressIA", "favicons : $n/${subs.size}")
+        n
     }
 
     /**

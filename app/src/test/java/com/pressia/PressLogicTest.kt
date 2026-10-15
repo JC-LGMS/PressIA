@@ -634,6 +634,23 @@ class PressLogicTest {
         assertTrue(com.pressia.data.removedFeeds(emptySet(), setOf("a")).isEmpty())
     }
 
+    @Test fun `file montante regroupee par sorte`() {
+        val rows = listOf(
+            com.pressia.data.local.SyncActionEntity(articleId = "a1", feedId = "f", kind = "read"),
+            com.pressia.data.local.SyncActionEntity(articleId = "a2", feedId = "f", kind = "read"),
+            com.pressia.data.local.SyncActionEntity(articleId = "a3", feedId = "f", kind = "unread"),
+            com.pressia.data.local.SyncActionEntity(articleId = "vieux", feedId = "f", kind = "star"),
+            com.pressia.data.local.SyncActionEntity(articleId = "", feedId = "f", kind = "markAllRead")
+        )
+        val batched = com.pressia.data.batchSyncActions(rows)
+        // 1 lot par sorte : 2 lus partent en 1 appel ; les étoiles locales ne partent pas.
+        assertEquals(listOf("a1", "a2"), batched["read"]?.map { it.articleId })
+        assertEquals(listOf("a3"), batched["unread"]?.map { it.articleId })
+        assertEquals(1, batched["markAllRead"]?.size)
+        assertFalse(batched.containsKey("star"))
+        assertTrue(com.pressia.data.batchSyncActions(emptyList()).isEmpty())
+    }
+
     @Test fun `flux en retard a rattraper`() {
         // Le compte dit 13 non-lus, le local n'en connaît que 3 avec de la place : à remonter.
         assertEquals(
