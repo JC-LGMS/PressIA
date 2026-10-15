@@ -723,10 +723,42 @@ class PressRepository(
         // readAt alimenté aussi pour les marquages groupés : permet de distinguer
         // « passé en lu sans ouvrir l'article » d'une vraie ouverture (stats).
         val now = System.currentTimeMillis()
-        if (feedIds.isEmpty()) dao.markAllRead(now) else dao.markFeedsRead(feedIds, now)
+        // Les favoris / « read later » ne passent jamais en lu, ni ici ni côté compte : un
+        // marquage par flux les passerait en lus distants, et la réconciliation les passerait
+        // alors en lus locaux au tour suivant. S'il y en a parmi les non-lus du périmètre, on
+        // marque à l'unité (poussée article par article, même protection que les lectures
+        // simples) au lieu du marquage par flux.
+        val excluded = if (feedIds.isEmpty()) dao.allUnreadExcludedIds() else dao.feedsUnreadExcludedIds(feedIds)
+        if (excluded.isEmpty()) {
+            if (feedIds.isEmpty()) dao.markAllRead(now) else dao.markFeedsRead(feedIds, now)
+            if (!isLocal()) {
+                feedIds.forEach { dao.enqueue(SyncActionEntity(articleId = "", feedId = it, kind = "markAllRead")) }
+                if (feedIds.isEmpty()) dao.enqueue(SyncActionEntity(articleId = "", kind = "markAllRead"))
+                pushQueue()
+            }
+            return@withContext
+        }
+        val ids = if (feedIds.isEmpty()) dao.allMarkableIds() else dao.feedsMarkableIds(feedIds)
+        markArticlesRead(ids)
+    }
+
+    /**
+     * Marque des articles lus à l'unité (menu « plus récents/anciens », repli du « tout
+     * marquer lu » quand des favoris/read later traînent). Les favoris/read later n'y entrent
+     * jamais : filtrés par l'appelant via l'étoile effective (voir `starState`), et poussés
+     * article par article côté compte — sinon un marquage de flux les passerait en lus
+     * distants et la réconciliation les repasserait en lus au tour suivant.
+     */
+    suspend fun markArticlesRead(ids: List<String>) = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext
+        val now = System.currentTimeMillis()
+        ids.chunked(500).forEach { dao.markIdsRead(it, now) }
         if (!isLocal()) {
-            feedIds.forEach { dao.enqueue(SyncActionEntity(articleId = "", feedId = it, kind = "markAllRead")) }
-            if (feedIds.isEmpty()) dao.enqueue(SyncActionEntity(articleId = "", kind = "markAllRead"))
+            val rows = ids.chunked(500).flatMap { chunk ->
+                val feeds = dao.feedOfIds(chunk).associate { it.id to it.feedId }
+                chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "read") }
+            }
+            dao.enqueueAll(rows)
             pushQueue()
         }
     }

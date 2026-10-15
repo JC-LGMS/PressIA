@@ -250,6 +250,22 @@ interface PressDao {
     @Query("UPDATE articles SET unread = 0, readAt = :now")
     suspend fun markAllRead(now: Long)
     /**
+     * Non-lus à ne JAMAIS passer en lu en masse : étoiles PressIA + tableau « Read later ».
+     * Deux variantes car `IN ()` est invalide (voir `deleteExtractEventsOfFeeds`).
+     */
+    @Query("SELECT id FROM articles WHERE unread = 1 AND (starred = 1 OR laterSaved = 1)")
+    suspend fun allUnreadExcludedIds(): List<String>
+    @Query("SELECT id FROM articles WHERE unread = 1 AND (starred = 1 OR laterSaved = 1) AND feedId IN (:feedIds)")
+    suspend fun feedsUnreadExcludedIds(feedIds: List<String>): List<String>
+    /** Non-lus marquables en masse (hors favoris/read later), mêmes variantes. */
+    @Query("SELECT id FROM articles WHERE unread = 1 AND starred = 0 AND laterSaved = 0")
+    suspend fun allMarkableIds(): List<String>
+    @Query("SELECT id FROM articles WHERE unread = 1 AND starred = 0 AND laterSaved = 0 AND feedId IN (:feedIds)")
+    suspend fun feedsMarkableIds(feedIds: List<String>): List<String>
+    /** Flux de chaque article (file de sync à l'unité, comme `setRead`). */
+    @Query("SELECT id, feedId FROM articles WHERE id IN (:ids)")
+    suspend fun feedOfIds(ids: List<String>): List<ArticleFeed>
+    /**
      * Réconciliation du lu/non-lu distant : non-lus locaux des flux d'un compte, pour les
      * comparer aux non-lus du compte (lus ailleurs → à passer en lus).
      */
@@ -343,6 +359,8 @@ interface PressDao {
     // --- Sync queue ---
     @Insert
     suspend fun enqueue(a: SyncActionEntity)
+    @Insert
+    suspend fun enqueueAll(actions: List<SyncActionEntity>)
     @Query("SELECT * FROM sync_queue ORDER BY createdAt LIMIT 100")
     suspend fun pendingSync(): List<SyncActionEntity>
     @Query("DELETE FROM sync_queue WHERE rowId = :rowId")
@@ -454,6 +472,8 @@ data class ArticleFlags(val id: String, val starred: Boolean, val laterSaved: Bo
 
 /** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
 data class ReconcileState(val id: String, val unread: Boolean)
+/** Flux d'articles connus (file de sync à l'unité, voir `markArticlesRead`). */
+data class ArticleFeed(val id: String, val feedId: String)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],

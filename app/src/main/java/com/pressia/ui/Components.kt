@@ -69,6 +69,14 @@ import kotlinx.coroutines.launch
 private fun Modifier.longPressInert(onClick: () -> Unit): Modifier =
     this.combinedClickable(onClick = onClick, onLongClick = {})
 
+/**
+ * Clic court + menu à l'appui long (corps des lignes d'articles). Les zones d'appui
+ * spéciales (favicon, vignette) gardent [longPressInert] : l'appui long n'y ouvre rien.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.longPressMenu(onClick: () -> Unit, onLongPress: () -> Unit): Modifier =
+    this.combinedClickable(onClick = onClick, onLongClick = onLongPress)
+
 /** Carte article — 4 vues : liste / carte / magazine / compacte (favicon, petits caractères). */
 @Composable
 fun ArticleRow(
@@ -85,7 +93,9 @@ fun ArticleRow(
     showSource: Boolean = true,
     onInstapaper: () -> Unit = {},
     swipe: String = "star",
-    swipeRight: String = "read"
+    swipeRight: String = "read",
+    /** Menu d'appui long (« plus récents/anciens ») : fourni par la liste, vide par défaut. */
+    onLongPress: () -> Unit = {}
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -110,8 +120,8 @@ fun ArticleRow(
      * Effet d'un appui sur le favicon du flux ou sur la vignette de l'article, identique dans les
      * quatre vues. L'option « Favicon/miniature marque lu/non lu » éteinte ne doit laisser ni zone
      * morte ni écart avec le reste de la ligne : l'appui ouvre alors l'article, comme le titre.
-     * [longPressInert] et non un simple [clickable], pour qu'un appui long n'ouvre rien, comme sur
-     * le reste de la ligne.
+     * [longPressInert] et non un simple [clickable], pour qu'un appui long n'ouvre rien ici
+     * (le menu « plus récents/anciens » ne sort que du corps de la ligne).
      */
     val leadTap: () -> Unit = if (tapFaviconRead) ({ onToggleRead() }) else ({ onOpen() })
     // Pendant un glissement, le rond lu/non-lu laisse la place à l'étoile du geste (dessinée
@@ -165,7 +175,7 @@ fun ArticleRow(
         val metaStar = a.starred && ((swipe != "star" && swipeRight != "star") || !swiping || !flipped)
     when (mode) {
         "compact" -> Column(
-            Modifier.fillMaxWidth().longPressInert(onOpen)
+            Modifier.fillMaxWidth().longPressMenu(onOpen, onLongPress)
                 .padding(horizontal = 12.dp, vertical = 6.dp).alpha(alpha)
         ) {
             // Favicon, titre et action de fin partagent le même Row centré : tout se cale sur les
@@ -190,7 +200,7 @@ fun ArticleRow(
                     .onSizeChanged { metaH = with(density) { it.height.toDp() } },
                 showSource = showSource)
         }
-        "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressInert(onOpen)) {
+        "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressMenu(onOpen, onLongPress)) {
             Column {
                 // La bannière est la vignette de l'article : elle répond au même appui que le
                 // favicon des autres vues.
@@ -207,7 +217,7 @@ fun ArticleRow(
                 }
             }
         }
-        "card" -> Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).longPressInert(onOpen)) {
+        "card" -> Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).longPressMenu(onOpen, onLongPress)) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Même appui que dans les autres vues, sur la vignette ou sur le favicon selon ce qu'il y a.
                 if (!a.imageUrl.isNullOrBlank()) AsyncImage(
@@ -230,7 +240,7 @@ fun ArticleRow(
             }
         }
         else -> ListItem(
-            modifier = Modifier.longPressInert(onOpen).alpha(alpha).padding(vertical = 2.dp),
+            modifier = Modifier.longPressMenu(onOpen, onLongPress).alpha(alpha).padding(vertical = 2.dp),
             headlineContent = { Text(title, fontSize = titleSp.sp,
                 fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
             supportingContent = { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) },
@@ -550,6 +560,17 @@ fun groupByDay(articles: List<ArticleEntity>, now: Long = System.currentTimeMill
 }
 
 /**
+ * Partage affiché autour d'une ancre (ordre d'affichage = du plus récent au plus ancien) :
+ * strictement plus récents avant, plus anciens après. L'ancre elle-même est exclue : un
+ * « marquer lus les plus récents » ne touche pas l'article sous le doigt. Pur et testé.
+ */
+fun splitAround(ids: List<String>, anchorId: String): Pair<List<String>, List<String>> {
+    val i = ids.indexOfFirst { it == anchorId }
+    if (i < 0) return emptyList<String>() to emptyList<String>()
+    return ids.take(i) to ids.drop(i + 1)
+}
+
+/**
  * Cible du bouton « descendre » : au 1er appui on s'arrête sur la fin des non-lus quand la
  * liste mélange lus et non-lus, au 2e (arrêt déjà atteint ou dépassé) on va tout en bas.
  * L'arrêt est calculé par [centeredStopIndex] : dès qu'on l'a atteint, `firstVisible < stop`
@@ -759,6 +780,8 @@ fun ArticleList(
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val ctx = LocalContext.current
     val sendScope = rememberCoroutineScope()
+    // Article sous le doigt (appui long) : le menu « plus récents/anciens » s'ouvre.
+    var menuFor by remember { mutableStateOf<ArticleEntity?>(null) }
     val row: @Composable (ArticleEntity) -> Unit = { a ->
         // Étoile effective : un article Feedly affiche son « Read later » (jamais de favori
         // local), basculé par le même geste que l'étoile des autres flux.
@@ -767,7 +790,8 @@ fun ArticleList(
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !star) },
             showSource = showSource,
             onInstapaper = { sendScope.launch { vm.sendOrAskInstapaper(a) { toast(ctx, it) } } },
-            swipe = swipe, swipeRight = swipeRight)
+            swipe = swipe, swipeRight = swipeRight,
+            onLongPress = { menuFor = a })
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
@@ -805,6 +829,7 @@ fun ArticleList(
                 gridState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
+            ArticleLongPressMenu(articles, menuFor, vm) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -859,6 +884,64 @@ fun ArticleList(
             LazyListPositionIndicator(
                 listState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
+            )
+            ArticleLongPressMenu(articles, menuFor, vm) { menuFor = null }
+        }
+    }
+}
+
+/**
+ * Menu d'appui long sur un article : « marquer lus les plus récents / plus anciens »
+ * (ordre d'affichage, ancre exclue). Ne touche jamais les favoris ni le « Read later »
+ * (voir `starState`), comme le « tout marquer lu ». Centré à l'écran : pas de suivi du
+ * doigt, pas de calcul d'ancre — et le balayage reste prioritaire sur le geste.
+ */
+@Composable
+private fun BoxScope.ArticleLongPressMenu(
+    articles: List<ArticleEntity>,
+    anchor: ArticleEntity?,
+    vm: PressVM,
+    onDismiss: () -> Unit
+) {
+    if (anchor == null) return
+    val ctx = LocalContext.current
+    val ids = remember(articles) { articles.map { it.id } }
+    val (newerIds, olderIds) = remember(ids, anchor.id) { splitAround(ids, anchor.id) }
+    // Non-lus seuls, jamais les favoris/read later : l'ancre et les exclus restent non lus.
+    val newer = remember(articles, newerIds) {
+        val byId = articles.associateBy { it.id }
+        newerIds.mapNotNull { byId[it] }.filter { it.unread && !vm.starState(it) }.map { it.id }
+    }
+    val older = remember(articles, olderIds) {
+        val byId = articles.associateBy { it.id }
+        olderIds.mapNotNull { byId[it] }.filter { it.unread && !vm.starState(it) }.map { it.id }
+    }
+    fun send(sel: List<String>) {
+        onDismiss()
+        if (sel.isEmpty()) return
+        vm.markIdsRead(sel)
+        toast(ctx, if (sel.size == 1) "1 article marqué lu" else "${sel.size} articles marqués lus")
+    }
+    Box(Modifier.align(Alignment.Center)) {
+        DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+            DropdownMenuItem(
+                text = {
+                    Text(cleanTitle(anchor.title).ifBlank { "(sans titre)" },
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall)
+                },
+                onClick = {}, enabled = false
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Marquer lus les plus récents (${newer.size})") },
+                enabled = newer.isNotEmpty(),
+                onClick = { send(newer) }
+            )
+            DropdownMenuItem(
+                text = { Text("Marquer lus les plus anciens (${older.size})") },
+                enabled = older.isNotEmpty(),
+                onClick = { send(older) }
             )
         }
     }

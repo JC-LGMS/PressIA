@@ -591,6 +591,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         keepIds.value = emptySet()
         refresh()
     }
+    /**
+     * Marque des articles lus à l'unité (menu d'appui long « plus récents/anciens ») : gardés
+     * visibles (collants, comme une lecture simple qui ne fait pas disparaître la ligne).
+     */
+    fun markIdsRead(ids: List<String>) = viewModelScope.launch {
+        if (ids.isEmpty()) return@launch
+        repo.markArticlesRead(ids)
+        keepIds.value = keepIds.value + ids.toSet()
+        refresh()
+    }
     fun loadStats(period: StatsPeriod = StatsPeriod.WEEK, year: Int = 0) = viewModelScope.launch {
         val now = System.currentTimeMillis()
         val first = repo.firstReadingAt()

@@ -600,6 +600,18 @@ class PressLogicTest {
         assertEquals("", com.pressia.data.AccountStore.parse("""[{"provider":"feedly","token":"t1"}]""")[0].userId)
     }
 
+    @Test fun `partage autour d une ancre exclut l ancre`() {
+        val ids = listOf("n2", "n1", "x", "o1", "o2")
+        val (newer, older) = com.pressia.ui.splitAround(ids, "x")
+        // Ordre d'affichage = du plus récent au plus ancien : avant = plus récents.
+        assertEquals(listOf("n2", "n1"), newer)
+        assertEquals(listOf("o1", "o2"), older)
+        // Ancre en tête / en queue : un côté vide (option désactivée dans le menu).
+        assertEquals(emptyList<String>(), com.pressia.ui.splitAround(ids, "n2").first)
+        assertEquals(emptyList<String>(), com.pressia.ui.splitAround(ids, "o2").second)
+        // Ancre inconnue : rien des deux côtés, jamais tout cocher par erreur.
+        assertEquals(emptyList<String>() to emptyList<String>(), com.pressia.ui.splitAround(ids, "zz"))
+    }
     @Test fun `bouton bas s arrete au milieu des non-lus`() {
         // Liste mixte, écran de 10 : 1er appui depuis le haut → arrêt centré sur le dernier
         // non-lu (20 - 5 = 15), 2e appui (arrêt atteint) → tout en bas, sans état mémorisé.
