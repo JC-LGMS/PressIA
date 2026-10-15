@@ -1,11 +1,15 @@
 package com.pressia.data
 
+import com.pressia.BuildConfig
 import com.pressia.data.local.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Sauvegarde complète de PressIA dans un unique fichier JSON.
@@ -81,12 +85,48 @@ data class ImportReport(
 }
 
 /** Sérialise l'état demandé vers une chaîne JSON (pretty-print pour rester lisible à la main). */
-suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Boolean = false): String = withContext(Dispatchers.IO) {
+suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Boolean = false): String = sauvegardeJson(sections, includeTokens)
+
+suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens: Boolean = false): String = withContext(Dispatchers.IO) {
     val dao = db.dao()
     val root = JSONObject()
+    root.put("description", "Sauvegarde pour l'application Android PressIA")
+    root.put("titre", "Sauvegarde PressIA")
+    root.put("type", "sauvegarde")
+    root.put("action", "sauvegarde")
     root.put("app", "PressIA")
+    root.put("appName", "PressIA")
+    root.put("platform", "Android")
+    try {
+        root.put("appVersionName", BuildConfig.VERSION_NAME)
+        root.put("appVersionCode", BuildConfig.VERSION_CODE)
+    } catch (_: Exception) {
+    }
+    val now = System.currentTimeMillis()
     root.put("version", BACKUP_VERSION)
-    root.put("generatedAt", System.currentTimeMillis())
+    root.put("backupVersion", BACKUP_VERSION)
+    root.put("generatedAt", now)
+    root.put("exportedAt", now)
+    root.put("sauvegardeAt", now)
+    root.put("sauvegardeeAt", now)
+    root.put("dateSauvegardeTs", now)
+    try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val dateStr = sdf.format(Date(now))
+        root.put("generatedAtIso", dateStr)
+        root.put("exportDate", dateStr)
+        root.put("dateExport", dateStr)
+        root.put("sauvegardeDate", dateStr)
+        root.put("dateSauvegarde", dateStr)
+        try {
+            root.put("buildDate", BuildConfig.BUILD_TIME)
+            root.put("buildTime", BuildConfig.BUILD_TIME)
+            root.put("apkBuildDate", BuildConfig.BUILD_TIME)
+        } catch (_: Exception) {
+            root.put("buildDate", dateStr)
+        }
+    } catch (_: Exception) {
+    }
     root.put("sections", JSONArray(sections))
     if (includeTokens) root.put("tokens", true)
 
@@ -173,6 +213,12 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
 
 /** Restaure les sections présentes dans [json] et présentes dans [sections]. [replaceStats] remplace les stats existantes. */
 suspend fun PressRepository.importJson(
+    json: String,
+    sections: List<String>,
+    replaceStats: Boolean = false
+): ImportReport = restaurationJson(json, sections, replaceStats)
+
+suspend fun PressRepository.restaurationJson(
     json: String,
     sections: List<String>,
     replaceStats: Boolean = false

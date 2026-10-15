@@ -872,6 +872,9 @@ fun BackupScreen(vm: PressVM) {
     val lastBackupAt by remember(vm.repo.prefs) {
         vm.repo.prefs.flow(Prefs.LAST_BACKUP_AT, 0L)
     }.collectAsState(initial = 0L)
+    val lastBackupMeta by remember(vm.repo.prefs) {
+        vm.repo.prefs.flow(Prefs.LAST_BACKUP_META, "")
+    }.collectAsState(initial = "")
 
     val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
@@ -881,9 +884,32 @@ fun BackupScreen(vm: PressVM) {
                 val json = vm.repo.exportJson(exportSel, exportTokens)
                 ctx.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
                 // Restaurer n'est pas sauvegarder : seule une exportation réussie pose la date.
-                vm.repo.prefs.set(Prefs.LAST_BACKUP_AT, System.currentTimeMillis())
-                backupMsg = "Sauvegarde écrite (${json.length / 1024} Ko)."
-                toast(ctx, "Sauvegarde exportée")
+                val now = System.currentTimeMillis()
+                vm.repo.prefs.set(Prefs.LAST_BACKUP_AT, now)
+                try {
+                    val meta = org.json.JSONObject().apply {
+                        put("timestamp", now)
+                        try {
+                            put("appVersionName", com.pressia.BuildConfig.VERSION_NAME)
+                            put("appVersionCode", com.pressia.BuildConfig.VERSION_CODE)
+                        } catch (_: Exception) {}
+                        put("sections", org.json.JSONArray(exportSel))
+                        put("tokens", exportTokens)
+                        try {
+                            put("date", com.pressia.BuildConfig.BUILD_TIME)
+                            put("buildDate", com.pressia.BuildConfig.BUILD_TIME)
+                            put("apkBuildDate", com.pressia.BuildConfig.BUILD_TIME)
+                        } catch (_: Exception) {
+                            try {
+                                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                                put("date", sdf.format(java.util.Date(now)))
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    vm.repo.prefs.set(Prefs.LAST_BACKUP_META, meta.toString())
+                } catch (_: Exception) {}
+                backupMsg = "Sauvegarde créée (${json.length / 1024} Ko)."
+                toast(ctx, "Sauvegarde effectuée")
             } catch (e: Exception) {
                 backupMsg = "Export impossible : ${e.message}"
             }
@@ -897,12 +923,12 @@ fun BackupScreen(vm: PressVM) {
                 val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                     ?: throw Exception("fichier illisible")
                 val r = vm.repo.importJson(json, importSel, importReplace)
-                backupMsg = "Import terminé : ${r.prefs} option(s), ${r.accounts} compte(s), " +
+                backupMsg = "Restauration terminée : ${r.prefs} option(s), ${r.accounts} compte(s), " +
                     "${r.stats} statistique(s), ${r.read} favori(s)."
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
                 // listes et compte affichés suivent ici même, filtre œil y compris.
                 vm.refresh(); vm.loadAccount(); vm.refreshUnreadOnly()
-                toast(ctx, "Sauvegarde importée")
+                toast(ctx, "Restauration effectuée")
             } catch (e: Exception) {
                 backupMsg = "Import impossible : ${e.message}"
             }
@@ -914,25 +940,62 @@ fun BackupScreen(vm: PressVM) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            "Exporter ou importer en un seul fichier : les options, les statistiques, les comptes " +
+            "Sauvegarder ou restaurer en un seul fichier : les options, les statistiques, les comptes " +
                 "et les favoris de vos flux RSS locaux. Vous choisissez ce que vous voulez inclure.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text(
-            if (lastBackupAt > 0) "Dernière sauvegarde : ${formatBackupAt(lastBackupAt)}"
-            else "Aucune sauvegarde pour l'instant",
-            style = MaterialTheme.typography.bodyMedium
-        )
+        if (lastBackupAt > 0) {
+            val metaInfo = buildString {
+                append("Dernière sauvegarde : ${formatBackupAt(lastBackupAt)}")
+                if (lastBackupMeta.isNotBlank()) {
+                    try {
+                        val m = org.json.JSONObject(lastBackupMeta)
+                        val vname = m.optString("appVersionName")
+                        val buildDate = m.optString("apkBuildDate").takeIf { it.isNotBlank() }
+                            ?: m.optString("buildDate").takeIf { it.isNotBlank() }
+                            ?: m.optString("date").takeIf { it.isNotBlank() }
+                        if (vname.isNotBlank() && buildDate != null) {
+                            append("\nVersion PressIA : $vname ($buildDate)")
+                        } else if (vname.isNotBlank()) {
+                            append("\nVersion PressIA : $vname")
+                        } else if (buildDate != null) {
+                            append("\nDate de build de l'APK : $buildDate")
+                        }
+                        val sections = m.optJSONArray("sections")
+                        if (sections != null && sections.length() > 0) {
+                            val list = mutableListOf<String>()
+                            for (i in 0 until sections.length()) {
+                                when (sections.getString(i)) {
+                                    "prefs" -> list.add("Préférences")
+                                    "stats" -> list.add("Statistiques")
+                                    "accounts" -> list.add("Comptes/flux")
+                                    "read" -> list.add("Favoris/lus")
+                                    else -> list.add(sections.getString(i))
+                                }
+                            }
+                            append("\nÉléments sauvegardés : ${list.joinToString(", ")}")
+                        }
+                        if (m.optBoolean("tokens", false)) {
+                            append(" (avec jetons)")
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            Text(metaInfo, style = MaterialTheme.typography.bodyMedium)
+        } else {
+            Text("Aucune sauvegarde pour l'instant", style = MaterialTheme.typography.bodyMedium)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ showExportDialog = true }) { Text("Exporter…") }
-            OutlinedButton({ showImportDialog = true }) { Text("Importer…") }
+            Button({ showExportDialog = true }) { Text("Sauvegarder…") }
+            OutlinedButton({ showImportDialog = true }) { Text("Restaurer…") }
         }
         if (backupMsg.isNotBlank()) Text(backupMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     }
     if (showExportDialog) {
         SectionPickerDialog(
-            title = "Exporter dans un fichier",
+            title = "Sauvegarder dans un fichier",
             onDismiss = { showExportDialog = false },
             onConfirm = { sel, tokens, _ ->
                 showExportDialog = false
@@ -943,7 +1006,7 @@ fun BackupScreen(vm: PressVM) {
     }
     if (showImportDialog) {
         SectionPickerDialog(
-            title = "Importer depuis un fichier",
+            title = "Restaurer depuis un fichier",
             extraCheck = "Remplacer les statistiques existantes",
             onDismiss = { showImportDialog = false },
             onConfirm = { sel, _, replace ->
@@ -1080,7 +1143,7 @@ private fun SectionPickerDialog(
                     Button(
                         { onConfirm(sel.ifEmpty { Sections.ALL }, tokens, extra) },
                         enabled = sel.isNotEmpty()
-                    ) { Text(if (extraCheck != null) "Importer" else "Exporter") }
+                    ) { Text(if (extraCheck != null) "Restaurer" else "Sauvegarder") }
                 }
             }
         }

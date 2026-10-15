@@ -1108,15 +1108,19 @@ fun appVersionName(ctx: Context): String? = runCatching {
     if (android.os.Build.VERSION.SDK_INT >= 33) {
         val info = pm.getPackageInfo(pkg, android.content.pm.PackageManager.PackageInfoFlags.of(0))
         val version = info.versionName
-        val buildDate = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.FRANCE)
-            .format(java.util.Date(info.lastUpdateTime))
+        val buildDate = try { com.pressia.BuildConfig.BUILD_TIME } catch (_: Exception) {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.FRANCE)
+                .format(java.util.Date(info.lastUpdateTime))
+        }
         "$version ($buildDate)"
     } else {
         @Suppress("DEPRECATION")
         val info = pm.getPackageInfo(pkg, 0)
         val version = info.versionName
-        val buildDate = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.FRANCE)
-            .format(java.util.Date(info.lastUpdateTime))
+        val buildDate = try { com.pressia.BuildConfig.BUILD_TIME } catch (_: Exception) {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.FRANCE)
+                .format(java.util.Date(info.lastUpdateTime))
+        }
         "$version ($buildDate)"
     }
 }.getOrNull()

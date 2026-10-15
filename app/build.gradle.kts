@@ -8,6 +8,10 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 android {
     namespace = "com.pressia"
     compileSdk = 34
@@ -31,6 +35,8 @@ android {
         buildConfigField("String", "INOREADER_APP_ID", "\"${project.findProperty("INOREADER_APP_ID") ?: System.getenv("INOREADER_APP_ID") ?: ""}\"")
         buildConfigField("String", "INOREADER_APP_KEY", "\"${project.findProperty("INOREADER_APP_KEY") ?: System.getenv("INOREADER_APP_KEY") ?: ""}\"")
         buildConfigField("String", "INOREADER_REDIRECT_URI", "\"pressia://oauth/inoreader\"")
+        val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
     }
 
     buildFeatures {

@@ -105,6 +105,7 @@ class Prefs(private val ctx: Context) {
          * le contenait, comme [LAST_SYNC_AT].
          */
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
+        val LAST_BACKUP_META = stringPreferencesKey("last_backup_meta")
         /** Échelle des libellés du drawer, en pourcentage de la taille du thème (80..140). */
         val DRAWER_TEXT_SCALE = intPreferencesKey("drawer_text_scale")
         /** Échelle des libellés dossier / flux de l'écran Accueil, en pourcentage (70..140). */
@@ -210,6 +211,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("unread_only_by_feed", UNREAD_ONLY_BY_FEED),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
+            PrefEntry.Str("last_backup_meta", LAST_BACKUP_META),
             PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
             PrefEntry.IntPref("home_text_scale", HOME_TEXT_SCALE),
             PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),
