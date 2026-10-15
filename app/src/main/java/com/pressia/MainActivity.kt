@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
@@ -256,20 +259,25 @@ class MainActivity : ComponentActivity() {
                         }
                     ) {
                         key(home) {
-                            NavHost(nav, startDestination = startRoute) {
+                            // Fondu de navigation réduit (150 ms au lieu des 700 ms par défaut) :
+                            // la transition reste douce mais ne donne plus l'impression de coller.
+                            NavHost(nav, startDestination = startRoute,
+                                enterTransition = { fadeIn(tween(150)) },
+                                exitTransition = { fadeOut(tween(150)) },
+                                popEnterTransition = { fadeIn(tween(150)) },
+                                popExitTransition = { fadeOut(tween(150)) }) {
                                 composable("home") {
                                     BackRule()
                                     // Revenir à l'accueil, c'est revenir à « Tous les articles »
                                     // (la recherche suit vm.scope) : une fois la sortie de l'écran
-                                    // précédent terminée seulement. La navigation joue un fondu de
-                                    // 700 ms par défaut (navigation-compose 2.7) pendant lequel
-                                    // l'écran quitté reste composé : tout reset plus tôt le
-                                    // repeignait (titre « Tous les articles », sources sur chaque
-                                    // ligne) sous les yeux de l'utilisateur. Le délai couvre le
-                                    // fondu avec de la marge ; invisible sur l'accueil, il ne sert
-                                    // qu'aux écrans ouverts ensuite (recherche…).
+                                    // précédent terminée seulement (fondu de 150 ms, voir le NavHost
+                                    // ci-dessus — le délai couvre avec de la marge). Tout reset plus
+                                    // tôt repeignait l'écran quitté, encore composé pendant le fondu
+                                    // (titre « Tous les articles », sources sur chaque ligne).
+                                    // Invisible sur l'accueil, il ne sert qu'aux écrans ouverts
+                                    // ensuite (recherche…).
                                     LaunchedEffect(Unit) {
-                                        kotlinx.coroutines.delay(1000)
+                                        kotlinx.coroutines.delay(300)
                                         vm.switchScope(Scope(label = "Tous les articles"))
                                     }
                                     SubscriptionsScreen(vm,
