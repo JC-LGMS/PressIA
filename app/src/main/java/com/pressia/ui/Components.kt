@@ -48,8 +48,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -781,6 +781,7 @@ fun ArticleList(
     val dateSp by vm.dateFont.collectAsState()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val ctx = LocalContext.current
+    val density = LocalDensity.current
     val sendScope = rememberCoroutineScope()
     // Article sous le doigt (appui long) : le menu « plus récents/anciens » s'ouvre.
     var menuFor by remember { mutableStateOf<ArticleEntity?>(null) }
@@ -833,7 +834,16 @@ fun ArticleList(
                 val item = gridState.layoutInfo.visibleItemsInfo.find { it.key == target.id }
                 item?.offset ?: IntOffset.Zero
             } ?: IntOffset.Zero
-            ArticleLongPressMenu(articles, menuFor, vm, anchorOffset) { menuFor = null }
+            val viewportSize = gridState.layoutInfo.viewportSize
+            val dpOffset = remember(anchorOffset, viewportSize, density) {
+                with(density) {
+                    DpOffset(
+                        (anchorOffset.x - viewportSize.width).toDp(),
+                        (anchorOffset.y - viewportSize.height).toDp()
+                    )
+                }
+            }
+            ArticleLongPressMenu(articles, menuFor, vm, dpOffset) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -890,10 +900,19 @@ fun ArticleList(
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
             val anchorOffset = menuFor?.let { target ->
-                val item = listState.layoutInfo.visibleItemsInfo.find { it.key == target.id }
+                val item = listState.layoutInfo.visibleItemsInfo.find { it.key == "art-${target.id}" }
                 IntOffset(0, item?.offset ?: 0)
             } ?: IntOffset.Zero
-            ArticleLongPressMenu(articles, menuFor, vm, anchorOffset) { menuFor = null }
+            val viewportSize = listState.layoutInfo.viewportSize
+            val dpOffset = remember(anchorOffset, viewportSize, density) {
+                with(density) {
+                    DpOffset(
+                        (anchorOffset.x - viewportSize.width).toDp(),
+                        (anchorOffset.y - viewportSize.height).toDp()
+                    )
+                }
+            }
+            ArticleLongPressMenu(articles, menuFor, vm, dpOffset) { menuFor = null }
         }
     }
 }
@@ -909,7 +928,7 @@ private fun BoxScope.ArticleLongPressMenu(
     articles: List<ArticleEntity>,
     anchor: ArticleEntity?,
     vm: PressVM,
-    anchorOffset: IntOffset,
+    dpOffset: DpOffset,
     onDismiss: () -> Unit
 ) {
     val article = anchor ?: return
@@ -930,10 +949,6 @@ private fun BoxScope.ArticleLongPressMenu(
         if (sel.isEmpty()) return
         vm.markIdsRead(sel)
         toast(ctx, if (sel.size == 1) "1 article marqué lu" else "${sel.size} articles marqués lus")
-    }
-    val density = LocalDensity.current
-    val dpOffset = with(density) {
-        DpOffset(anchorOffset.x.toDp(), anchorOffset.y.toDp())
     }
     DropdownMenu(
         expanded = true,
