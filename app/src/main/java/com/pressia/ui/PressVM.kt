@@ -178,8 +178,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     init {
         viewModelScope.launch { migrateAppearance() }
         // Étapes publiées par le pipeline partagé (manuel, lancement) : le bandeau
-        // les suit quel que soit le déclencheur.
-        viewModelScope.launch { repo.syncStep.collect { syncMsg = it } }
+        // les suit quel que soit le déclencheur. Les nulls (fin de passe, voir les
+        // `finally` du dépôt) sont ignorés : sans cela l'écran rouvert plus tard dans le
+        // même processus rejouait la dernière étape en bandeau.
+        viewModelScope.launch { repo.syncStep.collect { if (it != null) syncMsg = it } }
         // Contenu stocké modifié en cours de route (abonnements approvisionnés, fin de passe
         // articles ou « Read later ») : l'accueil et les compteurs suivent sans attendre la
         // fin de la synchronisation. Les listes d'articles, elles, sont déjà réactives.
@@ -341,6 +343,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun deleteLocalFeed(feedId: String) = viewModelScope.launch {
         repo.deleteLocalFeed(feedId)
         refreshNow()
+        // Le compteur de l'écran Comptes (`AccountInfo.feeds`) ne suit pas `refreshNow`.
+        account = repo.accountInfo()
     }
 
     /** Ajoute un flux RSS local et le synchronise une première fois. */
@@ -352,6 +356,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         }
         repo.syncDown(link)
         refreshNow()
+        // Voir deleteLocalFeed : le compteur Comptes ne suit pas `refreshNow`.
+        account = repo.accountInfo()
         done(true)
     }
 
@@ -628,7 +634,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         lockSync()
         val n = try {
             syncMsg = "Actualisation des favicons en cours…"
-            repo.refreshFavicons { syncMsg = it }.also { refreshNow() }
+            repo.refreshFavicons().also { refreshNow() }
         } finally {
             unlockSync()
             refreshingFavicons = false

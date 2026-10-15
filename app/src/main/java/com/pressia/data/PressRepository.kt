@@ -760,8 +760,10 @@ class PressRepository(
 
     /**
      * Étape de synchronisation en cours, manuelle ou lancement ; `null` = aucune.
-     * Le modèle la recopie dans `syncMsg`
+     * Le modèle la recopie dans `syncMsg` (en ignorant les nulls)
      * pour le bandeau : une seule source pour les étapes, quel que soit l'appelant.
+     * Remis à null en fin de passe (voir les `finally`) : sans cela un écran rouvert
+     * dans le même processus rejouait la dernière étape.
      * Écrit depuis des fils IO (StateFlow thread-safe), lu sur le fil principal.
      */
     val syncStep = MutableStateFlow<String?>(null)
@@ -830,6 +832,7 @@ class PressRepository(
         // en cours, lu par le message final.
         syncRateLimit = null
         val t0 = System.currentTimeMillis()
+        try {
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
         val tPush = System.currentTimeMillis()
         pushQueue()
@@ -859,6 +862,12 @@ class PressRepository(
         // et les images dominent à tour de rôle selon les nouveautés — sans lui on optimise à l'aveugle.
         android.util.Log.i("PressIA", "pipeline: montée=${tDown - tPush}ms descente=${tImg - tDown}ms images+tableau=${tFav - tImg}ms favicons=${System.currentTimeMillis() - tFav}ms total=${System.currentTimeMillis() - t0}ms")
         return n
+        } finally {
+            // Plus aucune étape : sans cela l'écran rouvert plus tard dans le même processus
+            // rejouait la dernière étape en bandeau (« Récupération des favicons… »).
+            // Le message final passe par `syncMsg` (qui ignore les nulls), pas d'interruption.
+            syncStep.value = null
+        }
     }
 
     /**
@@ -1017,6 +1026,7 @@ class PressRepository(
      */
     suspend fun initialSync(accountId: String): Int = withSyncLock {
         withContext(Dispatchers.IO) {
+            try {
             syncRateLimit = null
             val account = cloudAccounts().firstOrNull { it.id == accountId } ?: return@withContext 0
             if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
@@ -1057,6 +1067,10 @@ class PressRepository(
             }
             prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
             completed
+            } finally {
+                // Voir syncPipeline : aucune étape ne doit survivre à la passe.
+                syncStep.value = null
+            }
         }
     }
 
@@ -1919,16 +1933,19 @@ class PressRepository(
      * re-télécharge aussitôt les favicons de tous les abonnements. Ne touche ni aux
      * articles ni aux miniatures. Renvoie le nombre de favicons récupérés, ou -1 si les
      * réglages l'interdisent (images hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi) :
-     * rien n'est alors effacé.
-     *
-     * [onStep] annonce les étapes (appelée sans verrou d'UI : simple affectation d'état).
+     * rien n'est alors effacé. Étapes dans [syncStep], comme les pipelines (remis à null
+     * en fin, voir `syncPipeline`).
      */
-    suspend fun refreshFavicons(onStep: (suspend (String) -> Unit)? = null): Int = withSyncLock {
+    suspend fun refreshFavicons(): Int = withSyncLock {
         withContext(Dispatchers.IO) {
-            if (!imagesAllowed()) return@withContext -1
-            runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
-            onStep?.invoke("Favicons en cours…")
-            syncFavicons()
+            try {
+                if (!imagesAllowed()) return@withContext -1
+                runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
+                syncStep.value = "Favicons en cours…"
+                syncFavicons()
+            } finally {
+                syncStep.value = null
+            }
         }
     }
 
