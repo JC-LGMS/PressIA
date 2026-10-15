@@ -79,6 +79,11 @@ class MainActivity : ComponentActivity() {
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
                     if (current in CONTENT_ROUTES) lastContent = current
+                    // Revenir à l'accueil, c'est revenir à « Tous les articles » (la recherche
+                    // suit vm.scope) : à l'arrivée seulement. Le changer avant la navigation
+                    // repeignait l'écran quitté (titre + sources sur chaque ligne) pendant que
+                    // l'accueil se composait (~1 s) — l'écran quitté garde ses visuels.
+                    if (current == "home") vm.switchScope(Scope(label = "Tous les articles"))
                 }
 
                 /**
@@ -88,12 +93,8 @@ class MainActivity : ComponentActivity() {
                  */
                 fun openContent(route: String, apply: () -> Unit = {}) {
                     apply()
-                    if (route == "home") {
-                        // Revenir à l'accueil, c'est revenir à « Tous les articles » : sans cela le
-                        // flux courant (et la portée de recherche qui le suit) restait bloqué sur le
-                        // dernier flux visité.
-                        vm.switchScope(Scope(label = "Tous les articles"))
-                    }
+                    // Pas de switchScope ici pour "home" : il a lieu à l'arrivée (voir le
+                    // LaunchedEffect(current) ci-dessus).
                     if (route == "stream") vm.refresh()
                     nav.navigate(route) {
                         popUpTo(nav.graph.findStartDestination().id) { inclusive = false }
