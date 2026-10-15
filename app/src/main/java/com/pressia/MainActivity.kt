@@ -14,6 +14,9 @@ import com.pressia.data.FAVICON_SOURCE_AGGREGATOR
 import com.pressia.data.FAVICON_SOURCE_DIRECT
 import com.pressia.data.local.Prefs
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -367,7 +370,14 @@ class MainActivity : ComponentActivity() {
                         // lui le bandeau est plein-bleed, trop large et collé en bas.
                         // Mesure du visuel seul (après le padding) : les boutons haut/bas se
                         // soulèvent juste au-dessus, sans le trop d'espace de l'hôte.
-                        Snackbar(modifier = Modifier.padding(12.dp).onSizeChanged { bannerLift = with(density) { it.height.toDp() } }) { Text(vm.syncMsg ?: "") }
+                        // En thème sombre, le fond par défaut (inverseSurface, clair) est assombri
+                        // d'un cran pour moins claquer la nuit ; en thème clair, inchangé.
+                        val snackCs = MaterialTheme.colorScheme
+                        Snackbar(
+                            modifier = Modifier.padding(12.dp).onSizeChanged { bannerLift = with(density) { it.height.toDp() } },
+                            containerColor = if (snackCs.background.luminance() < 0.5f) lerp(snackCs.inverseSurface, Color.Black, 0.15f) else snackCs.inverseSurface,
+                            contentColor = snackCs.inverseOnSurface
+                        ) { Text(vm.syncMsg ?: "") }
                     }
                     // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
                     // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.
