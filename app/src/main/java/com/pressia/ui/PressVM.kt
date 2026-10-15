@@ -240,7 +240,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     /** Change de flux (flux, catégorie ou « Tous les articles ») : la liste « collante » repart à zéro. */
     fun switchScope(s: Scope) {
-        if (s.feedId != scope.feedId || s.categoryId != scope.categoryId) keepIds.value = emptySet()
+        if (s.feedId != scope.feedId || s.categoryId != scope.categoryId) {
+            keepIds.value = emptySet()
+            articles = emptyList()  // vide l'écran immédiatement, évite le flash du flux précédent
+        }
         scope = s
         refreshUnreadOnly()
     }

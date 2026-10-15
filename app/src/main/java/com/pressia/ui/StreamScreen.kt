@@ -22,9 +22,12 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
     val scope = rememberCoroutineScope()
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
+    // L'initial est null (« rien émis pour ce périmètre ») et non l'ancien snapshot `vm.articles` :
+    // à l'ouverture d'un autre flux, on ne revoit plus brièvement les articles du précédent en
+    // attendant la première émission du nouveau flux (un blanc d'une image, Room répond aussitôt).
+    // Le « Rien ici » ne s'affiche que sur une vraie liste vide, pas pendant ce blanc.
     val live = remember(vm.scope, unreadOnly) { vm.streamList(unreadOnly) }
-    val reactive by live.collectAsState(initial = vm.articles)
-    val localArticles = reactive
+    val reactive by live.collectAsState(initial = null)
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
     Scaffold(
         topBar = {
@@ -67,7 +70,11 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
+            val localArticles = reactive
+            if (localArticles == null) {
+                // Changement de périmètre : blanc d'une image, jamais les anciens articles.
+                Spacer(Modifier.fillMaxSize())
+            } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
                 Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                     Text(
                         if (!unreadOnly) "Rien ici — synchronisez."
