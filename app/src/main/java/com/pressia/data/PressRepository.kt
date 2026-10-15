@@ -227,10 +227,26 @@ class PressRepository(
         prefs.set(Prefs.ACTIVE_ACCOUNT, account.id)
     }
 
-    /** Enregistre (ou met à jour) un compte et en fait le compte actif. */
+    /**
+     * Enregistre (ou met à jour) un compte et en fait le compte actif. Une reconnexion du
+     * même utilisateur (nouveau jeton) remplace le jeton sur place au lieu d'ajouter une
+     * seconde ligne : deux fois le même compte est interdit (dossiers et flux dupliqués).
+     */
     suspend fun addAccount(service: String, token: String, name: String = ""): CloudAccount = withContext(Dispatchers.IO) {
-        val accounts = AccountStore.refreshToken(cloudAccounts(), service, token, name)
-        val account = accounts.first { it.token == token && it.service == service.lowercase() }
+        val svc = service.lowercase()
+        val p = providerFor(svc)
+        val userId = runCatching { p.userId(token) }.getOrDefault("")
+        var accounts = cloudAccounts()
+        // Comptes préexistants sans identifiant distant (versions antérieures) : une seule
+        // résolution chacun, persistée — sinon chaque reconnexion recréerait un doublon
+        // que le rapprochement ne verrait pas.
+        accounts.filter { it.service == svc && it.userId.isBlank() }.forEach { acc ->
+            runCatching { p.userId(acc.token) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { uid ->
+                accounts = accounts.map { if (it.id == acc.id) it.copy(userId = uid) else it }
+            }
+        }
+        accounts = AccountStore.refreshToken(accounts, service, token, name, userId)
+        val account = accounts.first { it.token == token && it.service == svc }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         setActiveAccount(account.id)
         // Une reconnexion du même service lève l'alerte des anciens jetons : l'utilisateur a

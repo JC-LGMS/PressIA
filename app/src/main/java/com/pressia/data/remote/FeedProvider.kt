@@ -26,6 +26,12 @@ interface FeedProvider {
     /** Infos du compte connecté (nom / e-mail) — null si l'API ne l'expose pas. */
     suspend fun profile(token: String?): String? = null
     /**
+     * Identifiant distant stable du compte (profil), "" si inconnu ou non supporté : clé
+     * anti-doublon à la connexion (voir `AccountStore.refreshToken`) — le jeton change à
+     * chaque connexion, lui ne change jamais.
+     */
+    suspend fun userId(token: String?): String = ""
+    /**
      * IDs des articles non-lus côté compte sur les 30 derniers jours ([RECONCILE_WINDOW_MS]),
      * pour réconcilier le lu/non-lu distant à la synchronisation (lus ailleurs → passés en
      * lus ; non lus ailleurs → rouverts). Null = non supporté (flux locaux).

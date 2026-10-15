@@ -11,16 +11,23 @@ const val LOCAL_PROVIDER = "local"
  * Un compte externe connecté à Feedly. Plusieurs comptes du même service coexistent :
  * chacun a son jeton, ses dossiers et ses abonnements, sans jamais se confondre avec les autres.
  *
- * [id] est la clé d'appropriation utilisée dans Room : elle vaut `"<service>#<empreinte du jeton>"`,
- * ce qui la rend stable tant que le jeton ne change pas et impossible à confondre avec un autre
- * compte du même service.
+ * [id] est la clé d'appropriation utilisée dans Room : elle vaut `"<service>#<empreinte du jeton>"`
+ * à la création. Une reconnexion du MÊME utilisateur (nouveau jeton) ne crée pas un second
+ * compte : le jeton remplace l'ancien sur place (même [id], voir [AccountStore.refreshToken]),
+ * sinon les dossiers et abonnements seraient dupliqués.
+ *
+ * [userId] est l'identifiant distant stable (profil du service), vide si inconnu : c'est lui,
+ * avec le service, qui dit « même compte » lors d'une reconnexion — pas le jeton, qui change
+ * à chaque connexion, ni le [name], purement informatif.
  */
 data class CloudAccount(
     val id: String,
     val provider: String,
     val token: String,
     /** Nom affiché (e-mail, identifiant) renseigné à la connexion ; purement informatif. */
-    val name: String = ""
+    val name: String = "",
+    /** Identifiant distant stable (profil) ; vide si inconnu (anciennes versions). */
+    val userId: String = ""
 ) {
     /** Service de base, sans l'empreinte du compte (« feedly#ab12… » → « feedly »). */
     val service: String get() = providerBase(id)
@@ -47,9 +54,10 @@ fun isLocalProvider(key: String?): Boolean = providerBase(key) == LOCAL_PROVIDER
 fun sameAccount(a: String?, b: String?): Boolean = a != null && b != null && a == b
 
 /**
- * Empreinte courte et stable d'un jeton : sert de suffixe d'identification du compte. Elle ne
- * peut pas être reconstruite depuis le jeton (sha-256 tronqué), et un nouveau jeton donne un
- * nouveau compte, ce qui est le comportement attendu quand l'utilisateur se reconnecte.
+ * Empreinte courte et stable d'un jeton : sert de suffixe d'identification du compte à sa
+ * création. Elle ne peut pas être reconstruite depuis le jeton (sha-256 tronqué). Un nouveau
+ * jeton du MÊME utilisateur ne crée pas un nouveau compte (voir [AccountStore.refreshToken]) :
+ * seule une première connexion forge un identifiant.
  */
 fun accountFingerprint(token: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(token.trim().toByteArray())
@@ -143,7 +151,7 @@ object AccountStore {
                     val token = o.optString("token").trim()
                     if (provider.isBlank() || token.isBlank()) return@mapNotNull null
                     val id = o.optString("id").trim().ifBlank { accountIdOf(provider, token) }
-                    CloudAccount(id, provider, token, o.optString("name").trim())
+                    CloudAccount(id, provider, token, o.optString("name").trim(), o.optString("userId").trim())
                 }
             }.distinctBy { it.id }
         } catch (_: Exception) {
@@ -160,6 +168,7 @@ object AccountStore {
                     .put("provider", a.provider)
                     .put("token", a.token)
                     .put("name", a.name)
+                    .put("userId", a.userId)
             )
         }
         return arr.toString()
@@ -172,11 +181,35 @@ object AccountStore {
     fun upsert(accounts: List<CloudAccount>, account: CloudAccount): List<CloudAccount> =
         accounts.filterNot { it.id == account.id } + account
 
-    /** Remplace un compte par un nouveau jeton, en conservant son identité si elle est stable. */
-    fun refreshToken(accounts: List<CloudAccount>, service: String, token: String, name: String = ""): List<CloudAccount> {
-        val byToken = accounts.firstOrNull { it.service == service.lowercase() && it.token == token }
-        if (byToken != null) return accounts.map { if (it.id == byToken.id && name.isNotBlank()) it.copy(name = name) else it }
-        val account = CloudAccount(accountIdOf(service, token), service.lowercase(), token, name)
+    /**
+     * Enregistre une connexion : remplace le jeton sur place quand c'est le même utilisateur
+     * (même service + même [userId] non vide), au lieu d'ajouter une seconde ligne — sinon
+     * chaque reconnexion (nouveau jeton) dupliquait le compte, ses dossiers et ses flux.
+     * L'identité est conservée ([id] inchangé) : abonnements et articles suivent sans migration.
+     * Sans [userId] (inconnu), seul un jeton identique est reconnu : deux utilisateurs
+     * distincts ne fusionnent jamais, même sans identifiant.
+     */
+    fun refreshToken(accounts: List<CloudAccount>, service: String, token: String, name: String = "", userId: String = ""): List<CloudAccount> {
+        val svc = service.lowercase()
+        val byToken = accounts.firstOrNull { it.service == svc && it.token == token }
+        if (byToken != null) {
+            return accounts.map {
+                if (it.id != byToken.id) it
+                else it.copy(
+                    name = name.ifBlank { it.name },
+                    userId = it.userId.ifBlank { userId.trim() }
+                )
+            }
+        }
+        val uid = userId.trim()
+        val sameUser = accounts.firstOrNull { it.service == svc && it.userId.isNotBlank() && uid.isNotBlank() && it.userId == uid }
+        if (sameUser != null) {
+            return accounts.map {
+                if (it.id != sameUser.id) it
+                else it.copy(token = token, name = name.ifBlank { it.name })
+            }
+        }
+        val account = CloudAccount(accountIdOf(service, token), svc, token, name, uid)
         return upsert(accounts, account)
     }
 }

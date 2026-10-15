@@ -28,11 +28,17 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      */
     @Volatile private var userIdCache: String? = null
 
-    private suspend fun userId(token: String?): String {
+    private suspend fun cachedUserId(token: String?): String {
         userIdCache?.let { return it }
         val id = runCatching { api.profile(auth(token)).id?.takeIf { it.isNotBlank() } }.getOrNull()
         return id.orEmpty()
     }
+
+    /** Identifiant distant stable, sans le cache partagé (voir `cachedUserId`) : à la connexion,
+     * le cache peut encore porter l'utilisateur précédent — un doublon manqué à cause d'un
+     * cache serait exactement le bug visé. Un appel profil par connexion, négligeable. */
+    override suspend fun userId(token: String?): String =
+        runCatching { api.profile(auth(token)).id?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
 
     override suspend fun categories(token: String?) =
         api.categories(auth(token)).map { CategoryEntity(id = it.id, label = it.label, provider = id) }
@@ -45,7 +51,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         }
 
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?): StreamPage {
-        val scope = userId(token)
+        val scope = cachedUserId(token)
         val streamId = feedId ?: categoryId
             ?: scope.ifBlank { return StreamPage(emptyList(), null) }.let { "user/$it/category/global.all" }
         val s = api.stream(auth(token), streamId, count = max.coerceIn(1, 500), cont = continuation)
@@ -78,14 +84,14 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         api.markers(auth(token), FeedlyMarkers("markAsUnsaved", "entries", entryIds = articleIds))
     }
     override suspend fun search(token: String?, query: String, feedId: String?): List<ArticleEntity> {
-        val scope = userId(token)
+        val scope = cachedUserId(token)
         if (scope.isBlank()) return emptyList()
         val s = api.search(auth(token), "user/$scope/category/global.all", query)
         return s.items.map { it.toEntity() }
     }
     /** Tableau « Read later » du compte : le périmètre additionnel demandé pour les favoris. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
-        val scope = userId(token)
+        val scope = cachedUserId(token)
         if (scope.isBlank()) return emptyList()
         // Paginé jusqu'à épuisement : un grand tableau ne doit pas être tronqué à la page.
         val out = ArrayList<ArticleEntity>()
@@ -106,7 +112,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      * (continuation), `complete` est faux et on redescend tout, sans sauter.
      */
     override suspend fun readLaterIds(token: String?, max: Int): IdSet? {
-        val scope = userId(token)
+        val scope = cachedUserId(token)
         if (scope.isBlank()) return null
         return runCatching {
             val ids = HashSet<String>()
@@ -129,7 +135,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      * ~20x moins de données), repli sur le contenu si l'endpoint est refusé.
      */
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
-        val scope = userId(token)
+        val scope = cachedUserId(token)
         // Profil inaccessible (401 transitoire…) : on ne sait RIEN des non-lus distants.
         // `complete = false` impérativement : avec `true` et un ensemble vide, la
         // réconciliation passerait tous les non-lus locaux en lus — perte visible des états
@@ -249,6 +255,9 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
             .joinToString(" · ").takeIf { it.isNotBlank() }
     }
+    /** Identifiant distant stable (voir l'interface) : `userId` du profil Inoreader. */
+    override suspend fun userId(token: String?): String =
+        runCatching { api.userInfo(auth(token)).userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
         api.unreadCount(auth(token)).unreadcounts.sumOf { it.count }

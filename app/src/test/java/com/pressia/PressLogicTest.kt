@@ -528,7 +528,8 @@ class PressLogicTest {
         val same = com.pressia.data.AccountStore.refreshToken(one, "feedly", "t1", "autre@ex.com")
         assertEquals(1, same.size)
         assertEquals("autre@ex.com", same[0].name)
-        // Nouveau jeton du même service : un second compte distinct, l'ancien est conservé.
+        // Nouveau jeton sans identifiant distant : impossible de dire si c'est le même
+        // utilisateur — un second compte distinct, l'ancien est conservé (voir le test suivant).
         val two = com.pressia.data.AccountStore.refreshToken(same, "feedly", "t2", "pro@ex.com")
         assertEquals(2, two.size)
         assertEquals(2, two.count { it.service == "feedly" })
@@ -537,6 +538,29 @@ class PressLogicTest {
         val replaced = com.pressia.data.AccountStore.upsert(two, two[0].copy(name = "renomme"))
         assertEquals(2, replaced.size)
         assertEquals("renomme", replaced.first { it.id == two[0].id }.name)
+    }
+
+    @Test fun `pas deux fois le meme compte`() {
+        val one = listOf(com.pressia.data.CloudAccount("feedly#aa", "feedly", "t1", "moi@ex.com", "uid-1"))
+        // Reconnexion du même utilisateur (nouveau jeton) : le jeton remplace l'ancien sur
+        // place — même identité, donc dossiers et abonnements suivent sans migration.
+        val same = com.pressia.data.AccountStore.refreshToken(one, "feedly", "t2", "moi@ex.com", "uid-1")
+        assertEquals(1, same.size)
+        assertEquals("feedly#aa", same[0].id)
+        assertEquals("t2", same[0].token)
+        // Un autre utilisateur du même service coexiste : pas de fusion abusive.
+        val two = com.pressia.data.AccountStore.refreshToken(same, "feedly", "t3", "autre@ex.com", "uid-2")
+        assertEquals(2, two.size)
+        // Sans identifiant distant des deux côtés : on ne devine rien, deux lignes.
+        val blanks = com.pressia.data.AccountStore.refreshToken(
+            listOf(com.pressia.data.CloudAccount("feedly#aa", "feedly", "t1")),
+            "feedly", "t2"
+        )
+        assertEquals(2, blanks.size)
+        // L'identifiant distant survit à l'aller-retour JSON (et son absence vaut "").
+        val back = com.pressia.data.AccountStore.parse(com.pressia.data.AccountStore.encode(same))
+        assertEquals("uid-1", back[0].userId)
+        assertEquals("", com.pressia.data.AccountStore.parse("""[{"provider":"feedly","token":"t1"}]""")[0].userId)
     }
 
     @Test fun `libelle du jeu de favoris`() {
