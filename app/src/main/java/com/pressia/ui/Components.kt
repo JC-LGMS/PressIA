@@ -411,7 +411,7 @@ private fun MetaLine(
 @Composable
 fun readDotTint(): Color {
     val cs = MaterialTheme.colorScheme
-    return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.15f)
+    return if (cs.background.luminance() < 0.5f) lerp(cs.outline, cs.onSurface, 0.0f)
     else lerp(cs.outlineVariant, Color.Black, 0.07f)
 }
 
