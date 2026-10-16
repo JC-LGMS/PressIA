@@ -111,26 +111,14 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
         }
     }
 
-    /** Double-tap : bascule entre la version complète et l'extrait RSS. */
-    suspend fun toggleMode() {
-        val a = article ?: return
-        if (fullMode) {
-            html = rssHtml(a)
-            fullMode = false
-            blockedNotice = false
-            toast(ctx, "Extrait RSS affiché")
-        } else {
-            loadFull()
-        }
-    }
-
     /**
      * Icône Readability : épingle le mode complet pour tous les articles ouverts
      * (voir `readabilityOn`), ou le coupe manuellement (article courant + session).
+     * Double-tap et pastille du bas passent par ici aussi : une seule bascule, une seule
+     * icône, partout pareil.
      * Coupure dès que le mode est actif *d'une façon ou d'une autre* (article en complet
      * ou épingle posée) : sinon, sur un site bloquant l'extraction, l'épingle restait
      * posée sans aucun moyen de la retirer (article jamais en complet, icône éteinte).
-     * Le double-tap reste local à l'article affiché : il ne touche pas à l'épingle.
      */
     suspend fun toggleReadability() {
         val a = article ?: return
@@ -248,7 +236,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)
                 .graphicsLayer { translationX = offsetX }
                 .pointerInput(Unit) {
-                    detectTapGestures(onDoubleTap = { scope.launch { toggleMode() } })
+                    detectTapGestures(onDoubleTap = { scope.launch { toggleReadability() } })
                 }
         ) {
             // Le titre ouvre l'article d'origine dans le navigateur externe.
@@ -334,9 +322,14 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             }
             Spacer(Modifier.height(12.dp))
             Spacer(Modifier.height(12.dp))
-            if (fullMode) AssistChip({ scope.launch { toggleMode() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.Filled.Article, null) })
-            else AssistChip({ scope.launch { loadFull() } }, { Text("Double-tap : article complet") }, leadingIcon = { Icon(Icons.Filled.AutoStories, null) })
+            if (fullMode || vm.readabilityOn) AssistChip({ scope.launch { toggleReadability() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
+            else AssistChip({ scope.launch { toggleReadability() } }, { Text("Double-tap : article complet") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
             Spacer(Modifier.height(16.dp))
+            // Le bandeau applicatif (fin de synchro…) recouvre le bas de l'écran : quand il
+            // est visible, un espace supplémentaire garde la pastille atteignable au scroll
+            // (même convention que les boutons haut/bas : hauteur du visuel + 20 dp).
+            val bannerLift = LocalBannerLift.current
+            if (bannerLift > 0.dp) Spacer(Modifier.height(bannerLift + 20.dp))
         }
         // Flèches de direction pendant le geste : confirment le voisin visé.
         if (dragging && offsetX < -40f && nextId != null) {
