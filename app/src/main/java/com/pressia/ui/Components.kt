@@ -963,9 +963,9 @@ fun ArticleList(
     }
 }
 
-/** Hauteur estimée du menu d'appui long (2 options + marges) : sert à le basculer au-dessus
- * du doigt en bas de liste. Bornée à l'écran dans tous les cas. */
-private val MENU_EST_H = 160.dp
+/** Hauteur estimée du menu d'appui long (2 options sur 2 lignes + marges) : sert à le
+ * basculer au-dessus du doigt en bas de liste. Bornée à l'écran dans tous les cas. */
+private val MENU_EST_H = 200.dp
 
 /**
  * Menu d'appui long sur un article : « marquer lus les plus récents / plus anciens »
@@ -1029,19 +1029,18 @@ private fun BoxScope.ArticleLongPressMenu(
             modifier = Modifier.offset { IntOffset(xPx.roundToInt(), yPx.roundToInt()) }
                 .width(wDp),
             shape = MaterialTheme.shapes.extraSmall,
-            tonalElevation = 3.dp
+            tonalElevation = 3.dp,
+            shadowElevation = 8.dp
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                // Libellés courts : le menu est étroit (ancré au doigt), le toast confirme
-                // l'action (« N articles marqués lus »).
-                MenuRow("Plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
-                MenuRow("Plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
+                MenuRow("Marquer lus les plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
+                MenuRow("Marquer lus les plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
             }
         }
     }
 }
 
-/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une ligne tronquée). */
+/** Ligne du menu d'appui long, au gabarit des options Material (48 dp min, 2 lignes max). */
 @Composable
 private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
@@ -1051,7 +1050,7 @@ private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
             .alpha(if (enabled) 1f else 0.38f),
         contentAlignment = Alignment.CenterStart
     ) {
-        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+        Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
