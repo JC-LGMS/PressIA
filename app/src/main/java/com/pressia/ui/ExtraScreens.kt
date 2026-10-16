@@ -814,8 +814,9 @@ fun SettingsScreen(vm: PressVM) {
             if (historyMonths <= 0) "Durée d'historique hors favoris : sans limite de temps"
             else "Durée d'historique hors favoris : $historyMonths mois"
         )
-        // 0 = illimité, 1..36 mois calendaires (défaut 3) : ne joue qu'à la connexion d'un
-        // compte, favoris toujours gardés — le quota par flux reste le garde-fou dans tous les cas.
+        // 0 = illimité, 1..36 mois calendaires (défaut 1, fenêtre Feedly ~31 j) : ne joue
+        // qu'à la connexion d'un compte, favoris toujours gardés — le quota par flux reste
+        // le garde-fou dans tous les cas.
         Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
         Text(
             if (interval <= 0) "Fréquence de synchronisation : manuelle"
@@ -1353,7 +1354,7 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Conservation : quota par flux et historique",
         "Seul le quota par flux (100 à 10 000 articles, 1 000 par défaut) limite la taille hors-ligne, avec une " +
-            "fenêtre d'historique de 0 à 36 mois (0 = sans limite, 3 par défaut, à la connexion d'un compte). " +
+            "fenêtre d'historique de 0 à 36 mois (0 = sans limite, 1 par défaut, à la connexion d'un compte). " +
             "Les favoris sont toujours gardés."
     ),
     AboutTopic(

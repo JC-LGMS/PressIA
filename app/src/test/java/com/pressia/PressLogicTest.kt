@@ -515,6 +515,8 @@ class PressLogicTest {
         }
         // Réglage exporté : l'historique remonté doit survivre à une restauration.
         assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
+        // Défaut d'historique : 1 mois, aligné sur la fenêtre Feedly (~31 j au-delà = lu).
+        assertEquals(1, Prefs.HISTORY_MONTHS_DEFAULT)
         // Réglage exporté : la source des favicons doit survivre à une restauration.
         assertTrue("favicon_source doit figurer dans ENTRIES", "favicon_source" in names)
         // Filtre œil mémorisé par flux : ses choix posés doivent survivre à une restauration.

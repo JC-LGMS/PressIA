@@ -72,8 +72,9 @@ class Prefs(private val ctx: Context) {
         val SYNC_INTERVAL_MIN = intPreferencesKey("sync_interval_min") // 0 = manuel
         /** Fréquence de synchronisation par défaut, en minutes (fenêtre anti-doublon au lancement). */
         const val SYNC_INTERVAL_DEFAULT = 10
-        /** Historique remonté par défaut, en mois calendaires (voir [HISTORY_MONTHS]). */
-        const val HISTORY_MONTHS_DEFAULT = 3
+        /** Historique remonté par défaut, en mois calendaires (voir [HISTORY_MONTHS]) :
+         * 1 mois, aligné sur la fenêtre au-delà de laquelle Feedly passe en lu (~31 j). */
+        const val HISTORY_MONTHS_DEFAULT = 1
         /**
          * Source des favicons : agrégateur (service Google, défaut) ou sites eux-mêmes
          * (`/favicon.ico`, en direct). L'icône fournie par le compte reste prioritaire
