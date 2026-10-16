@@ -481,6 +481,7 @@ fun SettingsScreen(vm: PressVM) {
     var interval by remember { mutableStateOf(Prefs.SYNC_INTERVAL_DEFAULT) }
     var openMode by remember { mutableStateOf("internal") }
     var mergeFolders by remember { mutableStateOf(true) }
+    var readabilitySticky by remember { mutableStateOf(false) }
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
@@ -512,6 +513,7 @@ fun SettingsScreen(vm: PressVM) {
         faviconSource = get(Prefs.FAVICON_SOURCE, com.pressia.data.FAVICON_SOURCE_AGGREGATOR)
         imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
+        readabilitySticky = get(Prefs.READABILITY_STICKY, false)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         refreshCacheInfo()
@@ -554,6 +556,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.FAVICON_SOURCE, faviconSource)
         vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
         vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
+        vm.repo.prefs.set(Prefs.READABILITY_STICKY, readabilitySticky)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
@@ -661,6 +664,17 @@ fun SettingsScreen(vm: PressVM) {
                 "custom" -> "L'article s'ouvre dans un onglet de navigateur intégré, avec votre compte et vos historique : presque comme le navigateur, mais sans quitter l'application. La vue interne reste accessible en revenant sur l'article."
                 else -> "Toucher un article l'ouvre dans PressIA, avec l'extrait hors-ligne et l'article complet au double-tap."
             },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Readability persistant"); Spacer(Modifier.weight(1f))
+            Switch(readabilitySticky, { readabilitySticky = it; save() })
+        }
+        Text(
+            "L'icône « Readability » de l'écran article (à cocher dans « Icônes d'action » ci-dessous) " +
+                "passe tous les articles ouverts en article complet. Coupé (défaut), le retour à " +
+                "l'accueil désactive ce mode ; coché, il reste jusqu'à désactivation manuelle.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1322,8 +1336,10 @@ private val ABOUT_TOPICS = listOf(
     ),
     AboutTopic(
         "Ouverture : PressIA, onglet, navigateur",
-        "Dans PressIA (extrait hors-ligne, article complet au double-tap), dans un onglet intégré, ou directement " +
-            "dans le navigateur : le mode se choisit dans les réglages."
+        "Dans PressIA (extrait hors-ligne, article complet au double-tap ou via l'icône Readability " +
+            "à activer dans les réglages), dans un onglet intégré, ou directement dans le navigateur : " +
+            "le mode se choisit dans les réglages. Épinglé, le complet s'applique à tous les articles " +
+            "ouverts ; sauf « Readability persistant », le retour à l'accueil le coupe."
     ),
     AboutTopic(
         "Conservation : quota par flux et historique",

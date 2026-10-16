@@ -43,7 +43,7 @@ fun favSetLabel(set: String): String = when (set) {
 }
 
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
-val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "instapaper")
+val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "readability", "instapaper")
 
 /** Icônes affichées par défaut : favoris, lu/non-lu, partage. */
 const val ARTICLE_ACTIONS_DEFAULT = "star,read,share"
@@ -53,6 +53,7 @@ fun articleActionLabel(id: String): String = when (id) {
     "star" -> "Favoris"
     "read" -> "Lu/non-lu"
     "share" -> "Partager"
+    "readability" -> "Readability"
     "instapaper" -> "Instapaper"
     else -> id
 }
@@ -90,6 +91,21 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var authMsg by mutableStateOf<String?>(null)
     /** Article ouvert via la route "article" (évite les caractères spéciaux dans la navigation). */
     var selectedArticleId by mutableStateOf<String?>(null)
+    /**
+     * Mode « article complet » (Readability) épinglé pour la session : quand l'icône
+     * Readability l'active, tous les articles ouverts passent en complet. Sauf réglage
+     * « Readability persistant », le retour à l'accueil le désépingle (voir
+     * [onArrivedHome]) ; le désactiver manuellement le coupe aussitôt.
+     */
+    var readabilityOn by mutableStateOf(false)
+
+    /**
+     * Arrivée à l'accueil : sauf « Readability persistant », le mode complet épinglé
+     * retombe — les articles suivants s'ouvrent en extrait RSS jusqu'à réactivation.
+     */
+    suspend fun onArrivedHome() {
+        if (prefs.data.first()[Prefs.READABILITY_STICKY] != true) readabilityOn = false
+    }
     /** Infos du compte connecté (écran Comptes). */
     var account by mutableStateOf<com.pressia.data.AccountInfo?>(null)
     /** Compteurs de non-lus par flux (feedId → count), pour l'écran Accueil et le drawer. */

@@ -95,6 +95,9 @@ class MainActivity : ComponentActivity() {
                     // Pas de switchScope ici pour "home" : il a lieu à l'arrivée (voir le
                     // LaunchedEffect(current) ci-dessus).
                     if (route == "stream") vm.refresh()
+                    // Revenir à l'accueil désépingle le mode Readability (sauf réglage
+                    // « persistant ») : voir `onArrivedHome`.
+                    if (route == "home") scope.launch { vm.onArrivedHome() }
                     nav.navigate(route) {
                         popUpTo(nav.graph.findStartDestination().id) { inclusive = false }
                         launchSingleTop = true
@@ -130,6 +133,8 @@ class MainActivity : ComponentActivity() {
                         openContent("home")
                     } else {
                         // Accueil = « Tous les articles » : on change de flux, on ne quitte pas l'écran.
+                        // Comme openContent("home") ci-dessus : le retour désépingle Readability.
+                        scope.launch { vm.onArrivedHome() }
                         vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
                     }
                 }

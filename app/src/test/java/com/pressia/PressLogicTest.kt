@@ -510,6 +510,8 @@ class PressLogicTest {
         // Métadonnée exportée : la date de dernière sauvegarde survit à une restauration.
         assertTrue("last_backup_at doit figurer dans ENTRIES", "last_backup_at" in names)
         assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "last_backup_at" })
+        // Réglage exporté : la persistance du mode Readability doit survivre à une restauration.
+        assertTrue("readability_sticky doit figurer dans ENTRIES", "readability_sticky" in names)
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()

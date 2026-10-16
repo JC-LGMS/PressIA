@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
 
-/** Écran article : extrait RSS, double-tap → article complet (Readability), partage système. */
+/** Écran article : extrait RSS, double-tap ou icône → article complet (Readability), partage système. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: () -> Unit) {
@@ -59,6 +59,31 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     /** Contenu RSS d'origine (jamais le HTML complet, pour éviter les allers-retours dégradés). */
     fun rssHtml(a: ArticleEntity?): String? = a?.summary?.takeIf { it.isNotBlank() } ?: a?.content
 
+    /**
+     * Extraction de l'article complet (voir `ensureFull`). En ouverture automatique (mode
+     * épinglé), pas de toast de succès : un toast par article ouvert serait du bruit — seul
+     * l'échec reste visible (pastille + message).
+     */
+    suspend fun loadFull(quiet: Boolean = false) {
+        val a = article ?: return
+        loadingFull = true
+        try {
+            val res = vm.repo.ensureFull(a.id)
+            blockedNotice = res.blocked
+            if (!res.html.isNullOrBlank()) { html = res.html; fullMode = !res.blocked }
+            if (!quiet) {
+                toast(
+                    ctx,
+                    when {
+                        res.blocked -> "Extraction bloquée par le site — extrait RSS conservé"
+                        fullMode -> "Article complet affiché"
+                        else -> "Contenu complet indisponible"
+                    }
+                )
+            }
+        } finally { loadingFull = false }
+    }
+
     LaunchedEffect(articleId) {
         val a = vm.repo.article(articleId)
         article = a
@@ -74,6 +99,8 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                 article = a.copy(unread = false)
             }
         }
+        // Mode épinglé par l'icône Readability : chaque article ouvert passe en complet.
+        if (vm.readabilityOn) loadFull(quiet = true)
     }
     val start = remember { System.currentTimeMillis() }
     DisposableEffect(articleId) {
@@ -82,24 +109,6 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             val cur = article
             if (cur != null) vm.logReading(cur.id, cur.feedId, secs)
         }
-    }
-
-    suspend fun loadFull() {
-        val a = article ?: return
-        loadingFull = true
-        try {
-            val res = vm.repo.ensureFull(a.id)
-            blockedNotice = res.blocked
-            if (!res.html.isNullOrBlank()) { html = res.html; fullMode = !res.blocked }
-            toast(
-                ctx,
-                when {
-                    res.blocked -> "Extraction bloquée par le site — extrait RSS conservé"
-                    fullMode -> "Article complet affiché"
-                    else -> "Contenu complet indisponible"
-                }
-            )
-        } finally { loadingFull = false }
     }
 
     /** Double-tap : bascule entre la version complète et l'extrait RSS. */
@@ -111,6 +120,25 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             blockedNotice = false
             toast(ctx, "Extrait RSS affiché")
         } else {
+            loadFull()
+        }
+    }
+
+    /**
+     * Icône Readability : épingle le mode complet pour tous les articles ouverts
+     * (voir `readabilityOn`), ou le coupe manuellement (article courant + session).
+     * Le double-tap reste local à l'article affiché : il ne touche pas à l'épingle.
+     */
+    suspend fun toggleReadability() {
+        val a = article ?: return
+        if (fullMode) {
+            html = rssHtml(a)
+            fullMode = false
+            blockedNotice = false
+            vm.readabilityOn = false
+            toast(ctx, "Extrait RSS affiché")
+        } else {
+            vm.readabilityOn = true
             loadFull()
         }
     }
@@ -163,6 +191,14 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                     )
                                 }
                                 "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
+                                // Épinglé (article en complet) : teinte dominante, comme le favori actif.
+                                "readability" -> IconButton({ scope.launch { toggleReadability() } }) {
+                                    Icon(
+                                        Icons.Filled.ChromeReaderMode, "article complet",
+                                        tint = if (fullMode) MaterialTheme.colorScheme.primary
+                                        else LocalContentColor.current
+                                    )
+                                }
                             }
                         }
                         IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") }

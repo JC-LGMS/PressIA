@@ -117,6 +117,12 @@ class Prefs(private val ctx: Context) {
         /** Périmètre des favoris : "app" (étoiles PressIA) | "later" (Read later) | "all" (les deux). */
         val STARRED_SCOPE = stringPreferencesKey("starred_scope")
         val TAP_FAVICON_READ = booleanPreferencesKey("tap_favicon_read")
+        /**
+         * Readability persistant : si vrai, le mode « article complet » épinglé par son icône
+         * survit au retour à l'accueil et ne se coupe que manuellement. Faux (défaut) : revenir
+         * à l'accueil désépingle, chaque article s'ouvre ensuite en extrait RSS.
+         */
+        val READABILITY_STICKY = booleanPreferencesKey("readability_sticky")
 
         val INOREADER_APP_ID = stringPreferencesKey("inoreader_app_id")
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
@@ -217,6 +223,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),
             PrefEntry.Str("collapsed_folders", COLLAPSED_FOLDERS), PrefEntry.Str("starred_scope", STARRED_SCOPE),
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
+            PrefEntry.Bool("readability_sticky", READABILITY_STICKY),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),
