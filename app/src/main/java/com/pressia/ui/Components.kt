@@ -1038,7 +1038,9 @@ private fun BoxScope.ArticleLongPressMenu(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 8.dp
         ) {
-            Column(Modifier.padding(vertical = 8.dp)) {
+            Column(
+                Modifier.width(IntrinsicSize.Max).padding(vertical = 8.dp)
+            ) {
                 MenuRow("Marquer lus les plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
                 MenuRow("Marquer lus les plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
             }
@@ -1046,7 +1048,10 @@ private fun BoxScope.ArticleLongPressMenu(
     }
 }
 
-/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne). */
+/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne).
+ * La colonne impose `IntrinsicSize.Max` : les lignes restent pleine largeur cliquable
+ * sans étirer la carte (un `fillMaxWidth` seul dans une colonne enveloppante prendrait
+ * toute la largeur max). */
 @Composable
 private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
