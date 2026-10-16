@@ -1187,40 +1187,180 @@ fun ColorPickerDialog(title: String, current: String, onDismiss: () -> Unit, onP
     }
 }
 
-/** Écran « À propos » : nom, version, description courte et bouton vers le code source. */
+/** Écran « À propos » : nom, version, description courte, bouton vers le code source,
+ * puis résumé cherchable des fonctionnalités et règles de l'application. */
 @Composable
 fun AboutScreen() {
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }
+    var query by remember { mutableStateOf("") }
+    // Filtrage simple sur le titre et le texte : le résumé reste lisible sans quitter l'écran.
+    val shown = remember(query) {
+        if (query.isBlank()) ABOUT_TOPICS
+        else ABOUT_TOPICS.filter {
+            it.title.contains(query, ignoreCase = true) || it.body.contains(query, ignoreCase = true)
+        }
+    }
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)
     ) {
-        Image(
-            painter = androidx.compose.ui.res.painterResource(com.pressia.R.drawable.ic_launcher),
-            contentDescription = null,
-            modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp))
-        )
-        Spacer(Modifier.height(12.dp))
-        Text("PressIA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        if (!version.isNullOrBlank()) {
-            Spacer(Modifier.height(2.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                painter = androidx.compose.ui.res.painterResource(com.pressia.R.drawable.ic_launcher),
+                contentDescription = null,
+                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(18.dp))
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("PressIA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            if (!version.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Version $version", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(16.dp))
             Text(
-                "Version $version", style = MaterialTheme.typography.labelLarge,
+                "Lecteur RSS Android développé grâce à OpenCode et Muse Spark 1.3 free par " +
+                    "Jean-Cyril Poiraud (inspiré par Press) : Feedly ou flux locaux, " +
+                    "100 % Jetpack Compose, lecture hors-ligne et article complet via Readability.",
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton({ openUrl(ctx, "https://github.com/JC-LGMS/PressIA-JCP") }) {
+                Text("Code source")
+            }
         }
         Spacer(Modifier.height(16.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
+        Text("Fonctionnalités et règles", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Rechercher…") },
+            leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true
+        )
+        Spacer(Modifier.height(4.dp))
         Text(
-            "Lecteur RSS Android développé grâce à OpenCode et Muse Spark 1.3 free par " +
-                "Jean-Cyril Poiraud (inspiré par Press) : Feedly ou flux locaux, " +
-                "100 % Jetpack Compose, lecture hors-ligne et article complet via Readability.",
-            style = MaterialTheme.typography.bodyMedium,
+            if (query.isBlank()) "${ABOUT_TOPICS.size} sujets"
+            else "${shown.size} sujet(s) pour « $query »",
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(16.dp))
-        OutlinedButton({ openUrl(ctx, "https://github.com/JC-LGMS/PressIA-JCP") }) {
-            Text("Code source")
+        Spacer(Modifier.height(8.dp))
+        if (shown.isEmpty()) {
+            Text(
+                "Aucun sujet ne correspond : essayez un autre mot (ex. « favoris », « hors-ligne », « sauvegarde »).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            shown.forEach { topic ->
+                Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(topic.title, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            topic.body, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
+
+/** Un sujet du résumé « À propos » : titre court + règle ou fonctionnalité en une phrase. */
+private data class AboutTopic(val title: String, val body: String)
+
+/**
+ * Ce que PressIA sait faire et les règles qu'elle applique, en langage utilisateur.
+ * Chaque entrée reprend un comportement réel et vérifiable de l'application (voir l'écran
+ * ou le réglage cité) : en ajouter un nouveau impose de vérifier le comportement d'abord.
+ */
+private val ABOUT_TOPICS = listOf(
+    AboutTopic(
+        "Comptes : Feedly, Inoreader, flux locaux",
+        "Feedly se connecte sur sa page officielle intégrée (le niveau gratuit suffit), Inoreader via OAuth, " +
+            "et les flux RSS/Atom saisis à la main restent dans PressIA sans compte. Plusieurs comptes coexistent, " +
+            "l'actif est synchronisé en premier ; reconnecter le même utilisateur remplace son jeton, sans doublon."
+    ),
+    AboutTopic(
+        "Synchronisation : bouton, lancement, geste",
+        "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
+            "récupèrent la même chose : nouveaux articles, tableau « Read later », miniatures et favicons. " +
+            "Sans compte ni flux, la synchro manuelle le dit au lieu de tourner à vide ; hors-ligne, rien ne part."
+    ),
+    AboutTopic(
+        "Lecture hors-ligne et article complet",
+        "Extraits, images et articles complets (extraits via Readability) sont conservés pour lire sans réseau. " +
+            "« Images hors-ligne » et « Wi-Fi uniquement » règlent ce qui se télécharge et quand."
+    ),
+    AboutTopic(
+        "Vues : compacte, liste, carte, magazine",
+        "Quatre présentations au choix dans les réglages. L'œil ne montre que les non-lus, mémorisé par flux " +
+            "et par dossier ; les boutons haut/bas longent la liste, et le bouton bas s'arrête d'abord au " +
+            "dernier non-lu simple avant le tout bas (sauf Favoris et Read later)."
+    ),
+    AboutTopic(
+        "Appui long : marquer lus autour d'un article",
+        "Un appui long sur un article propose « marquer lus les plus récents / les plus anciens », l'article " +
+            "touché restant tel quel. Les favoris et le Read later ne sont jamais touchés par ce menu."
+    ),
+    AboutTopic(
+        "Favoris et Read later : jamais marqués lus",
+        "L'étoile PressIA et le tableau « Read later » du compte sont deux choses distinctes (périmètre réglable " +
+            "dans les Favoris). Ni « tout marquer lu », ni le menu d'appui long, ni les doublons ne les font passer " +
+            "en lu : « tout marquer lu » bascule à l'unité dès qu'un favori ou un Read later doit rester non lu."
+    ),
+    AboutTopic(
+        "Gestes configurables",
+        "Balayage vers la gauche ou la droite (favori, lu/non-lu, partage, Instapaper), bouton de fin de ligne, " +
+            "icônes de l'écran article : tout se règle. Toucher le favicon ou la miniature marque lu sans ouvrir " +
+            "(désactivable)."
+    ),
+    AboutTopic(
+        "Ouverture : PressIA, onglet, navigateur",
+        "Dans PressIA (extrait hors-ligne, article complet au double-tap), dans un onglet intégré, ou directement " +
+            "dans le navigateur : le mode se choisit dans les réglages."
+    ),
+    AboutTopic(
+        "Conservation : quota par flux et historique",
+        "Seul le quota par flux (100 à 10 000 articles, 1 000 par défaut) limite la taille hors-ligne, avec une " +
+            "fenêtre d'historique de 0 à 36 mois (0 = sans limite, 3 par défaut, à la connexion d'un compte). " +
+            "Les favoris sont toujours gardés."
+    ),
+    AboutTopic(
+        "Recherche et doublons",
+        "La recherche demande 2 lettres, dans le flux courant, un dossier ou tous les articles. L'écran doublons " +
+            "repère les mêmes sujets repris par plusieurs flux et peut tout marquer lu sauf le plus récent."
+    ),
+    AboutTopic(
+        "Sauvegarde et restauration",
+        "Un seul fichier : options, statistiques, abonnements et favoris/lus, au choix ; les jetons ne partent " +
+            "que si on les inclut. Seuls les dossiers créés en local sont sauvegardés : ceux des comptes sont " +
+            "re-créés par la synchronisation."
+    ),
+    AboutTopic(
+        "Cache, favicons, déconnexion",
+        "« Vider le cache » supprime images et articles complets extraits mais garde les articles (ré-extraits à " +
+            "l'ouverture) ; « Actualiser favicons » ne touche pas aux miniatures (source : agrégateur ou sites en " +
+            "direct). Se déconnecter supprime articles, miniatures, cache et file d'attente du compte."
+    ),
+    AboutTopic(
+        "Dossiers fusionnés ou séparés",
+        "« Fusionner » regroupe les dossiers de même nom de tous les comptes comme dans Feedly ; « Séparer » " +
+            "garde un dossier par compte pour ne jamais confondre deux comptes."
+    ),
+    AboutTopic(
+        "Limites réseau et session expirée",
+        "Trop de demandes d'affilée (erreur 429) affiche un message d'attente avec le délai demandé, jamais " +
+            "confondu avec une session expirée : dans ce cas, l'application demande une reconnexion du compte."
+    ),
+    AboutTopic(
+        "Apparence et confort de lecture",
+        "Thème de nuit (sombre, AMOLED), accent, fond, quatre tailles de police, justification, échelles du menu " +
+            "et de l'accueil : tout est réglable et exporté avec la sauvegarde."
+    )
+)
