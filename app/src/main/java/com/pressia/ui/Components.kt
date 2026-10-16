@@ -5,9 +5,13 @@ import android.content.Intent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -48,8 +52,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -97,7 +105,8 @@ fun ArticleRow(
     swipe: String = "star",
     swipeRight: String = "read",
     /** Menu d'appui long (« plus récents/anciens ») : fourni par la liste, vide par défaut. */
-    onLongPress: () -> Unit = {}
+    onLongPress: () -> Unit = {},
+    isHighlighted: Boolean = false
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -176,10 +185,13 @@ fun ArticleRow(
         // dans un sens ou dans l'autre.
         val metaStar = a.starred && ((swipe != "star" && swipeRight != "star") || !swiping || !flipped)
     when (mode) {
-        "compact" -> Column(
-            Modifier.fillMaxWidth().longPressMenu(onOpen, onLongPress)
-                .padding(horizontal = 12.dp, vertical = 6.dp).alpha(alpha)
-        ) {
+        "compact" -> {
+            Box(
+                modifier = Modifier.fillMaxWidth().longPressMenu(onOpen, onLongPress)
+                    .background(if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp).alpha(alpha)) {
+
             // Favicon, titre et action de fin partagent le même Row centré : tout se cale sur les
             // lignes du titre seul, et non sur le centre de la ligne entière (titre + méta).
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -201,8 +213,22 @@ fun ArticleRow(
                 modifier = Modifier.padding(start = 36.dp, end = trailW, top = 3.dp)
                     .onSizeChanged { metaH = with(density) { it.height.toDp() } },
                 showSource = showSource)
+            }
         }
-        "magazine" -> Card(Modifier.fillMaxWidth().padding(8.dp).longPressMenu(onOpen, onLongPress)) {
+        }
+        "magazine" -> {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(8.dp).longPressMenu(onOpen, onLongPress)
+                    .background(if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent, shape = MaterialTheme.shapes.medium)
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                        .border(
+                            width = if (isHighlighted) 2.dp else 0.dp,
+                            color = if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else androidx.compose.ui.graphics.Color.Transparent,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                ) {
             Column {
                 // La bannière est la vignette de l'article : elle répond au même appui que le
                 // favicon des autres vues.
@@ -219,45 +245,66 @@ fun ArticleRow(
                 }
             }
         }
-        "card" -> Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).longPressMenu(onOpen, onLongPress)) {
-            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Même appui que dans les autres vues, sur la vignette ou sur le favicon selon ce qu'il y a.
-                if (!a.imageUrl.isNullOrBlank()) AsyncImage(
-                    thumbModel(ctx, a.imageUrl), null,
-                    Modifier.size(72.dp).alpha(alpha).longPressInert(leadTap),
-                    contentScale = ContentScale.Crop
-                )
-                // Le Box maintient la zone cliquable à 48 dp même quand le favicon rétrécit.
-                else Box(
-                    Modifier.size(48.dp).longPressInert(leadTap),
-                    contentAlignment = Alignment.Center
-                ) { FeedAvatar(feeds[a.feedId], 48) }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = titleSp.sp,
-                        fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(alpha))
-                    MetaLine(src, a.published, dateSp, metaStar, showSource = showSource)
+        }
+        }
+                "card" -> {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).longPressMenu(onOpen, onLongPress)
+                    .background(if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent, shape = MaterialTheme.shapes.medium)
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                        .border(
+                            width = if (isHighlighted) 2.dp else 0.dp,
+                            color = if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else androidx.compose.ui.graphics.Color.Transparent,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (!a.imageUrl.isNullOrBlank()) AsyncImage(
+                            thumbModel(ctx, a.imageUrl), null,
+                            Modifier.size(72.dp).alpha(alpha).longPressInert(leadTap),
+                            contentScale = ContentScale.Crop
+                        )
+                        else Box(
+                            Modifier.size(48.dp).longPressInert(leadTap),
+                            contentAlignment = Alignment.Center
+                        ) { FeedAvatar(feeds[a.feedId], 48) }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontSize = titleSp.sp,
+                                fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(alpha))
+                            MetaLine(src, a.published, dateSp, metaStar, showSource = showSource)
+                        }
+                        trail(swiping)
+                    }
                 }
-                trail(swiping)
             }
         }
-        else -> ListItem(
-            modifier = Modifier.longPressMenu(onOpen, onLongPress).alpha(alpha).padding(vertical = 2.dp),
-            headlineContent = { Text(title, fontSize = titleSp.sp,
-                fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
-            supportingContent = { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) },
-            leadingContent = {
-                if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
-                // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
-                // lu/non-lu quelle que soit l'option, comme celui en bout de ligne.
-                else Icon(
-                    if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked, null,
-                    tint = readDotTint(),
-                    modifier = Modifier.size(14.dp).clickable(onClick = onToggleRead)
+        else -> {
+            Box(
+                modifier = Modifier.fillMaxWidth().longPressMenu(onOpen, onLongPress)
+                    .background(if (isHighlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else androidx.compose.ui.graphics.Color.Transparent)
+            ) {
+                ListItem(
+                    modifier = Modifier.alpha(alpha).padding(vertical = 2.dp),
+                    headlineContent = { Text(title, fontSize = titleSp.sp,
+                        fontWeight = FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) },
+                    leadingContent = {
+                        if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
+                        // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
+                        // lu/non-lu quelle que soit l'option, comme celui en bout de ligne.
+                        else Icon(
+                            if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked, null,
+                            tint = readDotTint(),
+                            modifier = Modifier.size(14.dp).clickable(onClick = onToggleRead)
+                        )
+                    },
+                    trailingContent = { trail(swiping) }
                 )
-            },
-            trailingContent = { trail(swiping) }
-        )
+            }
+        }
     }
     }
     SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, content)
@@ -785,6 +832,10 @@ fun ArticleList(
     val sendScope = rememberCoroutineScope()
     // Article sous le doigt (appui long) : le menu « plus récents/anciens » s'ouvre.
     var menuFor by remember { mutableStateOf<ArticleEntity?>(null) }
+    // Point d'appui en px overlay, observé passivement (ne consomme rien : clic, appui long
+    // et balayage gardent leur arbitrage). Écrit hors composition, converti à l'ouverture.
+    var pressPx by remember { mutableStateOf(Offset.Zero) }
+    var menuAt by remember { mutableStateOf(DpOffset.Unspecified) }
     val row: @Composable (ArticleEntity) -> Unit = { a ->
         val star = vm.starState(a)
         ArticleRow(a.copy(starred = star), mode, trailing, tapFaviconRead, titleSp, dateSp, feeds,
@@ -792,7 +843,11 @@ fun ArticleList(
             showSource = showSource,
             onInstapaper = { sendScope.launch { vm.sendOrAskInstapaper(a) { toast(ctx, it) } } },
             swipe = swipe, swipeRight = swipeRight,
-            onLongPress = { menuFor = a })
+            onLongPress = {
+                menuFor = a
+                menuAt = with(density) { DpOffset(pressPx.x.toDp(), pressPx.y.toDp()) }
+            },
+            isHighlighted = menuFor?.id == a.id)
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
@@ -801,7 +856,16 @@ fun ArticleList(
         val unreadStopPos = remember(articles, stopAtUnread) {
             if (stopAtUnread) articles.indexOfLast { it.unread && !vm.starState(it) } else -1
         }
-        Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxSize()
+                // Point d'appui du futur appui long : observé sans consommer, pour ancrer
+                // le menu sous le doigt (voir `menuAt`). Le haut sert au même calcul.
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        pressPx = awaitFirstDown(requireUnconsumed = false).position
+                    }
+                }
+        ) {
             LazyVerticalGrid(
                 GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp),
                 state = gridState
@@ -830,20 +894,7 @@ fun ArticleList(
                 gridState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            val anchorOffset = menuFor?.let { target ->
-                val item = gridState.layoutInfo.visibleItemsInfo.find { it.key == target.id }
-                item?.offset ?: IntOffset.Zero
-            } ?: IntOffset.Zero
-            val viewportSize = gridState.layoutInfo.viewportSize
-            val dpOffset = remember(anchorOffset, viewportSize, density) {
-                with(density) {
-                    DpOffset(
-                        (anchorOffset.x - viewportSize.width).toDp(),
-                        (anchorOffset.y - viewportSize.height).toDp()
-                    )
-                }
-            }
-            ArticleLongPressMenu(articles, menuFor, vm, dpOffset) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, gridState.layoutInfo.viewportSize, vm) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -855,7 +906,15 @@ fun ArticleList(
         val unreadStopPos = remember(grouped, stopAtUnread) {
             if (stopAtUnread) lastUnreadLazyIndex(grouped) { vm.starState(it) } else -1
         }
-        Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxSize()
+                // Point d'appui du futur appui long (voir la branche magazine).
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        pressPx = awaitFirstDown(requireUnconsumed = false).position
+                    }
+                }
+        ) {
             LazyColumn(
                 state = listState,
                 // Les boutons haut/bas flottent en bas au centre : en vues liste et compacte, un
@@ -899,40 +958,36 @@ fun ArticleList(
                 listState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            val anchorOffset = menuFor?.let { target ->
-                val item = listState.layoutInfo.visibleItemsInfo.find { it.key == "art-${target.id}" }
-                IntOffset(0, item?.offset ?: 0)
-            } ?: IntOffset.Zero
-            val viewportSize = listState.layoutInfo.viewportSize
-            val dpOffset = remember(anchorOffset, viewportSize, density) {
-                with(density) {
-                    DpOffset(
-                        (anchorOffset.x - viewportSize.width).toDp(),
-                        (anchorOffset.y - viewportSize.height).toDp()
-                    )
-                }
-            }
-            ArticleLongPressMenu(articles, menuFor, vm, dpOffset) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, listState.layoutInfo.viewportSize, vm) { menuFor = null }
         }
     }
 }
 
+/** Hauteur estimée du menu d'appui long (2 options + marges) : sert à le basculer au-dessus
+ * du doigt en bas de liste. Bornée à l'écran dans tous les cas. */
+private val MENU_EST_H = 160.dp
+
 /**
  * Menu d'appui long sur un article : « marquer lus les plus récents / plus anciens »
  * (ordre d'affichage, ancre exclue). Ne touche jamais les favoris ni le « Read later »
- * (voir `starState`), comme le « tout marquer lu ». Ancé au doigt — et le balayage
- * reste prioritaire sur le geste.
+ * (voir `starState`), comme le « tout marquer lu ». Dessiné en surimpression explicite
+ * (pas de Popup : son positionnement propre plaçait le menu ~300 px trop haut) : bord haut
+ * juste sous le point d'appui ([at], coords overlay), au-dessus du doigt en bas de liste.
+ * Le balayage reste prioritaire sur le geste.
  */
 @Composable
 private fun BoxScope.ArticleLongPressMenu(
     articles: List<ArticleEntity>,
     anchor: ArticleEntity?,
+    at: DpOffset,
+    viewportPx: IntSize,
     vm: PressVM,
-    dpOffset: DpOffset,
     onDismiss: () -> Unit
 ) {
     val article = anchor ?: return
+    if (at == DpOffset.Unspecified) return
     val ctx = LocalContext.current
+    val density = LocalDensity.current
     val ids = remember(articles) { articles.map { it.id } }
     val (newerIds, olderIds) = remember(ids, article.id) { splitAround(ids, article.id) }
     // Non-lus seuls, jamais les favoris/read later : l'ancre et les exclus restent non lus.
@@ -950,30 +1005,53 @@ private fun BoxScope.ArticleLongPressMenu(
         vm.markIdsRead(sel)
         toast(ctx, if (sel.size == 1) "1 article marqué lu" else "${sel.size} articles marqués lus")
     }
-    DropdownMenu(
-        expanded = true,
-        onDismissRequest = onDismiss,
-        offset = dpOffset
+    val (vpW, vpH) = with(density) { viewportPx.width.toDp() to viewportPx.height.toDp() }
+    val below = at.y + 8.dp + MENU_EST_H <= vpH
+    // Marge de droite large (menu ~200 dp min) : le texte des options est long, on évite
+    // qu'il bute contre le bord.
+    val xDp = at.x.coerceIn(8.dp, (vpW - 240.dp).coerceAtLeast(8.dp))
+    val yDp = if (below) at.y + 8.dp else (at.y - 8.dp - MENU_EST_H).coerceAtLeast(0.dp)
+    // Largeur exacte jusqu'au bord (marge 8 dp) : le texte, long, s'ellipsis au lieu de
+    // dépasser — une largeur max seule laissait le contenu déborder de la carte.
+    val wDp = (vpW - 8.dp - xDp).coerceAtLeast(200.dp)
+    val xPx = with(density) { xDp.toPx() }
+    val yPx = with(density) { yDp.toPx() }
+    androidx.activity.compose.BackHandler(enabled = true, onBack = onDismiss)
+    // Fond qui ferme au toucher, puis carte placée au pixel près (coords overlay).
+    Box(
+        Modifier.fillMaxSize().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = onDismiss
+        )
     ) {
-        DropdownMenuItem(
-            text = {
-                Text(cleanTitle(article.title).ifBlank { "(sans titre)" },
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall)
-            },
-            onClick = {}, enabled = false
-        )
-        HorizontalDivider()
-        DropdownMenuItem(
-            text = { Text("Marquer lus les plus récents (${newer.size})") },
-            enabled = newer.isNotEmpty(),
-            onClick = { send(newer) }
-        )
-        DropdownMenuItem(
-            text = { Text("Marquer lus les plus anciens (${older.size})") },
-            enabled = older.isNotEmpty(),
-            onClick = { send(older) }
-        )
+        Surface(
+            modifier = Modifier.offset { IntOffset(xPx.roundToInt(), yPx.roundToInt()) }
+                .width(wDp),
+            shape = MaterialTheme.shapes.extraSmall,
+            tonalElevation = 3.dp
+        ) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                // Libellés courts : le menu est étroit (ancré au doigt), le toast confirme
+                // l'action (« N articles marqués lus »).
+                MenuRow("Plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
+                MenuRow("Plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
+            }
+        }
+    }
+}
+
+/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une ligne tronquée). */
+@Composable
+private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .alpha(if (enabled) 1f else 0.38f),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
