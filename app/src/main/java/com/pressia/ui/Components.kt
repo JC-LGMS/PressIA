@@ -1017,8 +1017,8 @@ private fun BoxScope.ArticleLongPressMenu(
     // Ordonnée : bord haut juste sous le doigt, ou juste au-dessus en bas de liste
     // (au plus près du point d'appui).
     val yDp = if (below) at.y + 8.dp else (at.y - 8.dp - MENU_EST_H).coerceAtLeast(0.dp)
-    // Largeur exacte : le texte complet tient sur une ligne sans retour.
-    val wDp = (vpW - 8.dp - xDp).coerceAtLeast(200.dp)
+    // Largeur adaptée au contenu (bornée à l'écran), pas étirée jusqu'au bord.
+    val maxWDp = (vpW - 8.dp - xDp).coerceAtLeast(200.dp)
     val xPx = with(density) { xDp.toPx() }
     val yPx = with(density) { yDp.toPx() }
     androidx.activity.compose.BackHandler(enabled = true, onBack = onDismiss)
@@ -1032,9 +1032,10 @@ private fun BoxScope.ArticleLongPressMenu(
     ) {
         Surface(
             modifier = Modifier.offset { IntOffset(xPx.roundToInt(), yPx.roundToInt()) }
-                .width(wDp),
+                .widthIn(max = maxWDp),
             shape = MaterialTheme.shapes.extraSmall,
-            tonalElevation = 3.dp,
+            // Fond neutre (pas de teinte dominante) + ombre portée.
+            color = MaterialTheme.colorScheme.surface,
             shadowElevation = 8.dp
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
