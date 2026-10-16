@@ -7,9 +7,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * Sauvegarde complète de PressIA dans un unique fichier JSON.
@@ -17,7 +14,9 @@ import java.util.Locale
  * L'utilisateur choisit ce qu'il veut inclure / restaurer :
  *  - [SECTION_PREFS]     toutes les options (thème, couleurs, polices, vues, hors-ligne…)
  *  - [SECTION_STATS]     les statistiques de lecture et d'extraction
- *  - [SECTION_ACCOUNTS]  les comptes / flux (abonnements + dossiers + fournisseur courant)
+ *  - [SECTION_ACCOUNTS]  les abonnements, avec leurs dossiers créés en local uniquement :
+ *                         les dossiers des comptes (Feedly…) sont re-créés par la synchro
+ *                         avec le bon rattachement, inutile de les figer dans le fichier
  *  - [SECTION_READ]      les favoris PressIA (étoiles locales, tous flux confondus) et les
  *                         articles lus des flux saisis à la main (rejoués à l'import)
  *
@@ -90,41 +89,16 @@ suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Bo
 suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens: Boolean = false): String = withContext(Dispatchers.IO) {
     val dao = db.dao()
     val root = JSONObject()
-    root.put("description", "Sauvegarde pour l'application Android PressIA")
-    root.put("titre", "Sauvegarde PressIA")
-    root.put("type", "sauvegarde")
-    root.put("action", "sauvegarde")
+    // En-tête volontairement minimal : un lecteur n'a besoin que de `sections` (et de
+    // `tokens`) pour restaurer, le reste n'est qu'informatif pour un humain qui ouvre le fichier.
     root.put("app", "PressIA")
-    root.put("appName", "PressIA")
-    root.put("platform", "Android")
+    root.put("backupVersion", BACKUP_VERSION)
+    val now = System.currentTimeMillis()
+    root.put("generatedAt", now)
     try {
         root.put("appVersionName", BuildConfig.VERSION_NAME)
         root.put("appVersionCode", BuildConfig.VERSION_CODE)
-    } catch (_: Exception) {
-    }
-    val now = System.currentTimeMillis()
-    root.put("version", BACKUP_VERSION)
-    root.put("backupVersion", BACKUP_VERSION)
-    root.put("generatedAt", now)
-    root.put("exportedAt", now)
-    root.put("sauvegardeAt", now)
-    root.put("sauvegardeeAt", now)
-    root.put("dateSauvegardeTs", now)
-    try {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        val dateStr = sdf.format(Date(now))
-        root.put("generatedAtIso", dateStr)
-        root.put("exportDate", dateStr)
-        root.put("dateExport", dateStr)
-        root.put("sauvegardeDate", dateStr)
-        root.put("dateSauvegarde", dateStr)
-        try {
-            root.put("buildDate", BuildConfig.BUILD_TIME)
-            root.put("buildTime", BuildConfig.BUILD_TIME)
-            root.put("apkBuildDate", BuildConfig.BUILD_TIME)
-        } catch (_: Exception) {
-            root.put("buildDate", dateStr)
-        }
+        root.put("buildDate", BuildConfig.BUILD_TIME)
     } catch (_: Exception) {
     }
     root.put("sections", JSONArray(sections))
@@ -145,8 +119,12 @@ suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens
         if (includeTokens) {
             prefs.data.first()[Prefs.TOKEN]?.let { o.put("token", it) }
         }
+        // Dossiers créés en local uniquement : ceux des comptes sont re-créés par la
+        // synchro (voir `backupCategories`), avec le rattachement des flux.
+        val keptCats = backupCategories(dao.categories())
+        val keptIds = keptCats.map { it.id }.toSet()
         o.put("categories", JSONArray().apply {
-            dao.categories().forEach { c ->
+            keptCats.forEach { c ->
                 put(
                     JSONObject().put("id", c.id).put("label", c.label)
                         .put("provider", c.provider).put("sortOrder", c.sortOrder)
@@ -154,12 +132,15 @@ suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens
             }
         })
         o.put("subscriptions", JSONArray().apply {
-            dao.subscriptions().forEach { s ->
+            // `unreadCount` est un cache recalculé par la synchro : pas exporté.
+            // Un flux rangé dans un dossier non sauvegardé (compte) sort sans dossier :
+            // la synchro lui rendra le sien, et un `categoryId` orphelin casserait l'import.
+            backupSubscriptions(dao.subscriptions(), keptIds).forEach { s ->
                 put(
                     JSONObject()
                         .put("id", s.id).put("title", s.title).put("url", s.url).put("siteUrl", s.siteUrl)
                         .put("categoryId", s.categoryId ?: JSONObject.NULL).put("iconUrl", s.iconUrl ?: JSONObject.NULL)
-                        .put("provider", s.provider).put("sortOrder", s.sortOrder).put("unreadCount", s.unreadCount)
+                        .put("provider", s.provider).put("sortOrder", s.sortOrder)
                 )
             }
         })
@@ -251,10 +232,22 @@ suspend fun PressRepository.restaurationJson(
 
     root.optJSONObject(Sections.ACCOUNTS)?.let { o ->
         if (Sections.ACCOUNTS in sections) {
+            // Les sauvegardes antérieures contenaient les dossiers des comptes : ignorés,
+            // seule la synchro gère ces dossiers (voir `backupCategories`).
             val cats = o.optJSONArray("categories")?.toCategoryList().orEmpty()
+                .filter { isLocalProvider(it.provider) }
             val subs = o.optJSONArray("subscriptions")?.toSubscriptionList().orEmpty()
             if (cats.isNotEmpty()) dao.upsertCategories(cats)
-            if (subs.isNotEmpty()) dao.upsertSubscriptions(subs)
+            if (subs.isNotEmpty()) {
+                // Un flux pointant vers un dossier absent (ancien fichier avec dossiers de
+                // compte, ou dossier local supprimé depuis) sort du dossier au lieu de
+                // casser l'import sur la clé étrangère — la synchro re-rattachera les flux
+                // des comptes, et le rattachement local manquant reste visible.
+                val known = dao.categories().map { it.id }.toSet()
+                dao.upsertSubscriptions(subs.map { s ->
+                    if (s.categoryId != null && s.categoryId !in known) s.copy(categoryId = null) else s
+                })
+            }
             o.optString("provider").takeIf { it.isNotBlank() }?.let { prefs.set(Prefs.PROVIDER, it) }
             if (hasTokens) o.optString("token").takeIf { it.isNotBlank() }?.let { prefs.set(Prefs.TOKEN, it) }
             report = report.copy(accounts = cats.size + subs.size)
@@ -330,6 +323,24 @@ suspend fun PressRepository.restaurationJson(
     }
     report
 }
+
+// ----- Filtrage sauvegarde (pur, testé) -----
+
+/**
+ * Dossiers à sauvegarder : seulement ceux créés en local. Les dossiers des comptes
+ * (Feedly…) appartiennent au service : la synchro les re-crée à la connexion, avec le
+ * rattachement des flux — les figer dans le fichier ne servirait qu'à les dupliquer.
+ */
+fun backupCategories(cats: List<CategoryEntity>): List<CategoryEntity> =
+    cats.filter { isLocalProvider(it.provider) }
+
+/**
+ * Abonnements à sauvegarder : un flux rangé dans un dossier non sauvegardé (compte)
+ * sort sans dossier (`categoryId = null`), sinon l'import casserait sur un rattachement
+ * orphelin. La synchro rendra aux flux des comptes leur dossier.
+ */
+fun backupSubscriptions(subs: List<SubscriptionEntity>, keptCatIds: Set<String>): List<SubscriptionEntity> =
+    subs.map { s -> if (s.categoryId != null && s.categoryId !in keptCatIds) s.copy(categoryId = null) else s }
 
 // ----- Conversions JSON -----
 

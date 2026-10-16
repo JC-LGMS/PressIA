@@ -895,14 +895,14 @@ fun BackupScreen(vm: PressVM) {
                         } catch (_: Exception) {}
                         put("sections", org.json.JSONArray(exportSel))
                         put("tokens", exportTokens)
+                        // Une seule date de build : le lecteur accepte encore les anciens
+                        // doublons (`apkBuildDate`, `date`), inutile de les réécrire.
                         try {
-                            put("date", com.pressia.BuildConfig.BUILD_TIME)
                             put("buildDate", com.pressia.BuildConfig.BUILD_TIME)
-                            put("apkBuildDate", com.pressia.BuildConfig.BUILD_TIME)
                         } catch (_: Exception) {
                             try {
                                 val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                                put("date", sdf.format(java.util.Date(now)))
+                                put("buildDate", sdf.format(java.util.Date(now)))
                             } catch (_: Exception) {}
                         }
                     }

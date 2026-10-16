@@ -468,6 +468,27 @@ class PressLogicTest {
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
     }
 
+    @Test fun `sauvegarde ne garde que les dossiers locaux`() {
+        val cats = listOf(
+            com.pressia.data.local.CategoryEntity("d1", "Perso", "local"),
+            com.pressia.data.local.CategoryEntity("feedly#ab12:tech", "Tech", "feedly#ab12"),
+            com.pressia.data.local.CategoryEntity("inoreader#cd34:dev", "Dev", "inoreader#cd34")
+        )
+        assertEquals(listOf("d1"), com.pressia.data.backupCategories(cats).map { it.id })
+    }
+
+    @Test fun `sauvegarde detache les flux des dossiers non sauvegardes`() {
+        val subs = listOf(
+            com.pressia.data.local.SubscriptionEntity("u1", "Blog", "https://a.fr/rss", categoryId = "d1", provider = "local"),
+            com.pressia.data.local.SubscriptionEntity("f1", "Cloud", "https://b.fr/rss", categoryId = "feedly#ab12:tech", provider = "feedly#ab12"),
+            com.pressia.data.local.SubscriptionEntity("u2", "Seul", "https://c.fr/rss", categoryId = null, provider = "local")
+        )
+        val out = com.pressia.data.backupSubscriptions(subs, setOf("d1")).associateBy { it.id }
+        assertEquals("d1", out.getValue("u1").categoryId)
+        assertNull(out.getValue("f1").categoryId)
+        assertNull(out.getValue("u2").categoryId)
+    }
+
     @Test fun `entrees de preferences sans doublon et sans trou connu`() {
         val names = entryNames()
         assertEquals("un nom de préférence ne doit être déclaré qu'une fois", names.size, names.toSet().size)
