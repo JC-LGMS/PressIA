@@ -721,6 +721,16 @@ class PressLogicTest {
         assertTrue(mall.markRead.isEmpty())
     }
 
+    @Test fun `newerThan seulement pour 1 mois`() {
+        // 1 mois (31 j, le défaut rapide) : le cutoff part à Feedly tel quel.
+        val cutoff = 1_700_000_000_000L
+        assertEquals(cutoff, com.pressia.data.historyNewerThan(1, cutoff))
+        // Au-delà (calendaires) et sans limite : filtre client uniquement.
+        assertNull(com.pressia.data.historyNewerThan(2, cutoff))
+        assertNull(com.pressia.data.historyNewerThan(36, cutoff))
+        assertNull(com.pressia.data.historyNewerThan(0, cutoff))
+    }
+
     @Test fun `fenetre d'historique en mois calendaires`() {
         // 14 oct. 2026, midi UTC : fields lus dans le même fuseau des deux côtés.
         val cal = java.util.Calendar.getInstance()

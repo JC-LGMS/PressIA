@@ -819,6 +819,12 @@ fun SettingsScreen(vm: PressVM) {
         // le garde-fou dans tous les cas.
         Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
         Text(
+            "1 mois (défaut) : synchronisation rapide, la fenêtre part directement à Feedly. " +
+                "Au-delà, la première synchronisation et les rattrapages paginent plus loin et sont plus lents.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
             if (interval <= 0) "Fréquence de synchronisation : manuelle"
             else "Fréquence de synchronisation : toutes les $interval min"
         )

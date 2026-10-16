@@ -75,6 +75,14 @@ fun historyCutoffMs(nowMs: Long, months: Int): Long {
 }
 
 /**
+ * Fenêtre serveur (`newerThan`) pour un historique de [months] mois et son [cutoffMs] :
+ * 1 mois (31 jours fixes, le défaut rapide) part directement à Feedly, qui coupe côté
+ * serveur au lieu de nous faire paginer jusqu'au cutoff. Au-delà, null : le filtre reste
+ * client (sémantique serveur non validée pour les autres fenêtres). Pur, testé.
+ */
+fun historyNewerThan(months: Int, cutoffMs: Long): Long? = if (months == 1) cutoffMs else null
+
+/**
  * Ne garde que les articles dans la fenêtre d'historique — sauf déjà connus (contenu à
  * rafraîchir) ou marqués (favoris, « Read later » : la durée est « hors favoris », et la
  * taille les exempte de toute façon). Sans date (0), on garde : l'âge est inconnu, pas
@@ -1104,7 +1112,9 @@ class PressRepository(
             val subs = dao.subscriptions().filter { sameAccount(it.provider, account.id) }
             // Compteurs déjà remontés par le backfill si joignables : pas de 3e appel au même
             // endpoint (sinon `provisionHistory` les récupère lui-même, avec son nouvel essai).
-            val (provAdded, serverTotal) = provisionHistory(account, subs, counts, keep, cutoff, backfillUnread)
+            // Fenêtre serveur comme le backfill : à 1 mois, Feedly coupe côté serveur.
+            val newerThanInit = historyNewerThan(prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT, cutoff)
+            val (provAdded, serverTotal) = provisionHistory(account, subs, counts, keep, cutoff, backfillUnread, newerThanInit)
             val completed = n + provAdded
             syncStep.value = "Réconciliation…"
             reconcileAccount(account, completed, serverTotal)
@@ -1204,7 +1214,8 @@ class PressRepository(
         counts: MutableMap<String, Int>,
         keep: Int,
         cutoff: Long,
-        prefetched: Map<String, Int>? = null
+        prefetched: Map<String, Int>? = null,
+        newerThanMs: Long? = null
     ): Pair<Int, Int?> {
         var added = 0
         val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
@@ -1233,7 +1244,7 @@ class PressRepository(
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
             fresh.forEach { feedId ->
-                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback).first
+                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs).first
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
@@ -1250,7 +1261,7 @@ class PressRepository(
                 lagging.forEach { feedId ->
                     // healFeed refait la passe par flux (rapide si déjà connue) puis le repli :
                     // le +A/L distingue un compteur fantôme d'un vrai manque.
-                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback)
+                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs)
                     added += a
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
                 }
@@ -1279,6 +1290,10 @@ class PressRepository(
             // jeton mort gaspille 3 appels légers, cas rare.
             // Les compteurs servent deux fois (réconciliation + rattrapage) : un seul appel au
             // même endpoint au lieu de `unreadTotal` + `unreadCountsByFeed` (levier 2).
+            // Fenêtre serveur lue avant la tête : à 1 mois (31 j), Feedly coupe côté serveur.
+            val prefsHead = prefs.data.first()
+            val monthsHead = prefsHead[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT
+            val newerThan = historyNewerThan(monthsHead, historyCutoffMs(System.currentTimeMillis(), monthsHead))
             var msStream = 0L; var msCats = 0L; var msSubs = 0L; var msCounts = 0L
             val page: StreamPage
             val cats: List<CategoryEntity>
@@ -1287,7 +1302,7 @@ class PressRepository(
             coroutineScope {
                 val dPage = async {
                     val s = System.currentTimeMillis()
-                    p.stream(account.token, null, null, max).also { msStream = System.currentTimeMillis() - s }
+                    p.stream(account.token, null, null, max, newerThanMs = newerThan).also { msStream = System.currentTimeMillis() - s }
                 }
                 val dCats = async {
                     val s = System.currentTimeMillis()
@@ -1316,7 +1331,8 @@ class PressRepository(
             android.util.Log.i(
                 "PressIA",
                 "sync ${account.id} tête: flux=${msStream}ms dossiers=${msCats}ms abos=${msSubs}ms " +
-                    "compteurs=${msCounts}ms (${if (serverUnread != null) "mutualisés" else "repliés"})"
+                    "compteurs=${msCounts}ms (${if (serverUnread != null) "mutualisés" else "repliés"}, " +
+                    "newerThan=${if (newerThan != null) "31j" else "-"})"
             )
             reconcileAccount(account, added, serverUnread?.values?.sum())
             replaceCategories(account.id, cats)
@@ -1349,11 +1365,11 @@ class PressRepository(
             // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
             // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
             // le bandeau dit déjà « Réception… ». Les nouveaux comptent dans le total.
-            val prefsData = prefs.data.first()
+            val prefsData = prefsHead
             val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
-            val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
+            val cutoff = historyCutoffMs(System.currentTimeMillis(), monthsHead)
             val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread).first
+            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread, newerThan).first
         // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
         clearAccountExpired(account.id)
         return added
@@ -1492,6 +1508,9 @@ class PressRepository(
         val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
         val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
         val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+        // Fenêtre serveur (1 mois = 31 j) : Feedly coupe côté serveur, moins de pages lues.
+        val newerThan = historyNewerThan(prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT, cutoff)
+        if (newerThan != null) android.util.Log.i("PressIA", "backfill ${account.id} : newerThan serveur actif")
         // Progression (lus / plafond, jamais l'inverse : le total réel est inconnu d'avance,
         // chaque passe s'arrête avant si épuisée). Toujours annoncée : l'unique appelant
         // ([initialSync]) tient le bandeau pour cette passe (la découverte en synchro passe
@@ -1503,14 +1522,14 @@ class PressRepository(
         val feeds = subs.map { it.id }
         if (feeds.isEmpty()) {
             // Sans abonnement connu : passe globale historique (rien à perdre, rien à arrêter).
-            val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0))
+            val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0), newerThan)
             added += a; seen += s; authFailed = f
         } else {
             val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
             feeds.forEach { feedId ->
                 if (seen >= backfillSafetyCap) return@forEach
                 val base = seen
-                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base), allowFallback)
+                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base), allowFallback, newerThan)
                 added += a; seen += s; authFailed = authFailed || f
             }
         }
@@ -1540,7 +1559,8 @@ class PressRepository(
         categoryId: String,
         counts: MutableMap<String, Int>,
         keep: Int,
-        cutoff: Long
+        cutoff: Long,
+        newerThanMs: Long? = null
     ): Triple<Int, Int, Boolean> {
         val p = providerFor(account.provider)
         var added = 0
@@ -1549,7 +1569,7 @@ class PressRepository(
         var continuation: String? = null
         var authFailed = false
         while (seen < backfillSafetyCap) {
-            val page = runCatching { p.stream(account.token, null, categoryId, pageSize, continuation) }
+            val page = runCatching { p.stream(account.token, null, categoryId, pageSize, continuation, newerThanMs) }
                 .onFailure {
                     if (it is CancellationException) throw it
                     noteRateLimit(it, account.label)
@@ -1599,9 +1619,10 @@ class PressRepository(
         keep: Int,
         cutoff: Long,
         onProgress: ((seen: Int) -> Unit)? = null,
-        allowFallback: (String) -> Boolean = { true }
+        allowFallback: (String) -> Boolean = { true },
+        newerThanMs: Long? = null
     ): Triple<Int, Int, Boolean> {
-        val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, onProgress)
+        val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, onProgress, newerThanMs)
         if (a != 0 || s != 0) return Triple(a, s, f)
         android.util.Log.i("PressIA", "backfill ${account.id} : $feedId sans article (0 lu)")
         if (categoryId == null) return Triple(a, s, f)
@@ -1611,7 +1632,7 @@ class PressRepository(
             android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier sauté (compteur serveur à 0)")
             return Triple(a, s, f)
         }
-        val (fa, fs, ff) = backfillCategoryForFeed(account, feedId, categoryId, counts, keep, cutoff)
+        val (fa, fs, ff) = backfillCategoryForFeed(account, feedId, categoryId, counts, keep, cutoff, newerThanMs)
         android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
         return Triple(a + fa, s + fs, f || ff)
     }
@@ -1630,7 +1651,8 @@ class PressRepository(
         counts: MutableMap<String, Int>,
         keep: Int,
         cutoff: Long,
-        onProgress: ((seen: Int) -> Unit)? = null
+        onProgress: ((seen: Int) -> Unit)? = null,
+        newerThanMs: Long? = null
     ): Triple<Int, Int, Boolean> {
         val p = providerFor(account.provider)
         var added = 0
@@ -1641,7 +1663,7 @@ class PressRepository(
         while (seen < backfillSafetyCap) {
             // `getOrNull` et non `getOrElse` : sortir de la boucle depuis une lambda inline
             // (`break`) est une fonctionnalité expérimentale de Kotlin.
-            val page = runCatching { p.stream(account.token, feedId, null, pageSize, continuation) }
+            val page = runCatching { p.stream(account.token, feedId, null, pageSize, continuation, newerThanMs) }
                 .onFailure {
                     if (it is CancellationException) throw it
                     noteRateLimit(it, account.label)

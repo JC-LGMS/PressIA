@@ -9,8 +9,11 @@ interface FeedProvider {
     val id: String // "feedly" | "inoreader" | "local"
     suspend fun categories(token: String?): List<CategoryEntity>
     suspend fun subscriptions(token: String?): List<SubscriptionEntity>
-    /** Récupère les derniers articles d'un flux / catégorie / global. */
-    suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String? = null): StreamPage
+    /** Récupère les derniers articles d'un flux / catégorie / global.
+     * [newerThanMs] (timestamp ms, Feedly `newerThan`) restreint côté serveur aux articles
+     * plus récents : null = sans filtre (comportement d'avant). Seul Feedly l'honore pour
+     * l'instant (Inoreader : sémantique `nt` non vérifiée en live, ignoré). */
+    suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String? = null, newerThanMs: Long? = null): StreamPage
     suspend fun markRead(token: String?, articleIds: List<String>)
     suspend fun markUnread(token: String?, articleIds: List<String>)
     suspend fun markAllRead(token: String?, feedIds: List<String>)

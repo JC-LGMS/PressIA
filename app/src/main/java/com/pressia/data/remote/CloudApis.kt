@@ -65,7 +65,9 @@ interface FeedlyService {
         @Query("count") count: Int = 100,
         @Query("ranked") ranked: String = "newest",
         @Query("unreadOnly") unreadOnly: Boolean = false,
-        @Query("continuation") cont: String? = null
+        @Query("continuation") cont: String? = null,
+        // Articles plus récents que ce timestamp (ms) : null = sans filtre.
+        @Query("newerThan") newerThan: Long? = null
     ): FeedlyStream
     @GET("search/contents")
     suspend fun search(

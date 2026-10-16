@@ -50,11 +50,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
                 iconUrl = it.iconUrl, provider = id, url = it.id)
         }
 
-    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?): StreamPage {
+    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val scope = cachedUserId(token)
         val streamId = feedId ?: categoryId
             ?: scope.ifBlank { return StreamPage(emptyList(), null) }.let { "user/$it/category/global.all" }
-        val s = api.stream(auth(token), streamId, count = max.coerceIn(1, 500), cont = continuation)
+        val s = api.stream(auth(token), streamId, count = max.coerceIn(1, 500), cont = continuation, newerThan = newerThanMs)
         return StreamPage(articles = s.items.map { it.toEntity() }, continuation = s.continuation)
     }
 
@@ -238,8 +238,10 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
                 categoryId = it.categories.firstOrNull()?.id, iconUrl = it.iconUrl, provider = id)
         }
     }
-    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?): StreamPage {
+    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val stream = feedId ?: categoryId ?: "user/-/state/com.google/reading-list"
+        // `newerThanMs` ignoré : l'équivalent Reader API (`nt`) n'est pas vérifié en live
+        // (unité/sémantique incertaines) — le filtre par date reste client, comme avant.
         val s = api.stream(auth(token), stream, n = max.coerceIn(1, 200), cont = continuation)
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
@@ -345,7 +347,7 @@ class LocalProvider : FeedProvider {
     var feeds: List<SubscriptionEntity> = emptyList() // injecté depuis Room
     override suspend fun categories(token: String?) = emptyList<CategoryEntity>()
     override suspend fun subscriptions(token: String?) = feeds
-    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?): StreamPage {
+    override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val targets = if (feedId != null) feeds.filter { it.id == feedId } else feeds
         // En parallèle (8 flux à la fois) : en séquentiel, un seul flux lent (timeout 15 s)
         // retardait tous les autres. Le tri final rend l'ordre d'arrivée indifférent.
