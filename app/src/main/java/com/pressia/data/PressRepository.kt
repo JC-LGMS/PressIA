@@ -90,6 +90,17 @@ fun withinHistory(
 }
 
 /**
+ * Octets formatés pour l'affichage (« 12,4 Mo », voir `cacheInfo`) : un seul formatage pour
+ * le total et le détail, sinon « 17,3 Mo » et « 17.3 Mo » coexisteraient selon l'écran.
+ */
+fun formatCacheBytes(b: Long): String {
+    if (b < 1024) return "$b o"
+    val kb = b / 1024.0
+    if (kb < 1024) return String.format(java.util.Locale.FRANCE, "%.1f Ko", kb)
+    return String.format(java.util.Locale.FRANCE, "%.1f Mo", kb / 1024.0)
+}
+
+/**
  * Flux d'un compte sans aucun article : jamais approvisionnés (le global ne couvre que les
  * flux déjà connus au moment de la connexion). Vide quand le compte n'a encore aucun
  * article du tout — c'est alors l'approvisionnement global qui s'en charge, pas encore passé.
@@ -2005,13 +2016,28 @@ class PressRepository(
         total
     }
 
+    /** Détail du cache local, dans le même ordre que [cacheSizeBytes] (base, images, miniatures). */
+    data class CacheBreakdown(val dbBytes: Long, val coilBytes: Long, val thumbsBytes: Long) {
+        val totalBytes: Long get() = dbBytes + coilBytes + thumbsBytes
+    }
+
+    /** Détail du cache local pour l'affichage (voir l'écran Réglages). */
+    suspend fun cacheBreakdown(): CacheBreakdown = withContext(Dispatchers.IO) {
+        var db = 0L
+        val dbDir = ctx.getDatabasePath("pressia.db")?.parentFile
+        dbDir?.listFiles { f -> f.name.startsWith("pressia.db") }?.forEach { db += it.length() }
+        val coil = runCatching { coil.Coil.imageLoader(ctx).diskCache?.size ?: 0L }.getOrDefault(0L)
+        val thumbs = runCatching { ThumbStore.sizeBytes(ctx) }.getOrDefault(0L)
+        CacheBreakdown(db, coil, thumbs)
+    }
+
     /** Taille du cache formatée pour l'affichage (« 12,4 Mo »). */
-    suspend fun cacheInfo(): String {
-        val b = cacheSizeBytes()
-        if (b < 1024) return "$b o"
-        val kb = b / 1024.0
-        if (kb < 1024) return String.format(java.util.Locale.FRANCE, "%.1f Ko", kb)
-        return String.format(java.util.Locale.FRANCE, "%.1f Mo", kb / 1024.0)
+    suspend fun cacheInfo(): String = formatCacheBytes(cacheSizeBytes())
+
+    /** Détail du cache formaté (« articles 17,3 Mo · images 68,0 Ko · miniatures 284,0 Ko »). */
+    suspend fun cacheDetail(): String {
+        val (db, coil, thumbs) = cacheBreakdown()
+        return "articles ${formatCacheBytes(db)} · images ${formatCacheBytes(coil)} · miniatures ${formatCacheBytes(thumbs)}"
     }
 
     /**

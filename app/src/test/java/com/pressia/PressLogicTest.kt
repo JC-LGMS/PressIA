@@ -495,6 +495,12 @@ class PressLogicTest {
         assertNull(out.getValue("u2").categoryId)
     }
 
+    @Test fun `formatCacheBytes en francais`() {
+        assertEquals("512 o", com.pressia.data.formatCacheBytes(512))
+        assertEquals("68,0 Ko", com.pressia.data.formatCacheBytes(68L * 1024))
+        assertEquals("17,3 Mo", com.pressia.data.formatCacheBytes((17.3 * 1024 * 1024).toLong()))
+    }
+
     @Test fun `entrees de preferences sans doublon et sans trou connu`() {
         val names = entryNames()
         assertEquals("un nom de préférence ne doit être déclaré qu'une fois", names.size, names.toSet().size)

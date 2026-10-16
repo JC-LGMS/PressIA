@@ -488,10 +488,12 @@ fun SettingsScreen(vm: PressVM) {
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
     var cacheInfo by remember { mutableStateOf("calcul…") }
+    var cacheDetail by remember { mutableStateOf("") }
     var showArticleActions by remember { mutableStateOf(false) }
 
     suspend fun refreshCacheInfo() {
         cacheInfo = vm.repo.cacheInfo()
+        cacheDetail = vm.repo.cacheDetail()
     }
 
     /**
@@ -822,6 +824,13 @@ fun SettingsScreen(vm: PressVM) {
         // 73 crans de 10 min sur 0..720 : le défaut de 10 min est sélectionnable au cran près.
         Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 71)
         Text("Cache utilisé : $cacheInfo")
+        if (cacheDetail.isNotBlank()) {
+            Text(
+                "Détail : $cacheDetail",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
             FilledTonalButton(
