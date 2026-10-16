@@ -60,12 +60,14 @@ fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
     lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
 
 /**
- * Début de la fenêtre d'historique à la connexion : [nowMs] moins [months] mois
- * calendaires (même jour du mois, pas 30 jours arrondis). Zéro ou négatif = sans limite
- * de temps (0 ms : aucun article n'est plus vieux).
+ * Début de la fenêtre d'historique à la connexion : 1 mois vaut exactement 31 jours
+ * (fenêtre au-delà de laquelle Feedly passe en lu), 2 mois et plus sont calendaires
+ * (même jour du mois). Zéro ou négatif = sans limite de temps (0 ms : aucun article
+ * n'est plus vieux).
  */
 fun historyCutoffMs(nowMs: Long, months: Int): Long {
     if (months <= 0) return 0L
+    if (months == 1) return nowMs - 31L * 24 * 3600 * 1000
     val c = java.util.Calendar.getInstance()
     c.timeInMillis = nowMs
     c.add(java.util.Calendar.MONTH, -months)

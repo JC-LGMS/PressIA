@@ -729,17 +729,20 @@ class PressLogicTest {
         // 0 ou négatif = sans limite.
         assertEquals(0L, com.pressia.data.historyCutoffMs(now, 0))
         assertEquals(0L, com.pressia.data.historyCutoffMs(now, -3))
+        // 1 mois = 31 jours fixes (fenêtre Feedly), pas le mois calendaire.
+        assertEquals(now - 31L * 24 * 3600 * 1000, com.pressia.data.historyCutoffMs(now, 1))
         // 12 mois : même jour un an plus tôt (mois calendaires, pas 365 jours).
         val cut12 = java.util.Calendar.getInstance()
         cut12.timeInMillis = com.pressia.data.historyCutoffMs(now, 12)
         assertEquals(2025, cut12.get(java.util.Calendar.YEAR))
         assertEquals(java.util.Calendar.OCTOBER, cut12.get(java.util.Calendar.MONTH))
         assertEquals(14, cut12.get(java.util.Calendar.DAY_OF_MONTH))
-        // 1 mois : mois précédent, jour conservé.
-        val cut1 = java.util.Calendar.getInstance()
-        cut1.timeInMillis = com.pressia.data.historyCutoffMs(now, 1)
-        assertEquals(2026, cut1.get(java.util.Calendar.YEAR))
-        assertEquals(java.util.Calendar.SEPTEMBER, cut1.get(java.util.Calendar.MONTH))
+        // 2 mois : mois calendaires, jour conservé (14 août 2026).
+        val cut2 = java.util.Calendar.getInstance()
+        cut2.timeInMillis = com.pressia.data.historyCutoffMs(now, 2)
+        assertEquals(2026, cut2.get(java.util.Calendar.YEAR))
+        assertEquals(java.util.Calendar.AUGUST, cut2.get(java.util.Calendar.MONTH))
+        assertEquals(14, cut2.get(java.util.Calendar.DAY_OF_MONTH))
     }
 
     private fun art(
@@ -828,7 +831,7 @@ class PressLogicTest {
 
     @Test fun `fenetre d'historique hors favoris`() {
         val now = cal(2026, java.util.Calendar.OCTOBER, 14)
-        val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 14 sept. 2026
+        val cutoff = com.pressia.data.historyCutoffMs(now, 1) // 13 sept. 2026 (31 jours)
         fun ms(y: Int, m: Int, d: Int) = cal(y, m, d)
         val articles = listOf(
             art("recent", "f", published = ms(2026, java.util.Calendar.OCTOBER, 1)),
