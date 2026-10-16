@@ -127,11 +127,14 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     /**
      * Icône Readability : épingle le mode complet pour tous les articles ouverts
      * (voir `readabilityOn`), ou le coupe manuellement (article courant + session).
+     * Coupure dès que le mode est actif *d'une façon ou d'une autre* (article en complet
+     * ou épingle posée) : sinon, sur un site bloquant l'extraction, l'épingle restait
+     * posée sans aucun moyen de la retirer (article jamais en complet, icône éteinte).
      * Le double-tap reste local à l'article affiché : il ne touche pas à l'épingle.
      */
     suspend fun toggleReadability() {
         val a = article ?: return
-        if (fullMode) {
+        if (fullMode || vm.readabilityOn) {
             html = rssHtml(a)
             fullMode = false
             blockedNotice = false
@@ -191,11 +194,15 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                     )
                                 }
                                 "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
-                                // Épinglé (article en complet) : teinte dominante, comme le favori actif.
+                                // Épinglé ou affiché en complet : icône pleine (teinte dominante,
+                                // comme le favori actif) ; sinon icône vide. Les deux états
+                                // comptent : sur un site bloquant, l'épingle est active alors que
+                                // l'article reste en extrait — l'icône pleine le montre et permet
+                                // de la retirer d'un second appui (voir `toggleReadability`).
                                 "readability" -> IconButton({ scope.launch { toggleReadability() } }) {
                                     Icon(
                                         Icons.Filled.ChromeReaderMode, "article complet",
-                                        tint = if (fullMode) MaterialTheme.colorScheme.primary
+                                        tint = if (fullMode || vm.readabilityOn) MaterialTheme.colorScheme.primary
                                         else LocalContentColor.current
                                     )
                                 }
