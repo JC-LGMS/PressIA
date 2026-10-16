@@ -43,9 +43,13 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
 /**
  * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file
  * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration,
- * et les derniers totaux de non-lus sont un cache dérivé qu'une restauration recalcule.
+ * et les totaux de non-lus, empreintes Read later et icônes résolues sont des caches dérivés
+ * qu'une restauration recalcule ou re-résout.
  */
-val NON_EXPORTED_PREFS = setOf(Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name)
+val NON_EXPORTED_PREFS = setOf(
+    Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name,
+    Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name
+)
 
 /** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
 data class RestoredRead(val feedId: String, val id: String, val readAt: Long?)

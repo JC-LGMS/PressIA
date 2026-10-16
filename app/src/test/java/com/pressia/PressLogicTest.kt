@@ -464,6 +464,12 @@ class PressLogicTest {
         // Idem pour la file des lus locaux restaurés.
         assertTrue("restored_read" in com.pressia.data.NON_EXPORTED_PREFS)
         assertFalse("restored_read" in entryNames())
+        // Idem pour les caches dérivés : totaux de non-lus, empreintes Read later et icônes
+        // de sites résolues — recalculés ou re-résolus après restauration, jamais exportés.
+        listOf("reconcile_totals", "readlater_hashes", "favicon_resolved").forEach {
+            assertTrue("$it ne doit pas sortir", it in com.pressia.data.NON_EXPORTED_PREFS)
+            assertFalse("$it ne doit pas être réimportable", it in entryNames())
+        }
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
     }
