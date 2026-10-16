@@ -1281,9 +1281,9 @@ private data class AboutTopic(val title: String, val body: String)
  */
 private val ABOUT_TOPICS = listOf(
     AboutTopic(
-        "Comptes : Feedly, Inoreader, flux locaux",
-        "Feedly se connecte sur sa page officielle intégrée (le niveau gratuit suffit), Inoreader via OAuth, " +
-            "et les flux RSS/Atom saisis à la main restent dans PressIA sans compte. Plusieurs comptes coexistent, " +
+        "Comptes : Feedly, flux locaux",
+        "Feedly se connecte sur sa page officielle intégrée (le niveau gratuit suffit), et les flux " +
+            "RSS/Atom saisis à la main restent dans PressIA sans compte. Plusieurs comptes coexistent, " +
             "l'actif est synchronisé en premier ; reconnecter le même utilisateur remplace son jeton, sans doublon."
     ),
     AboutTopic(
