@@ -965,7 +965,11 @@ fun ArticleList(
 
 /** Hauteur estimée du menu d'appui long (2 options d'une ligne + marges) : sert à le
  * basculer au-dessus du doigt en bas de liste. Bornée à l'écran dans tous les cas. */
-private val MENU_EST_H = 160.dp
+private val MENU_EST_H = 120.dp
+/** Largeur estimée du menu (libellés complets + compteurs) : sert à le décaler à gauche
+ * quand il dépasserait du bord droit — le texte reste entier, le menu ne commence juste
+ * pas exactement au point d'appui. */
+private val MENU_EST_W = 330.dp
 
 /**
  * Menu d'appui long sur un article : « marquer lus les plus récents / plus anciens »
@@ -1007,12 +1011,13 @@ private fun BoxScope.ArticleLongPressMenu(
     }
     val (vpW, vpH) = with(density) { viewportPx.width.toDp() to viewportPx.height.toDp() }
     val below = at.y + 8.dp + MENU_EST_H <= vpH
-    // Marge de droite large (menu ~200 dp min) : le texte des options est long, on évite
-    // qu'il bute contre le bord.
-    val xDp = at.x.coerceIn(8.dp, (vpW - 240.dp).coerceAtLeast(8.dp))
+    // Abscisse : au point d'appui, sauf si le menu (texte complet) dépasserait à droite —
+    // il se décale alors à gauche pour rester entier et visible.
+    val xDp = at.x.coerceIn(8.dp, (vpW - 8.dp - MENU_EST_W).coerceAtLeast(8.dp))
+    // Ordonnée : bord haut juste sous le doigt, ou juste au-dessus en bas de liste
+    // (au plus près du point d'appui).
     val yDp = if (below) at.y + 8.dp else (at.y - 8.dp - MENU_EST_H).coerceAtLeast(0.dp)
-    // Largeur exacte jusqu'au bord (marge 8 dp) : le texte, long, s'ellipsis au lieu de
-    // dépasser — une largeur max seule laissait le contenu déborder de la carte.
+    // Largeur exacte : le texte complet tient sur une ligne sans retour.
     val wDp = (vpW - 8.dp - xDp).coerceAtLeast(200.dp)
     val xPx = with(density) { xDp.toPx() }
     val yPx = with(density) { yDp.toPx() }
@@ -1033,29 +1038,24 @@ private fun BoxScope.ArticleLongPressMenu(
             shadowElevation = 8.dp
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                MenuRow("Marquer lus les plus récents", "${newer.size}", newer.isNotEmpty()) { send(newer) }
-                MenuRow("Marquer lus les plus anciens", "${older.size}", older.isNotEmpty()) { send(older) }
+                MenuRow("Marquer lus les plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
+                MenuRow("Marquer lus les plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
             }
         }
     }
 }
 
-/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne :
- * le libellé se tronque, le compteur reste toujours visible). */
+/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne). */
 @Composable
-private fun MenuRow(label: String, badge: String, enabled: Boolean, onClick: () -> Unit) {
-    Row(
+private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp)
             .alpha(if (enabled) 1f else 0.38f),
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.CenterStart
     ) {
-        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(8.dp))
-        Text(badge, maxLines = 1, style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
