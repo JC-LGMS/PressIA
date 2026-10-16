@@ -1080,7 +1080,7 @@ class PressRepository(
             if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
             pushQueue()
             syncStep.value = "Réception des articles…"
-            val n = backfillArticles(account)
+            val (n, backfillUnread) = backfillArticles(account)
             // Vérification des flux (découverte + rattrapage, mêmes bornes) : à la connexion,
             // un flux muet reste sinon vide — et ses non-lus avec.
             syncStep.value = "Vérification des flux…"
@@ -1089,9 +1089,12 @@ class PressRepository(
             val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
             val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
             val subs = dao.subscriptions().filter { sameAccount(it.provider, account.id) }
-            val completed = n + provisionHistory(account, subs, counts, keep, cutoff)
+            // Compteurs déjà remontés par le backfill si joignables : pas de 3e appel au même
+            // endpoint (sinon `provisionHistory` les récupère lui-même, avec son nouvel essai).
+            val (provAdded, serverTotal) = provisionHistory(account, subs, counts, keep, cutoff, backfillUnread)
+            val completed = n + provAdded
             syncStep.value = "Réconciliation…"
-            reconcileAccount(account, completed)
+            reconcileAccount(account, completed, serverTotal)
             replayRestoredStarred()
             replayRestoredRead()
             // Même ordre que la synchro normale : la taille avant les miniatures (ni images
@@ -1132,17 +1135,21 @@ class PressRepository(
      * pages (voir `reconcileUnchanged`). Partagée par la synchro normale et la première
      * synchronisation (qui remonte l'historique en un seul passage).
      */
-    private suspend fun reconcileAccount(account: CloudAccount, added: Int) {
+    private suspend fun reconcileAccount(account: CloudAccount, added: Int, total: Int? = null) {
         val p = providerFor(account.provider)
         runCatching {
-            val total = p.unreadTotal(account.token)
+            // Total mutualisé quand l'appelant a déjà les compteurs par flux (même endpoint
+            // que `unreadTotal`, voir levier 2) : sinon un appel dédié, comme avant. Seuls les
+            // flux comptent (la réponse inclut aussi les dossiers, qui doublent les flux) : la
+            // première passe après ce changement refait une réconciliation complète, sans danger.
+            val t = total ?: p.unreadTotal(account.token)
             val pending = dao.pendingSync().isNotEmpty()
             val last = reconcileTotals()[account.id]
-            if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, total)) {
-                android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $total inchangé)")
+            if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, t)) {
+                android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $t inchangé)")
             } else {
                 val (read, unread) = reconcileReadState(account)
-                if (total != null) storeReconcileTotal(account.id, total)
+                if (t != null) storeReconcileTotal(account.id, t)
                 if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
             }
         }.onFailure {
@@ -1183,34 +1190,46 @@ class PressRepository(
         subs: List<SubscriptionEntity>,
         counts: MutableMap<String, Int>,
         keep: Int,
-        cutoff: Long
-    ): Int {
+        cutoff: Long,
+        prefetched: Map<String, Int>? = null
+    ): Pair<Int, Int?> {
         var added = 0
         val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
+        val subIds = subs.map { it.id }.toSet()
+        // Compteurs déjà récupérés par l'appelant (tête parallèle, même endpoint qu'avant) :
+        // sinon un appel dédié + un nouvel essai, comme avant.
+        var serverUnread = prefetched
+        if (serverUnread == null) {
+            serverUnread = fetchServerUnread(account, subIds)
+            if (serverUnread == null) {
+                // Compteurs injoignables sous la rafale (constaté à la connexion : la passe
+                // manuelle suivante les obtient sans faute) — un seul nouvel essai après une
+                // courte pause, sinon le rattrapage sauterait en silence. Annulable (déconnexion).
+                kotlinx.coroutines.delay(3000)
+                serverUnread = fetchServerUnread(account, subIds)
+            }
+        }
+        // Repli dossier seulement si le serveur signale des non-lus manquants (levier 4) :
+        // ratisser tout un dossier pour un flux à zéro ne rapporte rien (constaté +110/14000
+        // lus pour un seul flux). Compteurs absents : repli autorisé (comportement d'avant).
+        val localUnread = serverUnread?.let { dao.unreadByFeed().associate { r -> r.feedId to r.c } }.orEmpty()
+        val allowFallback = { feedId: String ->
+            serverUnread == null || (serverUnread[feedId] ?: 0) > (localUnread[feedId] ?: 0)
+        }
         val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
             fresh.forEach { feedId ->
-                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff).first
+                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback).first
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
         // dit plus de non-lus que le local n'en connaît. Flux au quota exclus (voir
         // laggingFeeds), déjà découverts aussi. Rien à faire dans le cas courant (une
         // différence de cartes en mémoire + un appel compteurs léger).
-        val subIds = subs.map { it.id }.toSet()
-        var serverUnread = fetchServerUnread(account, subIds)
-        if (serverUnread == null) {
-            // Compteurs injoignables sous la rafale (constaté à la connexion : la passe
-            // manuelle suivante les obtient sans faute) — un seul nouvel essai après une
-            // courte pause, sinon le rattrapage sauterait en silence. Annulable (déconnexion).
-            kotlinx.coroutines.delay(3000)
-            serverUnread = fetchServerUnread(account, subIds)
-        }
         if (serverUnread == null) {
             android.util.Log.w("PressIA", "rattrapage ${account.id} : compteurs toujours injoignables, passé (prochaine synchro)")
         } else if (serverUnread.isNotEmpty()) {
-            val localUnread = dao.unreadByFeed().associate { it.feedId to it.c }
             val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
                 .filter { it !in fresh }
             if (lagging.isNotEmpty()) {
@@ -1218,13 +1237,13 @@ class PressRepository(
                 lagging.forEach { feedId ->
                     // healFeed refait la passe par flux (rapide si déjà connue) puis le repli :
                     // le +A/L distingue un compteur fantôme d'un vrai manque.
-                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff)
+                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback)
                     added += a
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
                 }
             }
         }
-        return added
+        return added to serverUnread?.values?.sum()
     }
 
     /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
@@ -1233,13 +1252,61 @@ class PressRepository(
     private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
         try {
             val p = providerFor(account.provider)
-            val page = p.stream(account.token, feedId, categoryId, max)
-        var added = storeArticles(page.articles)
-        if (feedId == null && categoryId == null) {
-            reconcileAccount(account, added)
-            val cats = p.categories(account.token).map { it.copy(provider = account.id) }
+            if (feedId != null || categoryId != null) {
+                // Périmètre restreint : le flux seul, comme avant (ni dossiers ni compteurs).
+                val only = p.stream(account.token, feedId, categoryId, max)
+                val added = storeArticles(only.articles)
+                // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
+                clearAccountExpired(account.id)
+                return added
+            }
+            // Vue globale : les 4 appels indépendants partent ensemble (flux récent, dossiers,
+            // abonnements, compteurs) — latence du plus lent, pas somme (levier 1). Un échec
+            // annule ses voisins et remonte comme avant (même traitement auth en bas) ; seul un
+            // jeton mort gaspille 3 appels légers, cas rare.
+            // Les compteurs servent deux fois (réconciliation + rattrapage) : un seul appel au
+            // même endpoint au lieu de `unreadTotal` + `unreadCountsByFeed` (levier 2).
+            var msStream = 0L; var msCats = 0L; var msSubs = 0L; var msCounts = 0L
+            val page: StreamPage
+            val cats: List<CategoryEntity>
+            val subs: List<SubscriptionEntity>
+            val rawCounts: Map<String, Int>?
+            coroutineScope {
+                val dPage = async {
+                    val s = System.currentTimeMillis()
+                    p.stream(account.token, null, null, max).also { msStream = System.currentTimeMillis() - s }
+                }
+                val dCats = async {
+                    val s = System.currentTimeMillis()
+                    p.categories(account.token).map { it.copy(provider = account.id) }
+                        .also { msCats = System.currentTimeMillis() - s }
+                }
+                val dSubs = async {
+                    val s = System.currentTimeMillis()
+                    p.subscriptions(account.token).map { it.copy(provider = account.id) }
+                        .also { msSubs = System.currentTimeMillis() - s }
+                }
+                val dCounts = async {
+                    val s = System.currentTimeMillis()
+                    runCatching { p.unreadCountsByFeed(account.token) }
+                        .onFailure {
+                            if (it is CancellationException) throw it
+                            noteRateLimit(it, account.label)
+                        }
+                        .getOrNull().also { msCounts = System.currentTimeMillis() - s }
+                }
+                page = dPage.await(); cats = dCats.await(); subs = dSubs.await(); rawCounts = dCounts.await()
+            }
+            var added = storeArticles(page.articles)
+            val subIds = subs.map { it.id }.toSet()
+            val serverUnread = rawCounts?.filterKeys { it in subIds }
+            android.util.Log.i(
+                "PressIA",
+                "sync ${account.id} tête: flux=${msStream}ms dossiers=${msCats}ms abos=${msSubs}ms " +
+                    "compteurs=${msCounts}ms (${if (serverUnread != null) "mutualisés" else "repliés"})"
+            )
+            reconcileAccount(account, added, serverUnread?.values?.sum())
             replaceCategories(account.id, cats)
-            val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
             // On ne retire que les flux de ce compte : ceux des autres comptes, et surtout
             // les flux RSS locaux ajoutés à la main, doivent survivre.
             // Même raison que pour les dossiers : le rang choisi par l'utilisateur est réinjecté,
@@ -1273,8 +1340,7 @@ class PressRepository(
             val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
             val cutoff = historyCutoffMs(System.currentTimeMillis(), prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT)
             val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-            added += provisionHistory(account, subs, counts, keep, cutoff)
-        }
+            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread).first
         // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
         clearAccountExpired(account.id)
         return added
@@ -1378,18 +1444,30 @@ class PressRepository(
      * temps de calcul bornés sur un compte des années d'archives ; il est assez large pour
      * qu'aucun compte réel ne l'atteigne.
      */
-    private suspend fun backfillArticles(account: CloudAccount): Int = withContext(Dispatchers.IO) {
+    private suspend fun backfillArticles(account: CloudAccount): Pair<Int, Map<String, Int>?> = withContext(Dispatchers.IO) {
         try {
             val p = providerFor(account.provider)
-            val cats = p.categories(account.token).map { it.copy(provider = account.id) }
-        replaceCategories(account.id, cats)
-        val subs = p.subscriptions(account.token).map { it.copy(provider = account.id) }
-        val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
-        dao.clearSubscriptionsOf(account.id)
-        dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
-        // Les flux sont connus dès maintenant : l'accueil les affiche sans attendre les
-        // milliers d'articles qui suivent.
-        pokeLists()
+            // Dossiers et abonnements en parallèle (même esprit que la tête de `syncAccount`).
+            val (cats, subs) = coroutineScope {
+                val dCats = async { p.categories(account.token).map { it.copy(provider = account.id) } }
+                val dSubs = async { p.subscriptions(account.token).map { it.copy(provider = account.id) } }
+                dCats.await() to dSubs.await()
+            }
+            replaceCategories(account.id, cats)
+            val ranks = dao.subscriptions().associate { it.id to it.sortOrder }
+            dao.clearSubscriptionsOf(account.id)
+            dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+            // Les flux sont connus dès maintenant : l'accueil les affiche sans attendre les
+            // milliers d'articles qui suivent.
+            pokeLists()
+            // Compteurs serveur en un appel (même endpoint que la réconciliation et le
+            // rattrapage suivants) : le repli dossier n'est tenté que pour les flux qui en ont
+            // besoin (levier 4). Absents : repli autorisé partout (comportement d'avant).
+            val serverUnread = fetchServerUnread(account, subs.map { it.id }.toSet())
+            val localUnread = serverUnread?.let { dao.unreadByFeed().associate { r -> r.feedId to r.c } }.orEmpty()
+            val allowFallback = { feedId: String ->
+                serverUnread == null || (serverUnread[feedId] ?: 0) > (localUnread[feedId] ?: 0)
+            }
 
         var added = 0
         var seen = 0
@@ -1419,7 +1497,7 @@ class PressRepository(
             feeds.forEach { feedId ->
                 if (seen >= backfillSafetyCap) return@forEach
                 val base = seen
-                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base))
+                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base), allowFallback)
                 added += a; seen += s; authFailed = authFailed || f
             }
         }
@@ -1427,7 +1505,7 @@ class PressRepository(
         // Pas d'alerte si tout a parlé, sauf si une page a justement calé en 401/403.
         // Taille, miniatures et « Read later » : à l'appelant (voir initialSync).
         if (!authFailed) clearAccountExpired(account.id)
-        added
+        added to serverUnread
         } catch (e: Exception) {
             if (isAuthFailure(e)) markAccountExpired(account.id)
             throw e
@@ -1507,12 +1585,19 @@ class PressRepository(
         counts: MutableMap<String, Int>,
         keep: Int,
         cutoff: Long,
-        onProgress: ((seen: Int) -> Unit)? = null
+        onProgress: ((seen: Int) -> Unit)? = null,
+        allowFallback: (String) -> Boolean = { true }
     ): Triple<Int, Int, Boolean> {
         val (a, s, f) = backfillPages(account, feedId, counts, keep, cutoff, onProgress)
         if (a != 0 || s != 0) return Triple(a, s, f)
         android.util.Log.i("PressIA", "backfill ${account.id} : $feedId sans article (0 lu)")
         if (categoryId == null) return Triple(a, s, f)
+        // Le serveur ne signale aucun non-lu manquant pour ce flux : son dossier n'apporterait
+        // rien, on saute le ratissage (voir `allowFallback`).
+        if (!allowFallback(feedId)) {
+            android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier sauté (compteur serveur à 0)")
+            return Triple(a, s, f)
+        }
         val (fa, fs, ff) = backfillCategoryForFeed(account, feedId, categoryId, counts, keep, cutoff)
         android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId repli dossier +$fa/$fs")
         return Triple(a + fa, s + fs, f || ff)
