@@ -42,11 +42,36 @@ fun favSetLabel(set: String): String = when (set) {
     else -> "Favoris PressIA"
 }
 
+/**
+ * Valeur sûre d'un réglage de geste d'article : l'inconnu (vieille sauvegarde, saisie
+ * extérieure) retombe sur le défaut au lieu de désactiver le geste en silence.
+ */
+fun articleGestureAction(raw: String, default: String, valid: List<String>): String =
+    raw.takeIf { it in valid } ?: default
+
+/** Actions du double-tap sur un article ouvert (voir `DOUBLE_TAP_ACTION`). */
+val DOUBLE_TAP_IDS = listOf("readability", "star", "read", "share", "instapaper", "none")
+
+/** Actions des balayages dans un article ouvert (« older »/« newer » = navigation). */
+val ARTICLE_SWIPE_IDS = listOf("older", "newer", "star", "read", "share", "instapaper", "none")
+
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
 val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "readability", "instapaper")
 
 /** Icônes affichées par défaut : favoris, lu/non-lu, partage. */
 const val ARTICLE_ACTIONS_DEFAULT = "star,read,share"
+
+/** Libellé d'une action de geste d'article (double-tap, balayages), pour les réglages. */
+fun articleNavLabel(id: String): String = when (id) {
+    "older" -> "Article plus ancien"
+    "newer" -> "Article plus récent"
+    "readability" -> "Readability"
+    "star" -> "Favoris"
+    "read" -> "Lu/non-lu"
+    "share" -> "Partager"
+    "instapaper" -> "Instapaper"
+    else -> "Aucun"
+}
 
 /** Libellé d'une icône d'action d'article, pour les réglages. */
 fun articleActionLabel(id: String): String = when (id) {
@@ -146,6 +171,18 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Icônes d'action de l'écran article, dans l'ordre d'affichage (menu toujours en dernier). */
     val articleActions: StateFlow<List<String>> = prefs.flow(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT)
         .map { parseArticleActions(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, parseArticleActions(ARTICLE_ACTIONS_DEFAULT))
+    /** Double-tap sur un article ouvert : readability (défaut) | star | read | share | instapaper | none. */
+    val doubleTapAction: StateFlow<String> = prefs.flow(Prefs.DOUBLE_TAP_ACTION, Prefs.DOUBLE_TAP_DEFAULT)
+        .map { articleGestureAction(it, Prefs.DOUBLE_TAP_DEFAULT, DOUBLE_TAP_IDS) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.DOUBLE_TAP_DEFAULT)
+    /** Balayage gauche dans un article : older (défaut, article plus ancien) | action | none. */
+    val articleSwipeLeft: StateFlow<String> = prefs.flow(Prefs.ARTICLE_SWIPE_LEFT, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT)
+        .map { articleGestureAction(it, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT, ARTICLE_SWIPE_IDS - "newer") }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT)
+    /** Balayage droit dans un article : newer (défaut, article plus récent) | action | none. */
+    val articleSwipeRight: StateFlow<String> = prefs.flow(Prefs.ARTICLE_SWIPE_RIGHT, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
+        .map { articleGestureAction(it, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT, ARTICLE_SWIPE_IDS - "older") }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
     /** Glissement d'un article vers la gauche : "star" (défaut) | "read" | "share" | "instapaper" | "none". */
     val swipeAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_ACTION, "star").stateIn(viewModelScope, SharingStarted.Eagerly, "star")
     /** Glissement d'un article vers la droite : mêmes options, "read" par défaut. */
@@ -260,6 +297,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             keepIds.value = emptySet()
             articles = emptyList()  // vide l'écran immédiatement, évite le flash du flux précédent
         }
+        // Changer de périmètre (ou quitter la page), c'est abandonner l'annulation en cours :
+        // elle ne porte que sur le marquage qu'on vient de voir.
+        undoOffer = null
         scope = s
         refreshUnreadOnly()
     }
@@ -602,10 +642,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             scope.categoryId != null -> repo.folderFeeds(scope.categoryId!!)
             else -> emptyList()
         }
+        // IDs avant marquage (exactement ceux qui vont passer en lus, favoris/read later
+        // exclus) : l'annulation sait quoi rouvrir.
+        val marked = if (ids.isEmpty()) repo.allMarkableIds() else repo.feedsMarkableIds(ids)
         repo.markAllRead(ids)
         // Tout est lu : rien à garder « collant », sinon la liste « non-lus seuls » restait pleine.
         keepIds.value = emptySet()
         refresh()
+        offerUndo(marked)
     }
     /**
      * Marque des articles lus à l'unité (menu d'appui long « plus récents/anciens ») : gardés
@@ -615,6 +659,30 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (ids.isEmpty()) return@launch
         repo.markArticlesRead(ids)
         keepIds.value = keepIds.value + ids.toSet()
+        refresh()
+        offerUndo(ids)
+    }
+    /** Proposition d'annulation d'un marquage groupé (« tout marquer lu », menu appui long). */
+    data class UndoOffer(val ids: List<String>, val label: String)
+    var undoOffer by mutableStateOf<UndoOffer?>(null)
+        private set
+    /** Propose l'annulation : vide = rien à annuler, pas de bouton. */
+    fun offerUndo(ids: List<String>) {
+        undoOffer = if (ids.isEmpty()) null else UndoOffer(
+            ids,
+            if (ids.size == 1) "1 article marqué lu" else "${ids.size} articles marqués lus"
+        )
+    }
+    /** Referme la proposition (délai écoulé, changement de page, autre marquage). */
+    fun dismissUndo() {
+        undoOffer = null
+    }
+    /** Annule le marquage : les articles repassent en non-lus, ici et côté compte. */
+    fun undoMarkRead() = viewModelScope.launch {
+        val o = undoOffer ?: return@launch
+        undoOffer = null
+        repo.markArticlesUnread(o.ids)
+        keepIds.value = keepIds.value - o.ids.toSet()
         refresh()
     }
     fun loadStats(period: StatsPeriod = StatsPeriod.WEEK, year: Int = 0) = viewModelScope.launch {

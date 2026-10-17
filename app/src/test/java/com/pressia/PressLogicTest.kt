@@ -526,6 +526,10 @@ class PressLogicTest {
         assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "last_backup_at" })
         // Réglage exporté : la persistance du mode Readability doit survivre à une restauration.
         assertTrue("readability_sticky doit figurer dans ENTRIES", "readability_sticky" in names)
+        // Réglages exportés : les gestes d'article doivent survivre à une restauration.
+        listOf("double_tap_action", "article_swipe_left", "article_swipe_right").forEach {
+            assertTrue("$it doit figurer dans ENTRIES", it in names)
+        }
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()
@@ -729,6 +733,12 @@ class PressLogicTest {
         assertNull(com.pressia.data.historyNewerThan(2, cutoff))
         assertNull(com.pressia.data.historyNewerThan(36, cutoff))
         assertNull(com.pressia.data.historyNewerThan(0, cutoff))
+    }
+
+    @Test fun `action de geste inconnue retombe sur le defaut`() {
+        assertEquals("readability", com.pressia.ui.articleGestureAction("readability", "readability", com.pressia.ui.DOUBLE_TAP_IDS))
+        assertEquals("older", com.pressia.ui.articleGestureAction("bidule", "older", com.pressia.ui.ARTICLE_SWIPE_IDS - "newer"))
+        assertEquals("newer", com.pressia.ui.articleGestureAction("", "newer", com.pressia.ui.ARTICLE_SWIPE_IDS - "older"))
     }
 
     @Test fun `fenetre d'historique en mois calendaires`() {

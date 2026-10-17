@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.sp
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
 
-/** Écran article : extrait RSS, double-tap ou icône → article complet (Readability), partage système. */
+/** Écran article : extrait RSS, double-tap et balayages configurables (défaut : Readability
+ * et navigation), partage système. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: () -> Unit) {
@@ -43,10 +44,16 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val titleSp by vm.articleTitle.collectAsState()
     // Icônes configurées en Réglages, dans l'ordre choisi (le menu reste toujours en dernier).
     val topActions by vm.articleActions.collectAsState()
+    // Gestes configurés en Réglages (double-tap, balayages gauche/droite).
+    val doubleTap by vm.doubleTapAction.collectAsState()
+    val swipeLeft by vm.articleSwipeLeft.collectAsState()
+    val swipeRight by vm.articleSwipeRight.collectAsState()
 
     // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
-    // horizontal navigue vers eux. Hors liste (recherche, favoris), pas de voisin.
-    val ids = remember(vm.articles) { vm.articles.map { it.id } }
+    // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
+    // fond (synchro, filtre), le swipe de l'article en cours ne doit pas mourir avec elle.
+    // Hors liste (recherche, favoris), pas de voisin.
+    val ids = remember(articleId) { vm.articles.map { it.id } }
     val idx = ids.indexOf(articleId)
     val prevId = if (idx > 0) ids[idx - 1] else null
     val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
@@ -134,6 +141,41 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
         }
     }
 
+    /** Actions de la barre et des gestes, en un seul endroit : icônes, double-tap, balayages. */
+    fun doStar() {
+        article?.let {
+            // Même étoile effective que dans les listes : « Read later » pour
+            // Feedly (pas de favori local), étoile locale ailleurs.
+            val on = vm.starState(it)
+            vm.setStar(it.id, !on)
+            article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
+            else it.copy(starred = !on)
+            toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
+        }
+    }
+    fun doRead() {
+        article?.let {
+            vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
+            toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
+        }
+    }
+    fun doShare() {
+        article?.let { shareArticle(ctx, it) }
+    }
+    fun doInstapaper() {
+        article?.let { vm.sendOrAskInstapaper(it) { toast(ctx, it) } }
+    }
+    /** Geste configurable (double-tap, balayage non navigant) : la navigation reste à l'appelant. */
+    fun fireArticleAction(act: String) {
+        when (act) {
+            "readability" -> scope.launch { toggleReadability() }
+            "star" -> doStar()
+            "read" -> doRead()
+            "share" -> doShare()
+            "instapaper" -> doInstapaper()
+        }
+    }
+
     Scaffold(
         topBar = {
             Column {
@@ -150,28 +192,17 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     actions = {
                         topActions.forEach { id ->
                             when (id) {
-                                "instapaper" -> IconButton({ article?.let { vm.sendOrAskInstapaper(it) { toast(ctx, it) } } }) {
+                                "instapaper" -> IconButton({ doInstapaper() }) {
                                     Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
                                 }
-                                "star" -> IconButton({ article?.let {
-                                    // Même étoile effective que dans les listes : « Read later » pour
-                                    // Feedly (pas de favori local), étoile locale ailleurs.
-                                    val on = vm.starState(it)
-                                    vm.setStar(it.id, !on)
-                                    article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
-                                    else it.copy(starred = !on)
-                                    toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
-                                } }) {
+                                "star" -> IconButton({ doStar() }) {
                                     // Favori dans la couleur dominante de l'application.
                                     Icon(
                                         if (article?.let { vm.starState(it) } == true) Icons.Filled.Star else Icons.Filled.StarBorder,
                                         "favori", tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                                "read" -> IconButton({ article?.let {
-                                    vm.setRead(it.id, !it.unread); article = article?.copy(unread = !it.unread)
-                                    toast(ctx, if (!it.unread) "Marqué comme non lu" else "Marqué comme lu")
-                                } }) {
+                                "read" -> IconButton({ doRead() }) {
                                     Icon(
                                         // Non lu = plein, lu = vide. Pastille franche (plus sombre que le
                                         // rond des listes) : c'est un bouton d'action, pas un indicateur.
@@ -181,7 +212,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
-                                "share" -> IconButton({ article?.let { shareArticle(ctx, it) } }) { Icon(Icons.Filled.Share, "partager") }
+                                "share" -> IconButton({ doShare() }) { Icon(Icons.Filled.Share, "partager") }
                                 // Épinglé ou affiché en complet : icône pleine (teinte dominante,
                                 // comme le favori actif) ; sinon icône vide. Les deux états
                                 // comptent : sur un site bloquant, l'épingle est active alors que
@@ -202,28 +233,33 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             }
         }
     ) { pad ->
-        // Balayage horizontal : le contenu suit le doigt, puis ouvre le voisin au relâchement.
-        // Gauche → article suivant (plus ancien), droite → précédent (plus récent).
+        // Balayage horizontal configurable : navigation par défaut (gauche → plus ancien,
+        // droite → plus récent), sinon l'action choisie en Réglages. Le contenu suit le doigt,
+        // puis l'action part au relâchement (seuil 120 px, sinon retour). « Aucun » fige le
+        // sens, comme l'absence de voisin avant.
+        val leftNav = swipeLeft == "older"
+        val rightNav = swipeRight == "newer"
         Box(
             Modifier.padding(pad).fillMaxSize()
-                .pointerInput(prevId, nextId) {
-                    if (prevId != null || nextId != null) {
+                .pointerInput(prevId, nextId, swipeLeft, swipeRight) {
+                    if (prevId != null || nextId != null || swipeLeft != "none" || swipeRight != "none") {
                     detectHorizontalDragGestures(
                         onDragStart = { dragging = true },
                         onHorizontalDrag = { change, amount ->
                             change.consume()
-                            val hasNeighbor = (amount < 0 && nextId != null) || (amount > 0 && prevId != null)
-                            if (hasNeighbor) {
-                                val lo = if (prevId == null) -600f else -600f
-                                val hi = if (nextId == null) 600f else 600f
-                                offsetX = (offsetX + amount).coerceIn(lo, hi)
+                            val go = if (amount < 0) (!leftNav && swipeLeft != "none") || (leftNav && nextId != null)
+                            else (!rightNav && swipeRight != "none") || (rightNav && prevId != null)
+                            if (go) {
+                                offsetX = (offsetX + amount).coerceIn(-600f, 600f)
                             }
                         },
                         onDragEnd = {
                             dragging = false
                             when {
-                                offsetX <= -120f && nextId != null -> vm.selectedArticleId = nextId
-                                offsetX >= 120f && prevId != null -> vm.selectedArticleId = prevId
+                                offsetX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
+                                offsetX >= 120f && rightNav && prevId != null -> vm.selectedArticleId = prevId
+                                offsetX <= -120f && !leftNav && swipeLeft != "none" -> { fireArticleAction(swipeLeft); offsetX = 0f }
+                                offsetX >= 120f && !rightNav && swipeRight != "none" -> { fireArticleAction(swipeRight); offsetX = 0f }
                                 else -> offsetX = 0f
                             }
                         },
@@ -236,7 +272,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)
                 .graphicsLayer { translationX = offsetX }
                 .pointerInput(Unit) {
-                    detectTapGestures(onDoubleTap = { scope.launch { toggleReadability() } })
+                    detectTapGestures(onDoubleTap = { fireArticleAction(doubleTap) })
                 }
         ) {
             // Le titre ouvre l'article d'origine dans le navigateur externe.
@@ -323,7 +359,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             Spacer(Modifier.height(12.dp))
             Spacer(Modifier.height(12.dp))
             if (fullMode || vm.readabilityOn) AssistChip({ scope.launch { toggleReadability() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
-            else AssistChip({ scope.launch { toggleReadability() } }, { Text("Double-tap : article complet") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
+            else AssistChip({ scope.launch { toggleReadability() } }, { Text("Readability : article complet") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
             Spacer(Modifier.height(16.dp))
             // Le bandeau applicatif (fin de synchro…) recouvre le bas de l'écran : quand il
             // est visible, un espace supplémentaire garde la pastille atteignable au scroll

@@ -482,6 +482,9 @@ fun SettingsScreen(vm: PressVM) {
     var openMode by remember { mutableStateOf("internal") }
     var mergeFolders by remember { mutableStateOf(true) }
     var readabilitySticky by remember { mutableStateOf(false) }
+    var doubleTap by remember { mutableStateOf(Prefs.DOUBLE_TAP_DEFAULT) }
+    var artSwipeLeft by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_LEFT_DEFAULT) }
+    var artSwipeRight by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT) }
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
@@ -516,6 +519,9 @@ fun SettingsScreen(vm: PressVM) {
         imagesOffline = get(Prefs.IMAGES_OFFLINE, true); interval = get(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT)
         openMode = get(Prefs.OPEN_MODE, "internal"); mergeFolders = get(Prefs.MERGE_FOLDERS, true)
         readabilitySticky = get(Prefs.READABILITY_STICKY, false)
+        doubleTap = get(Prefs.DOUBLE_TAP_ACTION, Prefs.DOUBLE_TAP_DEFAULT)
+        artSwipeLeft = get(Prefs.ARTICLE_SWIPE_LEFT, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT)
+        artSwipeRight = get(Prefs.ARTICLE_SWIPE_RIGHT, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         refreshCacheInfo()
@@ -559,6 +565,9 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
         vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
         vm.repo.prefs.set(Prefs.READABILITY_STICKY, readabilitySticky)
+        vm.repo.prefs.set(Prefs.DOUBLE_TAP_ACTION, doubleTap)
+        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_LEFT, artSwipeLeft)
+        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_RIGHT, artSwipeRight)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
@@ -677,6 +686,33 @@ fun SettingsScreen(vm: PressVM) {
             "L'icône « Readability » de l'écran article (à cocher dans « Icônes d'action » ci-dessous) " +
                 "passe tous les articles ouverts en article complet. Coupé (défaut), le retour à " +
                 "l'accueil désactive ce mode ; coché, il reste jusqu'à désactivation manuelle.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("Double-tap sur un article")
+        ActionDropDown(
+            options = DOUBLE_TAP_IDS.map { it to articleNavLabel(it) },
+            selected = doubleTap,
+            label = "Double-tap",
+            onSelect = { doubleTap = it; save() }
+        )
+        Text("Balayage gauche dans un article")
+        ActionDropDown(
+            options = ARTICLE_SWIPE_IDS.filter { it != "newer" }.map { it to articleNavLabel(it) },
+            selected = artSwipeLeft,
+            label = "Balayage gauche",
+            onSelect = { artSwipeLeft = it; save() }
+        )
+        Text("Balayage droit dans un article")
+        ActionDropDown(
+            options = ARTICLE_SWIPE_IDS.filter { it != "older" }.map { it to articleNavLabel(it) },
+            selected = artSwipeRight,
+            label = "Balayage droit",
+            onSelect = { artSwipeRight = it; save() }
+        )
+        Text(
+            "Par défaut, gauche = article plus ancien et droite = article plus récent. " +
+                "Toute autre action remplace la navigation dans ce sens (« Aucun » : le geste ne fait rien).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1336,7 +1372,8 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Appui long : marquer lus autour d'un article",
         "Un appui long sur un article propose « marquer lus les plus récents / les plus anciens », l'article " +
-            "touché restant tel quel. Les favoris et le Read later ne sont jamais touchés par ce menu."
+            "touché restant tel quel. Les favoris et le Read later ne sont jamais touchés par ce menu. " +
+            "Chaque marquage groupé (« tout marquer lu » inclus) propose un bouton Annuler."
     ),
     AboutTopic(
         "Favoris et Read later : jamais marqués lus",
@@ -1347,15 +1384,17 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Gestes configurables",
         "Balayage vers la gauche ou la droite (favori, lu/non-lu, partage, Instapaper), bouton de fin de ligne, " +
-            "icônes de l'écran article : tout se règle. Toucher le favicon ou la miniature marque lu sans ouvrir " +
-            "(désactivable)."
+            "icônes de l'écran article : tout se règle. Dans l'article ouvert, double-tap, balayage gauche " +
+            "et balayage droit se choisissent aussi (navigation entre articles par défaut). Toucher le favicon " +
+            "ou la miniature marque lu sans ouvrir (désactivable)."
     ),
     AboutTopic(
         "Ouverture : PressIA, onglet, navigateur",
-        "Dans PressIA (extrait hors-ligne, article complet au double-tap ou via l'icône Readability " +
-            "à activer dans les réglages), dans un onglet intégré, ou directement dans le navigateur : " +
-            "le mode se choisit dans les réglages. Épinglé, le complet s'applique à tous les articles " +
-            "ouverts ; sauf « Readability persistant », le retour à l'accueil le coupe."
+        "Dans PressIA (extrait hors-ligne, article complet au double-tap — configurable, Readability " +
+            "par défaut — ou via l'icône Readability à activer dans les réglages), dans un onglet intégré, " +
+            "ou directement dans le navigateur : le mode se choisit dans les réglages. Épinglé, le complet " +
+            "s'applique à tous les articles ouverts ; sauf « Readability persistant », le retour à " +
+            "l'accueil le coupe."
     ),
     AboutTopic(
         "Conservation : quota par flux et historique",

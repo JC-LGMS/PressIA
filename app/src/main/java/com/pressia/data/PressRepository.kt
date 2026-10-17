@@ -783,6 +783,29 @@ class PressRepository(
             pushQueue()
         }
     }
+    /**
+     * Inverse de [markArticlesRead] (bouton « Annuler » après un marquage groupé) : les
+     * articles repassent en non-lus localement et côté compte (file « unread »), avec la
+     * même granularité à l'unité — jamais de passage en lu massif dans l'autre sens.
+     */
+    suspend fun markArticlesUnread(ids: List<String>) = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext
+        ids.chunked(500).forEach { dao.markIdsUnread(it) }
+        if (!isLocal()) {
+            val rows = ids.chunked(500).flatMap { chunk ->
+                val feeds = dao.feedOfIds(chunk).associate { it.id to it.feedId }
+                chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "unread") }
+            }
+            dao.enqueueAll(rows)
+            pushQueue()
+        }
+    }
+    /** Non-lus marquables en masse du périmètre (voir `markAllRead`) : l'annulation sait quoi rouvrir. */
+    suspend fun allMarkableIds(): List<String> = withContext(Dispatchers.IO) { dao.allMarkableIds() }
+    /** Variante par flux (voir `markAllRead`). */
+    suspend fun feedsMarkableIds(feedIds: List<String>): List<String> = withContext(Dispatchers.IO) {
+        dao.feedsMarkableIds(feedIds)
+    }
     suspend fun logReading(articleId: String, feedId: String, durationSec: Int) {
         dao.logReading(ReadingEventEntity(articleId = articleId, feedId = feedId, durationSec = durationSec, completed = durationSec > 15))
     }
@@ -1114,7 +1137,9 @@ class PressRepository(
             // endpoint (sinon `provisionHistory` les récupère lui-même, avec son nouvel essai).
             // Fenêtre serveur comme le backfill : à 1 mois, Feedly coupe côté serveur.
             val newerThanInit = historyNewerThan(prefsData[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT, cutoff)
-            val (provAdded, serverTotal) = provisionHistory(account, subs, counts, keep, cutoff, backfillUnread, newerThanInit)
+            val (provAdded, serverTotal) = provisionHistory(account, subs, counts, keep, cutoff, backfillUnread, newerThanInit) { d, t ->
+                syncStep.value = "Vérification des flux… $d/$t"
+            }
             val completed = n + provAdded
             syncStep.value = "Réconciliation…"
             reconcileAccount(account, completed, serverTotal)
@@ -1215,7 +1240,8 @@ class PressRepository(
         keep: Int,
         cutoff: Long,
         prefetched: Map<String, Int>? = null,
-        newerThanMs: Long? = null
+        newerThanMs: Long? = null,
+        onFeed: ((done: Int, total: Int) -> Unit)? = null
     ): Pair<Int, Int?> {
         var added = 0
         val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
@@ -1241,10 +1267,17 @@ class PressRepository(
             serverUnread == null || (serverUnread[feedId] ?: 0) > (localUnread[feedId] ?: 0)
         }
         val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
+        // Compteur de flux (découverte + rattrapage sans chevauchement : le rattrapage exclut
+        // les découverts) : l'appelant affiche « x/y » s'il tient le bandeau, sinon silencieux
+        // (plusieurs comptes partagent le même bandeau en synchro normale).
+        var feedDone = 0
+        val feedTotal = subs.size.coerceAtLeast(1)
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
             fresh.forEach { feedId ->
                 added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs).first
+                feedDone++
+                onFeed?.invoke(feedDone, feedTotal)
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
@@ -1263,6 +1296,8 @@ class PressRepository(
                     // le +A/L distingue un compteur fantôme d'un vrai manque.
                     val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs)
                     added += a
+                    feedDone++
+                    onFeed?.invoke(feedDone, feedTotal)
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
                 }
             }
@@ -1516,20 +1551,20 @@ class PressRepository(
         // ([initialSync]) tient le bandeau pour cette passe (la découverte en synchro passe
         // par [backfillPages] avec un récit nul, elle reste silencieuse). `base` cumule les
         // flux précédents : le compteur ne repart jamais de zéro en cours de route.
-        fun progress(base: Int): (Int) -> Unit = { seenNow ->
-            syncStep.value = "Récupération de l'historique… ${minOf(base + seenNow, backfillSafetyCap)}/$backfillSafetyCap"
+        fun progress(base: Int, feedDone: Int, feedTotal: Int): (Int) -> Unit = { seenNow ->
+            syncStep.value = "Récupération de l'historique… ${minOf(base + seenNow, backfillSafetyCap)}/$backfillSafetyCap (flux $feedDone/$feedTotal)"
         }
         val feeds = subs.map { it.id }
         if (feeds.isEmpty()) {
             // Sans abonnement connu : passe globale historique (rien à perdre, rien à arrêter).
-            val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0), newerThan)
+            val (a, s, f) = backfillPages(account, null, counts, keep, cutoff, progress(0, 0, 1), newerThan)
             added += a; seen += s; authFailed = f
         } else {
             val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
-            feeds.forEach { feedId ->
-                if (seen >= backfillSafetyCap) return@forEach
+            feeds.forEachIndexed { i, feedId ->
+                if (seen >= backfillSafetyCap) return@forEachIndexed
                 val base = seen
-                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base), allowFallback, newerThan)
+                val (a, s, f) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, progress(base, i + 1, feeds.size), allowFallback, newerThan)
                 added += a; seen += s; authFailed = authFailed || f
             }
         }

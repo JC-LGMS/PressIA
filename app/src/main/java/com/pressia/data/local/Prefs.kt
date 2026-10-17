@@ -75,6 +75,12 @@ class Prefs(private val ctx: Context) {
         /** Historique remonté par défaut, en mois calendaires (voir [HISTORY_MONTHS]) :
          * 1 mois, aligné sur la fenêtre au-delà de laquelle Feedly passe en lu (~31 j). */
         const val HISTORY_MONTHS_DEFAULT = 1
+        /** Double-tap par défaut dans un article : Readability (voir [DOUBLE_TAP_ACTION]). */
+        const val DOUBLE_TAP_DEFAULT = "readability"
+        /** Balayage gauche par défaut dans un article : article plus ancien. */
+        const val ARTICLE_SWIPE_LEFT_DEFAULT = "older"
+        /** Balayage droit par défaut dans un article : article plus récent. */
+        const val ARTICLE_SWIPE_RIGHT_DEFAULT = "newer"
         /**
          * Source des favicons : agrégateur (service Google, défaut) ou sites eux-mêmes
          * (`/favicon.ico`, en direct). L'icône fournie par le compte reste prioritaire
@@ -124,6 +130,15 @@ class Prefs(private val ctx: Context) {
          * à l'accueil désépingle, chaque article s'ouvre ensuite en extrait RSS.
          */
         val READABILITY_STICKY = booleanPreferencesKey("readability_sticky")
+        /**
+         * Double-tap sur un article ouvert : "readability" (défaut) | "star" | "read" |
+         * "share" | "instapaper" | "none".
+         */
+        val DOUBLE_TAP_ACTION = stringPreferencesKey("double_tap_action")
+        /** Balayage gauche dans un article : "older" (article plus ancien, défaut) | action | "none". */
+        val ARTICLE_SWIPE_LEFT = stringPreferencesKey("article_swipe_left")
+        /** Balayage droit dans un article : "newer" (article plus récent, défaut) | action | "none". */
+        val ARTICLE_SWIPE_RIGHT = stringPreferencesKey("article_swipe_right")
 
         val INOREADER_APP_ID = stringPreferencesKey("inoreader_app_id")
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
@@ -225,6 +240,9 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("collapsed_folders", COLLAPSED_FOLDERS), PrefEntry.Str("starred_scope", STARRED_SCOPE),
             PrefEntry.Bool("tap_favicon_read", TAP_FAVICON_READ),
             PrefEntry.Bool("readability_sticky", READABILITY_STICKY),
+            PrefEntry.Str("double_tap_action", DOUBLE_TAP_ACTION),
+            PrefEntry.Str("article_swipe_left", ARTICLE_SWIPE_LEFT),
+            PrefEntry.Str("article_swipe_right", ARTICLE_SWIPE_RIGHT),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),

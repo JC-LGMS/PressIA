@@ -259,6 +259,11 @@ class MainActivity : ComponentActivity() {
                     ) {
                     ModalNavigationDrawer(
                         drawerState = drawer,
+                        // Pas de swipe de bord sur l'écran article : il partage le balayage
+                        // droit (article précédent) avec le détecteur de l'article, et selon
+                        // le geste c'est le menu qui s'ouvre au lieu de naviguer. Le bouton
+                        // menu reste le seul accès au tiroir sur cet écran.
+                        gesturesEnabled = current != "article",
                         drawerContent = {
                             PressDrawer(vm, currentRoute = current,
                                 onNavigate = { r ->
@@ -429,6 +434,41 @@ class MainActivity : ComponentActivity() {
                                 contentColor = androidx.compose.ui.graphics.Color.White
                             ) {
                                 Text(msg, Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+                            }
+                        }
+                    }
+                    // Annulation d'un marquage groupé (« tout marquer lu », menu appui long) :
+                    // pastille avec bouton, entre le bandeau et le toast. Limitée à la page
+                    // courante (le changement de périmètre l'efface, voir `switchScope`) et à
+                    // ~6 s : au-delà, le contexte a changé, l'annulation n'aurait plus de sens.
+                    val undo = vm.undoOffer
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = undo != null,
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 130.dp),
+                        enter = androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.fadeOut()
+                    ) {
+                        undo?.let { o ->
+                            LaunchedEffect(o) {
+                                kotlinx.coroutines.delay(6000)
+                                if (vm.undoOffer === o) vm.dismissUndo()
+                            }
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                                color = androidx.compose.ui.graphics.Color(0xE6141414),
+                                contentColor = androidx.compose.ui.graphics.Color.White
+                            ) {
+                                Row(
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
+                                ) {
+                                    Text(o.label)
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(
+                                        { vm.undoMarkRead() },
+                                        colors = ButtonDefaults.textButtonColors(contentColor = androidx.compose.ui.graphics.Color.White)
+                                    ) { Text("Annuler") }
+                                }
                             }
                         }
                     }

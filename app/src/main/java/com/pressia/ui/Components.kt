@@ -990,7 +990,6 @@ private fun BoxScope.ArticleLongPressMenu(
 ) {
     val article = anchor ?: return
     if (at == DpOffset.Unspecified) return
-    val ctx = LocalContext.current
     val density = LocalDensity.current
     val ids = remember(articles) { articles.map { it.id } }
     val (newerIds, olderIds) = remember(ids, article.id) { splitAround(ids, article.id) }
@@ -1006,8 +1005,8 @@ private fun BoxScope.ArticleLongPressMenu(
     fun send(sel: List<String>) {
         onDismiss()
         if (sel.isEmpty()) return
+        // `markIdsRead` propose l'annulation (bouton « Annuler ») : pas de toast en double.
         vm.markIdsRead(sel)
-        toast(ctx, if (sel.size == 1) "1 article marqué lu" else "${sel.size} articles marqués lus")
     }
     val (vpW, vpH) = with(density) { viewportPx.width.toDp() to viewportPx.height.toDp() }
     val below = at.y + 8.dp + MENU_EST_H <= vpH
