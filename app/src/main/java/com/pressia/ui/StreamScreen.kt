@@ -70,9 +70,12 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
             }
         }
     ) { pad ->
-        // Le PullToRefreshBox enveloppe TOUS les états (chargement, vide, articles) : le geste
-        // de tirage vers le bas doit fonctionner même quand aucun article n'est visible.
-        // À l'intérieur, un LazyColumn assure que le contenu est toujours scrollable.
+        // Le PullToRefreshBox enveloppe TOUS les états (chargement, vide, articles) : le geste de
+        // tirage vers le bas doit marcher même quand aucun article n'est visible (avant, le
+        // composant n'existait que dans la branche « articles », donc rien à tirer en zone vide).
+        // Attention : il ne faut PAS envelopper l'ArticleList (elle-même défilante) dans un autre
+        // conteneur défilant — Compose refuse une liste mesurée avec une hauteur infinie. Les deux
+        // états sans article ont donc chacun leur petit LazyColumn (assez pour capter le tirage).
         var gestureRefresh by remember { mutableStateOf(false) }
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = gestureRefresh,
@@ -86,19 +89,16 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     gestureRefresh = false
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.padding(pad).fillMaxSize()
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                val localArticles = reactive
-                if (localArticles == null) {
-                    // Changement de périmètre : blanc d'une image, jamais les anciens articles.
-                    item { Spacer(Modifier.height(1.dp)) }
-                } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
+            val localArticles = reactive
+            if (localArticles == null) {
+                // Changement de périmètre : blanc d'une image, jamais les anciens articles.
+                LazyColumn(Modifier.fillMaxSize()) { item { Spacer(Modifier.height(1.dp)) } }
+            } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
+                LazyColumn(Modifier.fillMaxSize()) {
                     item {
-                        Column(
-                            Modifier.fillMaxWidth().padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
+                        Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 if (!unreadOnly) "Rien ici — synchronisez."
                                 else "Rien ici — synchronisez ou touchez l'œil pour voir les lus.",
@@ -106,11 +106,10 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                             )
                         }
                     }
-                    item { Spacer(Modifier.height(1.dp)) }
-                } else {
-                    // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                    item { ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null) }
                 }
+            } else {
+                // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
+                ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
             }
         }
     }

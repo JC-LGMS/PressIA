@@ -868,7 +868,11 @@ fun ArticleList(
         ) {
             LazyVerticalGrid(
                 GridCells.Adaptive(280.dp), contentPadding = PaddingValues(4.dp),
-                state = gridState
+                state = gridState,
+                // Remplit l'écran même si peu d'articles : la zone vide sous le dernier
+                // reste ainsi couverte par la grille, et le tirage vers le bas y est capté
+                // (sinon le geste ne touche rien et le PullToRefreshBox ne le voit pas).
+                modifier = Modifier.fillMaxSize()
             ) {
                 items(articles, key = { it.id }) { a -> row(a) }
             }
@@ -917,6 +921,9 @@ fun ArticleList(
         ) {
             LazyColumn(
                 state = listState,
+                // Remplit l'écran même si peu d'articles : la zone vide sous le dernier
+                // reste couverte par la liste, et le tirage vers le bas y est capté.
+                modifier = Modifier.fillMaxSize(),
                 // Les boutons haut/bas flottent en bas au centre : en vues liste et compacte, un
                 // espace sous le dernier article l'empêche d'être masqué par eux.
                 contentPadding = PaddingValues(
