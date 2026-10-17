@@ -34,6 +34,13 @@ import java.util.concurrent.atomic.AtomicLong
 const val MERGED_PREFIX = "merged:"
 
 /**
+ * Pages de file montante poussées en un appel de [PressRepository.pushQueue]. La file se sert
+ * par pages de 100 (`pendingSync`) : une seule page par appel laissait les gros marquages
+ * groupés en attente plusieurs synchros durant. Plafond de sécurité (réseau lent, quota).
+ */
+private const val PUSH_MAX_PAGES = 20
+
+/**
  * Convertit le jeu de favoris choisi dans l'UI en valeur attendue par les requêtes de favoris.
  *
  * L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
@@ -142,6 +149,24 @@ fun syncActionRuns(actions: List<SyncActionEntity>): List<List<SyncActionEntity>
     }
     return runs
 }
+
+/**
+ * Cibles d'un segment de « tout marquer lu » : les flux listés, et/ou tout le compte.
+ *
+ * Une ligne **sans flux** (`feedId` nul ou vide) est un « tout le compte » (vue « Tous les
+ * articles »), pas une ligne à jeter : c'est justement ce que l'ancien vidage faisait, si bien
+ * que le marquage global n'atteignait jamais le serveur et que la synchro suivante rouvrait
+ * les articles.
+ */
+data class MarkAllReadPush(val feedIds: List<String>, val global: Boolean) {
+    /** Rien à pousser (ligne d'une version antérieure retombée sans cible). */
+    val nothing: Boolean get() = feedIds.isEmpty() && !global
+}
+
+fun markAllReadPush(rows: List<SyncActionEntity>): MarkAllReadPush = MarkAllReadPush(
+    feedIds = rows.mapNotNull { it.feedId?.takeIf { it.isNotBlank() } }.distinct(),
+    global = rows.any { it.feedId.isNullOrBlank() }
+)
 
 /**
  * Flux sous-approvisionnés à rattraper : le compte dit plus de non-lus que le local n'en
@@ -761,17 +786,31 @@ class PressRepository(
         // marque à l'unité (poussée article par article, même protection que les lectures
         // simples) au lieu du marquage par flux.
         val excluded = if (feedIds.isEmpty()) dao.allUnreadExcludedIds() else dao.feedsUnreadExcludedIds(feedIds)
-        if (excluded.isEmpty()) {
+        // Même repli à l'unité quand le compte ne sait pas pousser un marquage de masse
+        // (voir `FeedProvider.bulkMarkAllRead`) : un marquage poussé dans le vide serait
+        // rouvert par la réconciliation suivante.
+        val bulk = bulkMarkAllReadAvailable(feedIds)
+        if (excluded.isEmpty() && bulk) {
             if (feedIds.isEmpty()) dao.markAllRead(now) else dao.markFeedsRead(feedIds, now)
-            if (!isLocal()) {
-                feedIds.forEach { dao.enqueue(SyncActionEntity(articleId = "", feedId = it, kind = "markAllRead")) }
-                if (feedIds.isEmpty()) dao.enqueue(SyncActionEntity(articleId = "", kind = "markAllRead"))
-                pushQueue()
-            }
+            feedIds.forEach { dao.enqueue(SyncActionEntity(articleId = "", feedId = it, kind = "markAllRead")) }
+            if (feedIds.isEmpty()) dao.enqueue(SyncActionEntity(articleId = "", kind = "markAllRead"))
+            pushQueue()
             return@withContext
         }
         val ids = if (feedIds.isEmpty()) dao.allMarkableIds() else dao.feedsMarkableIds(feedIds)
         markArticlesRead(ids)
+    }
+
+    /**
+     * Marquage de masse poussable ? Vrai si **tous** les comptes concernés savent le faire
+     * (voir `FeedProvider.bulkMarkAllRead`) : sans ça, on marque article par article, seule
+     * façon de ne pas perdre le marquage sur un compte qui ignore les marqueurs de masse.
+     */
+    private suspend fun bulkMarkAllReadAvailable(feedIds: List<String>): Boolean {
+        if (isLocal()) return false
+        val services = if (feedIds.isEmpty()) cloudAccounts().map { it.service }
+        else feedIds.mapNotNull { dao.subscription(it)?.provider }.map { providerBase(it) }
+        return services.isNotEmpty() && services.distinct().all { providerFor(it).bulkMarkAllRead }
     }
 
     /**
@@ -1470,9 +1509,11 @@ class PressRepository(
      */
     suspend fun reconcileReadState(account: CloudAccount, maxIds: Int = 5000): Pair<Int, Int> = withContext(Dispatchers.IO) {
         val remote = providerFor(account.provider).unreadIds(account.token, maxIds) ?: return@withContext 0 to 0
-        val pending = dao.pendingSync()
-        val pendingIds = pending.filter { it.kind == "read" || it.kind == "unread" }.map { it.articleId }.toSet()
-        val hasPendingMarkAll = pending.any { it.kind == "markAllRead" }
+        // Toute la file, pas seulement la page de `pendingSync` : sinon un marquage groupé
+        // plus gros qu'une page n'était protégé qu'en partie et la réconciliation rouvrait
+        // les articles dont l'action attendait encore (le serveur ne les avait pas vus).
+        val pendingIds = dao.pendingReadIds().toSet()
+        val hasPendingMarkAll = dao.pendingMarkAllCount() > 0
         // Une seule passe par paquet (plafond ~999 variables) au lieu de deux requêtes :
         // les paires (id, unread) se répartissent ensuite entre les deux ensembles purs.
         // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
@@ -1833,10 +1874,11 @@ class PressRepository(
         // Étoiles posées hors-ligne (file « save » / « unsave » non poussée) : le tableau vierge
         // reparti par compte les effacerait alors que le serveur ne les a pas encore — on les
         // repose après chaque replongée (lus une fois, la liste ne change pas pendant la sync).
-        // Une file non vide interdit aussi le saut par empreinte : le serveur n'est pas à jour.
-        val pending = dao.pendingSync()
-        val keepSaved = pending.filter { it.kind == "save" }.map { it.articleId }
-        val keepUnsaved = pending.filter { it.kind == "unsave" }.map { it.articleId }
+        // Une étoile en attente interdit aussi le saut par empreinte : le serveur n'est pas à jour.
+        // Toute la file (et non la page de `pendingSync`) : au-delà de 100 poses hors-ligne,
+        // les suivantes étaient perdues par la replongée du tableau.
+        val keepSaved = dao.pendingSavedIds()
+        val keepUnsaved = dao.pendingUnsavedIds()
         val added = coroutineScope {
             accounts.map { account ->
                 async {
@@ -1968,16 +2010,44 @@ class PressRepository(
     suspend fun hasPendingSync(): Boolean = withContext(Dispatchers.IO) { dao.pendingSync().isNotEmpty() }
 
     suspend fun pushQueue(): Int = withContext(Dispatchers.IO) {
-        val pending = dao.pendingSync()
-        if (pending.isEmpty()) return@withContext 0
         val accounts = cloudAccounts()
-        if (accounts.isEmpty()) { pending.forEach { dao.dequeue(it.rowId) }; return@withContext pending.size }
+        var done = 0
+        var pages = 0
+        // La file se sert par pages (`pendingSync` en rend 100) : s'arrêter à la première
+        // laissait un marquage groupé de plusieurs centaines d'articles aux trois quarts dans
+        // la file, et la synchro suivante rouvrait ce que le serveur n'avait pas encore vu.
+        while (pages < PUSH_MAX_PAGES) {
+            val pending = dao.pendingSync()
+            if (pending.isEmpty()) break
+            val processed = if (accounts.isEmpty()) {
+                // Plus aucun compte cloud : la file n'a plus de destinataire, on la vide.
+                pending.size.also { pending.forEach { r -> dao.dequeue(r.rowId) } }
+            } else {
+                pushPage(pending, accounts)
+            }
+            done += processed
+            // Rien n'a pu partir (réseau en échec, quota atteint) : rejouer la même page
+            // n'apporterait rien.
+            if (processed == 0) break
+            pages++
+        }
+        if (done > 0) android.util.Log.i("PressIA", "file: $done lignes poussées ($pages pages)")
+        done
+    }
+
+    /**
+     * Pousse une page de la file (voir [pushQueue]) vers le compte de chaque action. Renvoie le
+     * nombre de lignes traitées (poussées ou vidées).
+     */
+    private suspend fun pushPage(pending: List<SyncActionEntity>, accounts: List<CloudAccount>): Int {
         var done = 0
         // Regroupées par compte, puis poussées dans l'ordre de la file par segments de même
         // sorte : 1 appel réseau par segment (les API acceptent des listes) au lieu d'1 par
         // article — une file hors-ligne de 50 lus part en 1 appel.
         pending.groupBy { accountFor(it, accounts) }.forEach { (account, actions) ->
-            if (account == null) { actions.forEach { dao.bumpTry(it.rowId) }; return@forEach }
+            // Flux local (ou compte retiré) : rien à pousser, la ligne part — la garder la
+            // ferait réessayer à chaque synchro sans jamais pouvoir aboutir.
+            if (account == null) { actions.forEach { dao.dequeue(it.rowId); done++ }; return@forEach }
             val p = providerFor(account.provider)
             suspend fun drop(rows: List<SyncActionEntity>) {
                 rows.forEach { dao.dequeue(it.rowId); done++ }
@@ -2024,12 +2094,16 @@ class PressRepository(
                     "unread" -> flushRows(run) { p.markUnread(account.token, it) }
                     "save" -> flushRows(run) { p.markSaved(account.token, it) }
                     "unsave" -> flushRows(run) { p.markUnsaved(account.token, it) }
-                    // « Tout marquer lu » : un appel par flux (liste acceptée), les lignes
-                    // globales (sans flux : file d'une ancienne version) partent sans réseau.
+                    // « Tout marquer lu » : un appel par flux (liste acceptée) et/ou un appel
+                    // « tout le compte » quand une ligne sans flux existe (vue « Tous les
+                    // articles ») : la jeter sans réseau perdait silencieusement le marquage.
                     "markAllRead" -> {
-                        val feeds = run.mapNotNull { it.feedId }.distinct()
-                        if (feeds.isEmpty()) drop(run)
-                        else runCatching { p.markAllRead(account.token, feeds) }
+                        val push = markAllReadPush(run)
+                        if (push.nothing) drop(run)
+                        else runCatching {
+                            if (push.feedIds.isNotEmpty()) p.markAllRead(account.token, push.feedIds)
+                            if (push.global) p.markAllReadGlobal(account.token)
+                        }
                             .onSuccess { drop(run) }
                             .onFailure {
                                 if (it is CancellationException) throw it
@@ -2042,18 +2116,34 @@ class PressRepository(
                 }
             }
         }
-        done
+        return done
     }
 
-    /** Compte responsable d'une action en attente, déduit du flux puis de l'article. */
+    /**
+     * Compte responsable d'une action en attente, déduit du flux puis de l'article.
+     *
+     * `null` = **rien à pousser** : action d'un flux qui n'appartient à aucun compte cloud
+     * (RSS local, ou flux désabonné depuis). Elle est alors vidée sans réseau — l'état local
+     * est déjà à jour. Sans ça, elle partait au premier compte cloud, qui recevait des
+     * identifiants d'articles qu'il ne connaît pas (rejet, ligne en échec à chaque synchro).
+     */
     private suspend fun accountFor(action: SyncActionEntity, accounts: List<CloudAccount>): CloudAccount? {
         val feedId = action.feedId ?: action.articleId.takeIf { it.isNotBlank() }?.let { dao.article(it)?.feedId }
-        val owner = feedId?.let { dao.subscription(it)?.provider }
-        return accounts.firstOrNull { sameAccount(it.id, owner) } ?: accounts.first()
+        // Sans flux (marquage « tout le compte ») : le premier compte, comme avant.
+        if (feedId.isNullOrBlank()) return accounts.first()
+        val owner = dao.subscription(feedId)?.provider
+        if (isLocalProvider(owner)) return null
+        // Compte du flux : identifiant complet (« feedly#xxx »), ou service seul sur une base
+        // écrite par une version antérieure (« feedly ») → premier compte de ce service.
+        return accounts.firstOrNull { sameAccount(it.id, owner) }
+            ?: accounts.firstOrNull { providerBase(it.id) == providerBase(owner) }
     }
 
     /** Vide la file de synchronisation (bascule cloud → RSS local). */
-    suspend fun purgeQueue() = withContext(Dispatchers.IO) { dao.clearQueue() }
+    suspend fun purgeQueue() = withContext(Dispatchers.IO) {
+        android.util.Log.i("PressIA", "file montante vidée (RSS local)")
+        dao.clearQueue()
+    }
 
     suspend fun unreadByFeed(): Map<String, Int> =
         dao.unreadByFeed().associate { it.feedId to it.c }

@@ -65,9 +65,15 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("keepUnread", "entries", entryIds = articleIds))
     }
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {
-        // Un seul appel pour tous les flux (l'API accepte la liste) : la file groupée
-        // n'émet déjà qu'un appel par compte, sans cette boucle elle en referait un par flux.
+        // Un seul appel pour tous les flux (l'API accepte la liste).
         if (feedIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = feedIds))
+    }
+    /** Feedly n'a pas de type « global » : tout le compte, c'est sa catégorie `global.all`. */
+    override val bulkMarkAllRead = true
+    override suspend fun markAllReadGlobal(token: String?) {
+        val uid = cachedUserId(token)
+        if (uid.isBlank()) throw IllegalStateException("feedly : profil injoignable")
+        api.markers(auth(token), FeedlyMarkers("markAsRead", "categories", categoryIds = listOf("user/$uid/category/global.all")))
     }
     /**
      * Étoile d'un article Feedly = son « Read later » (`global.saved`, « starring » côté Google

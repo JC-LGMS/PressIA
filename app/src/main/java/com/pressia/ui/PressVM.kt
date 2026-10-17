@@ -247,8 +247,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                 .split(',').map { it.trim() }.filter { it.isNotBlank() }.toSet()
         }
         // Bascule vers le RSS local : plus rien à pousser, on vide la file.
+        // `drop(1)` : l'état initial de `provider` est « local » tant que la préférence n'est
+        // pas lue. Sans ce filtre, la file était vidée à *chaque* création du ViewModel — donc
+        // à chaque démarrage : les actions en attente (marquage groupé, lecture hors-ligne)
+        // ne partaient jamais, et la synchronisation suivante rouvrait les articles.
         viewModelScope.launch {
-            provider.collect { p -> if (isLocalProvider(p)) repo.purgeQueue() }
+            provider.drop(1).collect { p -> if (isLocalProvider(p)) repo.purgeQueue() }
         }
         // Filtre du périmètre de démarrage : sans cela l'œil partirait du défaut global.
         refreshUnreadOnly()
@@ -299,7 +303,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         }
         // Changer de périmètre (ou quitter la page), c'est abandonner l'annulation en cours :
         // elle ne porte que sur le marquage qu'on vient de voir.
-        undoOffer = null
+        dismissUndo()
         scope = s
         refreshUnreadOnly()
     }
@@ -666,21 +670,34 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     data class UndoOffer(val ids: List<String>, val label: String)
     var undoOffer by mutableStateOf<UndoOffer?>(null)
         private set
+    /**
+     * Pastille d'annulation en bas d'écran : elle, elle s'efface au bout de quelques secondes
+     * (voir MainActivity). L'annulation elle-même ([undoOffer]) reste disponible tant qu'on
+     * n'a pas quitté la page — via le bouton de la barre du haut.
+     */
+    var undoPillVisible by mutableStateOf(false)
+        private set
     /** Propose l'annulation : vide = rien à annuler, pas de bouton. */
     fun offerUndo(ids: List<String>) {
         undoOffer = if (ids.isEmpty()) null else UndoOffer(
             ids,
             if (ids.size == 1) "1 article marqué lu" else "${ids.size} articles marqués lus"
         )
+        undoPillVisible = undoOffer != null
     }
-    /** Referme la proposition (délai écoulé, changement de page, autre marquage). */
+    /** Efface la pastille (délai écoulé) sans abandonner l'annulation (voir `undoOffer`). */
+    fun dismissUndoPill() {
+        undoPillVisible = false
+    }
+    /** Abandonne l'annulation (changement de page, annulation consommée, autre marquage). */
     fun dismissUndo() {
         undoOffer = null
+        undoPillVisible = false
     }
     /** Annule le marquage : les articles repassent en non-lus, ici et côté compte. */
     fun undoMarkRead() = viewModelScope.launch {
         val o = undoOffer ?: return@launch
-        undoOffer = null
+        dismissUndo()
         repo.markArticlesUnread(o.ids)
         keepIds.value = keepIds.value - o.ids.toSet()
         refresh()

@@ -18,6 +18,18 @@ interface FeedProvider {
     suspend fun markUnread(token: String?, articleIds: List<String>)
     suspend fun markAllRead(token: String?, feedIds: List<String>)
     /**
+     * « Tout marquer lu » sans périmètre de flux (vue « Tous les articles »). Défaut : non
+     * supporté — l'appelant retombe alors sur un marquage article par article.
+     */
+    suspend fun markAllReadGlobal(token: String?) {}
+    /**
+     * Le fournisseur sait marquer en bloc ([markAllRead] / [markAllReadGlobal]) : sinon le
+     * marquage part **article par article** (une action « read » par non-lu). Un compte qui
+     * ignore les marqueurs de masse laisserait autrement la synchro suivante rouvrir les
+     * articles marqués (le serveur ne les connaît pas).
+     */
+    val bulkMarkAllRead: Boolean get() = false
+    /**
      * Range des articles dans le « à lire plus tard » du compte. Défaut : non supporté (état
      * local seul) — seul Feedly mappe son étoile dessus pour l'instant.
      */

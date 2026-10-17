@@ -440,10 +440,11 @@ class MainActivity : ComponentActivity() {
                     // Annulation d'un marquage groupé (« tout marquer lu », menu appui long) :
                     // pastille avec bouton, entre le bandeau et le toast. Limitée à la page
                     // courante (le changement de périmètre l'efface, voir `switchScope`) et à
-                    // ~6 s : au-delà, le contexte a changé, l'annulation n'aurait plus de sens.
+                    // ~6 s : au-delà, elle disparaît — mais l'annulation reste à portée dans la
+                    // barre du haut jusqu'au changement de page (voir `undoOffer`).
                     val undo = vm.undoOffer
                     androidx.compose.animation.AnimatedVisibility(
-                        visible = undo != null,
+                        visible = vm.undoPillVisible,
                         modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).padding(bottom = 130.dp),
                         enter = androidx.compose.animation.fadeIn(),
                         exit = androidx.compose.animation.fadeOut()
@@ -451,7 +452,7 @@ class MainActivity : ComponentActivity() {
                         undo?.let { o ->
                             LaunchedEffect(o) {
                                 kotlinx.coroutines.delay(6000)
-                                if (vm.undoOffer === o) vm.dismissUndo()
+                                if (vm.undoOffer === o) vm.dismissUndoPill()
                             }
                             Surface(
                                 shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),

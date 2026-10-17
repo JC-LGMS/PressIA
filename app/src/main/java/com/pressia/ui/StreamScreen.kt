@@ -61,10 +61,20 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                             )
                         }
                         SyncButton(vm)
-                        IconButton({
-                            vm.markAllRead()
-                            toast(ctx, "Tous marqués comme lus")
-                        }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
+                        // Le marquage groupé en cours laisse sa place au bouton d'annulation,
+                        // qui reste tant qu'on n'a pas quitté la page (la pastille du bas,
+                        // elle, s'efface au bout de 6 s).
+                        if (vm.undoOffer != null) {
+                            IconButton({
+                                vm.undoMarkRead()
+                                toast(ctx, "Marquage annulé")
+                            }) { Icon(Icons.Filled.Undo, "annuler le marquage") }
+                        } else {
+                            IconButton({
+                                vm.markAllRead()
+                                toast(ctx, "Tous marqués comme lus")
+                            }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
+                        }
                     }
                 )
             }

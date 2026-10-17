@@ -826,6 +826,29 @@ class PressLogicTest {
         assertTrue(com.pressia.data.syncActionRuns(emptyList()).isEmpty())
     }
 
+    @Test fun `tout marquer lu visait les flux et le compte`() {
+        fun row(feed: String?) =
+            com.pressia.data.local.SyncActionEntity(articleId = "", feedId = feed, kind = "markAllRead")
+        // Vue « Tous les articles » : ligne SANS flux = tout le compte. Elle était jetée sans
+        // réseau, donc le marquage n'atteignait jamais le serveur et la synchro le rouvrait.
+        val global = com.pressia.data.markAllReadPush(listOf(row(null)))
+        assertTrue(global.global)
+        assertTrue(global.feedIds.isEmpty())
+        assertFalse(global.nothing)
+        // Vue flux / dossier : la liste des flux, une seule fois chacun.
+        val byFeeds = com.pressia.data.markAllReadPush(listOf(row("a"), row("b"), row("a")))
+        assertEquals(listOf("a", "b"), byFeeds.feedIds)
+        assertFalse(byFeeds.global)
+        // Les deux côte à côte (tout le compte puis un flux) : les deux appels partent.
+        val both = com.pressia.data.markAllReadPush(listOf(row(null), row("a")))
+        assertEquals(listOf("a"), both.feedIds)
+        assertTrue(both.global)
+        // Ligne d'une version antérieure (flux blanc) : tout le compte aussi, pas un rejet.
+        assertTrue(com.pressia.data.markAllReadPush(listOf(row(""))).global)
+        // Aucune cible : rien à pousser (la ligne sera simplement vidée).
+        assertTrue(com.pressia.data.markAllReadPush(emptyList()).nothing)
+    }
+
     @Test fun `flux en retard a rattraper`() {
         // Le compte dit 13 non-lus, le local n'en connaît que 3 avec de la place : à remonter.
         assertEquals(

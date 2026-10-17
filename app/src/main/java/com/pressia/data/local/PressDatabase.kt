@@ -73,7 +73,7 @@ data class ArticleEntity(
 data class SyncActionEntity(
     @PrimaryKey(autoGenerate = true) val rowId: Long = 0L,
     val articleId: String,
-    val kind: String, // "read" | "unread" | "star" | "unstar" | "markAllRead"
+    val kind: String, // "read" | "unread" | "save" | "unsave" | "markAllRead"
     val feedId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val tries: Int = 0
@@ -363,6 +363,22 @@ interface PressDao {
     suspend fun enqueueAll(actions: List<SyncActionEntity>)
     @Query("SELECT * FROM sync_queue ORDER BY createdAt LIMIT 100")
     suspend fun pendingSync(): List<SyncActionEntity>
+    /**
+     * Articles avec une action lu/non-lu en attente, **toute la file** : la réconciliation
+     * doit les protéger en entier. Avec la page de [pendingSync] (100 lignes), un marquage
+     * groupé de plusieurs centaines d'articles n'était protégé qu'en partie, et la
+     * réconciliation rouvrait tout le reste (le serveur ne le connaissait pas encore).
+     */
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'read' OR kind = 'unread'")
+    suspend fun pendingReadIds(): List<String>
+    /** Un marquage de masse attend d'être poussé ? (toute la file, même remarque.) */
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead'")
+    suspend fun pendingMarkAllCount(): Int
+    /** Étoiles « Read later » en attente, toute la file (même remarque que [pendingReadIds]). */
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'save'")
+    suspend fun pendingSavedIds(): List<String>
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave'")
+    suspend fun pendingUnsavedIds(): List<String>
     @Query("DELETE FROM sync_queue WHERE rowId = :rowId")
     suspend fun dequeue(rowId: Long)
     /** Oublie les actions d'un compte supprimé : sans flux, elles partiraient chez un
