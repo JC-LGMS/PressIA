@@ -52,8 +52,13 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
     // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
     // fond (synchro, filtre), le swipe de l'article en cours ne doit pas mourir avec elle.
-    // Hors liste (recherche, favoris), pas de voisin.
-    val ids = remember(articleId) { vm.articles.map { it.id } }
+    // Hors liste (recherche, favoris), pas de voisin. Rattrapés tant qu'ils sont vides : à la
+    // reprise après mort du processus, `vm.articles` arrive après la première composition —
+    // sans ce rattrapage, plus aucun balayage de navigation pour cet article.
+    var ids by remember(articleId) { mutableStateOf(vm.articles.map { it.id }) }
+    LaunchedEffect(articleId, vm.articles) {
+        if (ids.isEmpty()) ids = vm.articles.map { it.id }
+    }
     val idx = ids.indexOf(articleId)
     val prevId = if (idx > 0) ids[idx - 1] else null
     val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
@@ -367,24 +372,58 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             val bannerLift = LocalBannerLift.current
             if (bannerLift > 0.dp) Spacer(Modifier.height(bannerLift + 20.dp))
         }
-        // Flèches de direction pendant le geste : confirment le voisin visé.
-        if (dragging && offsetX < -40f && nextId != null) {
-            Icon(
-                Icons.Filled.ChevronRight, "article suivant",
-                Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(40.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
-        if (dragging && offsetX > 40f && prevId != null) {
-            Icon(
-                Icons.Filled.ChevronLeft, "article précédent",
-                Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(40.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
+        // Icône du geste pendant le balayage : flèche si le sens est la navigation (voisin
+        // visé), sinon l'icône de l'action réglée dans ce sens — mêmes visuels que la bande
+        // de balayage des listes. Rien n'est annoncé si le sens ne fait rien (voisin absent
+        // ou « Aucun ») : un chevron « article suivant » alors que le relâchement déclenche
+        // une action serait trompeur.
+        if (dragging) {
+            val starred = article?.let { vm.starState(it) } == true
+            val unread = article?.unread == true
+            val leftBadge: Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when {
+                offsetX > -40f -> null
+                leftNav -> if (nextId != null) Icons.Filled.ChevronRight to "article suivant" else null
+                else -> gestureActionIcon(swipeLeft, starred, unread)
+            }
+            val rightBadge: Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when {
+                offsetX < 40f -> null
+                rightNav -> if (prevId != null) Icons.Filled.ChevronLeft to "article précédent" else null
+                else -> gestureActionIcon(swipeRight, starred, unread)
+            }
+            leftBadge?.let { (icon, desc) ->
+                Icon(
+                    icon, desc,
+                    Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            rightBadge?.let { (icon, desc) ->
+                Icon(
+                    icon, desc,
+                    Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
         }
         }
     }
     viewerUrl?.let { ImageViewer(it) { viewerUrl = null } }
+}
+
+/**
+ * Icône et libellé d'une action de geste d'article non navigante, pendant le balayage :
+ * mêmes visuels que la bande découverte des balayages de liste (voir `ArticleRow`), pour la
+ * même action. `null` pour « Aucun » (ou une valeur inconnue) : rien à annoncer.
+ */
+private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when (act) {
+    "readability" -> Icons.Filled.ChromeReaderMode to "Readability"
+    "read" -> (if (unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
+        (if (unread) "marquer lu" else "marquer non lu")
+    "share" -> Icons.Filled.Share to "partager"
+    "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
+    "star" -> (if (starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
+        (if (starred) "Retirer des favoris" else "Ajouter aux favoris")
+    else -> null
 }
 
 /** Visionneuse plein écran : tap pour fermer, pincement pour zoomer. */

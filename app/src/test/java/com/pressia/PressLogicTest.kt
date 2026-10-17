@@ -804,7 +804,7 @@ class PressLogicTest {
         assertTrue(com.pressia.data.removedFeeds(emptySet(), setOf("a")).isEmpty())
     }
 
-    @Test fun `file montante regroupee par sorte`() {
+    @Test fun `file montante poussee dans l'ordre`() {
         val rows = listOf(
             com.pressia.data.local.SyncActionEntity(articleId = "a1", feedId = "f", kind = "read"),
             com.pressia.data.local.SyncActionEntity(articleId = "a2", feedId = "f", kind = "read"),
@@ -812,13 +812,18 @@ class PressLogicTest {
             com.pressia.data.local.SyncActionEntity(articleId = "vieux", feedId = "f", kind = "star"),
             com.pressia.data.local.SyncActionEntity(articleId = "", feedId = "f", kind = "markAllRead")
         )
-        val batched = com.pressia.data.batchSyncActions(rows)
-        // 1 lot par sorte : 2 lus partent en 1 appel ; les étoiles locales ne partent pas.
-        assertEquals(listOf("a1", "a2"), batched["read"]?.map { it.articleId })
-        assertEquals(listOf("a3"), batched["unread"]?.map { it.articleId })
-        assertEquals(1, batched["markAllRead"]?.size)
-        assertFalse(batched.containsKey("star"))
-        assertTrue(com.pressia.data.batchSyncActions(emptyList()).isEmpty())
+        val runs = com.pressia.data.syncActionRuns(rows)
+        // Lignes consécutives de même sorte : 2 lus → 1 appel. Les étoiles locales ne partent pas.
+        assertEquals(listOf("read", "unread", "markAllRead"), runs.map { it.first().kind })
+        assertEquals(listOf("a1", "a2"), runs[0].map { it.articleId })
+        // L'ordre chronologique est conservé : l'« Annuler » (« unread » ajouté après un
+        // « markAllRead » encore en file) part APRÈS lui, sinon le serveur repasserait tout en lu.
+        val undone = rows + com.pressia.data.local.SyncActionEntity(articleId = "a3", feedId = "f", kind = "unread")
+        assertEquals(
+            listOf("read", "unread", "markAllRead", "unread"),
+            com.pressia.data.syncActionRuns(undone).map { it.first().kind }
+        )
+        assertTrue(com.pressia.data.syncActionRuns(emptyList()).isEmpty())
     }
 
     @Test fun `flux en retard a rattraper`() {

@@ -125,12 +125,23 @@ fun discoverFeeds(subIds: List<String>, knownIds: Set<String>): List<String> =
 fun removedFeeds(before: Set<String>, after: Set<String>): Set<String> = before - after
 
 /**
- * Regroupe une file montante par sorte pour les poussées par lot (voir `pushQueue`) :
- * les API acceptent des listes, 1 appel par sorte suffit. Les lignes « star » / « unstar »
- * d'anciennes versions sont exclues (état local : rien à pousser, juste à vider).
+ * Découpe la file montante en segments de lignes **consécutives** de même sorte, dans l'ordre
+ * de la file (`createdAt`, voir `pendingSync`) : `pushQueue` pousse chaque segment en un appel,
+ * en respectant la chronologie.
+ *
+ * Ne jamais regrouper par sorte sur toute la file : l'ordre des actions d'un même article
+ * (ou d'un `markAllRead` face aux `unread` d'une annulation) serait inversé, et le serveur
+ * finirait sur l'état le plus ancien. Les lignes « star » / « unstar » d'anciennes versions
+ * sont écartées (état local : rien à pousser, juste à vider).
  */
-fun batchSyncActions(actions: List<SyncActionEntity>): Map<String, List<SyncActionEntity>> =
-    actions.filter { it.kind != "star" && it.kind != "unstar" }.groupBy { it.kind }
+fun syncActionRuns(actions: List<SyncActionEntity>): List<List<SyncActionEntity>> {
+    val runs = mutableListOf<MutableList<SyncActionEntity>>()
+    actions.filter { it.kind != "star" && it.kind != "unstar" }.forEach { a ->
+        val last = runs.lastOrNull()
+        if (last != null && last.first().kind == a.kind) last.add(a) else runs.add(mutableListOf(a))
+    }
+    return runs
+}
 
 /**
  * Flux sous-approvisionnés à rattraper : le compte dit plus de non-lus que le local n'en
@@ -1962,8 +1973,9 @@ class PressRepository(
         val accounts = cloudAccounts()
         if (accounts.isEmpty()) { pending.forEach { dao.dequeue(it.rowId) }; return@withContext pending.size }
         var done = 0
-        // Regroupées par compte puis par sorte : 1 appel réseau par sorte (les API acceptent
-        // des listes) au lieu d'1 par article — une file hors-ligne de 50 lus part en ~4 appels.
+        // Regroupées par compte, puis poussées dans l'ordre de la file par segments de même
+        // sorte : 1 appel réseau par segment (les API acceptent des listes) au lieu d'1 par
+        // article — une file hors-ligne de 50 lus part en 1 appel.
         pending.groupBy { accountFor(it, accounts) }.forEach { (account, actions) ->
             if (account == null) { actions.forEach { dao.bumpTry(it.rowId) }; return@forEach }
             val p = providerFor(account.provider)
@@ -1979,19 +1991,18 @@ class PressRepository(
             // Un lot en échec retombe à l'unité (ancien comportement) : un seul identifiant
             // rejeté ne bloque pas le lot. Sauf session morte ou quota : réessayer à l'unité
             // n'apporterait rien (et aggraverait le 429) — on reporte tout le lot.
-            suspend fun flushIds(kind: String, ids: List<String>, call: suspend (List<String>) -> Unit) {
-                if (ids.isEmpty()) return
-                val rows = actions.filter { it.kind == kind && it.articleId in ids }
-                runCatching { call(ids) }
+            suspend fun flushRows(rows: List<SyncActionEntity>, call: suspend (List<String>) -> Unit) {
+                if (rows.isEmpty()) return
+                runCatching { call(rows.map { it.articleId }) }
                     .onSuccess { drop(rows) }
                     .onFailure {
                         if (it is CancellationException) throw it
                         if (isAuthFailure(it) || rateLimitOf(it, account.label) != null) {
                             postpone(rows, it)
                         } else {
-                            ids.forEach { id ->
-                                val one = rows.filter { it.articleId == id }
-                                runCatching { call(listOf(id)) }
+                            rows.forEach { row ->
+                                val one = listOf(row)
+                                runCatching { call(listOf(row.articleId)) }
                                     .onSuccess { drop(one) }
                                     .onFailure { e ->
                                         if (e is CancellationException) throw e
@@ -2001,26 +2012,34 @@ class PressRepository(
                         }
                     }
             }
-            val byKind = batchSyncActions(actions)
             // États locaux d'anciennes versions : rien à pousser, juste à vider.
             actions.filter { it.kind == "star" || it.kind == "unstar" }.forEach { dao.dequeue(it.rowId); done++ }
-            flushIds("read", byKind["read"].orEmpty().map { it.articleId }) { p.markRead(account.token, it) }
-            flushIds("unread", byKind["unread"].orEmpty().map { it.articleId }) { p.markUnread(account.token, it) }
-            flushIds("save", byKind["save"].orEmpty().map { it.articleId }) { p.markSaved(account.token, it) }
-            flushIds("unsave", byKind["unsave"].orEmpty().map { it.articleId }) { p.markUnsaved(account.token, it) }
-            // « Tout marquer lu » : un appel par flux (liste acceptée), les lignes globales
-            // (sans flux : file d'une ancienne version) partent sans réseau, comme avant.
-            val markAll = byKind["markAllRead"].orEmpty()
-            val markAllFeeds = markAll.mapNotNull { it.feedId }.distinct()
-            if (markAllFeeds.isNotEmpty()) {
-                runCatching { p.markAllRead(account.token, markAllFeeds) }
-                    .onSuccess { drop(markAll) }
-                    .onFailure {
-                        if (it is CancellationException) throw it
-                        postpone(markAll, it)
+            // Vidage DANS L'ORDRE DE LA FILE (createdAt), segment par segment : voir
+            // `syncActionRuns`. Un regroupement par sorte inverserait les actions d'un même
+            // article — et surtout un `markAllRead` en attente repartirait APRÈS les `unread`
+            // d'un « Annuler », réécrivant l'annulation côté serveur.
+            syncActionRuns(actions).forEach { run ->
+                when (run.first().kind) {
+                    "read" -> flushRows(run) { p.markRead(account.token, it) }
+                    "unread" -> flushRows(run) { p.markUnread(account.token, it) }
+                    "save" -> flushRows(run) { p.markSaved(account.token, it) }
+                    "unsave" -> flushRows(run) { p.markUnsaved(account.token, it) }
+                    // « Tout marquer lu » : un appel par flux (liste acceptée), les lignes
+                    // globales (sans flux : file d'une ancienne version) partent sans réseau.
+                    "markAllRead" -> {
+                        val feeds = run.mapNotNull { it.feedId }.distinct()
+                        if (feeds.isEmpty()) drop(run)
+                        else runCatching { p.markAllRead(account.token, feeds) }
+                            .onSuccess { drop(run) }
+                            .onFailure {
+                                if (it is CancellationException) throw it
+                                postpone(run, it)
+                            }
                     }
-            } else {
-                drop(markAll)
+                    // Sorte inconnue (file d'une version plus récente) : rien à pousser, on la
+                    // vide pour ne pas bloquer celles qui suivent.
+                    else -> drop(run)
+                }
             }
         }
         done
