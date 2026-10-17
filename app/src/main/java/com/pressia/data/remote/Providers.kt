@@ -10,6 +10,32 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 /**
+ * Identifiants d'articles par appel `markers` : ~7,5 Ko de corps, déjà éprouvé par la file
+ * montante (une page de 100 actions = un appel).
+ */
+private const val MARKER_CHUNK = 100
+
+/**
+ * Plafond des non-lus énumérés pour un « tout marquer lu » de masse (voir
+ * `FeedlyProvider.markStreamRead`) : borne le travail par action, sans jamais marquer localement
+ * au-delà.
+ */
+private const val MARK_ALL_ENUM_CAP = 5000
+
+/**
+ * Charge utile d'un « tout marquer lu » Feedly : des marqueurs **par identifiant d'article**,
+ * groupés par paquets de [MARKER_CHUNK]. Feedly accepte `type":"feeds"` — et `"categories"` —
+ * puis les ignore : seul `type":"entries"` marque réellement les articles (voir
+ * `FeedlyProvider.markAllRead`).
+ */
+fun feedlyMarkAllMarkers(unreadIds: Collection<String>): List<FeedlyMarkers> =
+    unreadIds.chunked(MARKER_CHUNK).map { FeedlyMarkers("markAsRead", "entries", entryIds = it) }
+
+/** Flux global d'un compte Feedly (vue « Tous les articles ») : null si l'identifiant est inconnu. */
+fun feedlyGlobalStream(userId: String): String? =
+    userId.takeIf { it.isNotBlank() }?.let { "user/$it/category/global.all" }
+
+/**
  * Provider Feedly Cloud (OAuth2, endpoints gratuits v3).
  *
  * Choix structurant : **le tableau « Read later » du compte n'est jamais importé comme étoile
@@ -51,9 +77,8 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         }
 
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
-        val scope = cachedUserId(token)
-        val streamId = feedId ?: categoryId
-            ?: scope.ifBlank { return StreamPage(emptyList(), null) }.let { "user/$it/category/global.all" }
+        val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
+            ?: return StreamPage(emptyList(), null)
         val s = api.stream(auth(token), streamId, count = max.coerceIn(1, 500), cont = continuation, newerThan = newerThanMs)
         return StreamPage(articles = s.items.map { it.toEntity() }, continuation = s.continuation)
     }
@@ -64,16 +89,44 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun markUnread(token: String?, articleIds: List<String>) {
         if (articleIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("keepUnread", "entries", entryIds = articleIds))
     }
+    /**
+     * Marquage de masse d'un flux : Feedly n'honore **pas** ses propres marqueurs de masse.
+     * `{"action":"markAsRead","type":"feeds","feedIds":[…]}` — avec ou sans `asOf` — comme
+     * `type":"categories"` répondent HTTP 200 avec un corps vide **sans rien marquer**
+     * (vérifié en direct sur un flux à 3 non-lus : `markers/counts` inchangé après l'appel).
+     * Seul `type":"entries"` est réellement appliqué : on énumère donc les non-lus du flux
+     * côté serveur et on les marque par paquets, comme un marquage à l'unité.
+     *
+     * Bénéfice au passage : les articles que le serveur croit encore non lus alors que
+     * l'application les a marqués lus (marquage de masse d'une version précédente, tombé dans
+     * le vide) sont rattrapés. Sans cette énumération, la synchro suivante les rouvrirait
+     * localement, le serveur faisant foi.
+     */
     override suspend fun markAllRead(token: String?, feedIds: List<String>) {
-        // Un seul appel pour tous les flux (l'API accepte la liste).
-        if (feedIds.isNotEmpty()) api.markers(auth(token), FeedlyMarkers("markAsRead", "feeds", feedIds = feedIds))
+        feedIds.distinct().forEach { markStreamRead(token, it) }
     }
-    /** Feedly n'a pas de type « global » : tout le compte, c'est sa catégorie `global.all`. */
+    /**
+     * Feedly n'a pas de type « global » : tout le compte, c'est sa catégorie `global.all`,
+     * marquée à l'unité comme un flux (voir [markAllRead]).
+     */
     override val bulkMarkAllRead = true
     override suspend fun markAllReadGlobal(token: String?) {
-        val uid = cachedUserId(token)
-        if (uid.isBlank()) throw IllegalStateException("feedly : profil injoignable")
-        api.markers(auth(token), FeedlyMarkers("markAsRead", "categories", categoryIds = listOf("user/$uid/category/global.all")))
+        val streamId = feedlyGlobalStream(cachedUserId(token))
+            ?: throw IllegalStateException("feedly : profil injoignable")
+        markStreamRead(token, streamId)
+    }
+
+    /**
+     * Marque lus les non-lus que le serveur connaît sur ce flux, par paquets d'identifiants
+     * (`type":"entries"`, seule forme appliquée par Feedly). Rien à énumérer = rien à faire :
+     * le marquage local, lui, est déjà à jour.
+     */
+    private suspend fun markStreamRead(token: String?, streamId: String) {
+        val ids = unreadIdsOfStream(token, streamId, MARK_ALL_ENUM_CAP)
+        if (ids.isEmpty()) return
+        val payloads = feedlyMarkAllMarkers(ids)
+        android.util.Log.d("PressIA", "feedly tout lu : ${ids.size} non-lus sur $streamId (${payloads.size} appels)")
+        payloads.forEach { api.markers(auth(token), it) }
     }
     /**
      * Étoile d'un article Feedly = son « Read later » (`global.saved`, « starring » côté Google
@@ -141,28 +194,38 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      * ~20x moins de données), repli sur le contenu si l'endpoint est refusé.
      */
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
-        val scope = cachedUserId(token)
         // Profil inaccessible (401 transitoire…) : on ne sait RIEN des non-lus distants.
         // `complete = false` impérativement : avec `true` et un ensemble vide, la
         // réconciliation passerait tous les non-lus locaux en lus — perte visible des états
         // de lecture sur une simple erreur réseau. `false` ne fait que rouvrir, sans danger.
-        if (scope.isBlank()) return UnreadSet(emptySet(), false)
-        runCatching { unreadIdsViaIds(token, scope, maxIds) }
-            .onSuccess { android.util.Log.d("PressIA", "feedly unreadIds via ids (${it.ids.size})") }
-            .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }
-            .getOrNull()?.let { return it }
-        return unreadIdsViaContents(token, scope, maxIds)
+        val streamId = feedlyGlobalStream(cachedUserId(token)) ?: return UnreadSet(emptySet(), false)
+        return unreadSetOfStream(token, streamId, maxIds)
     }
 
+    /**
+     * Non-lus d'un flux quelconque (global du compte, flux précis…), avec l'exhaustivité de
+     * l'énumération : voie légère `streams/ids` d'abord, repli `streams/contents` si elle est
+     * refusée.
+     */
+    private suspend fun unreadSetOfStream(token: String?, streamId: String, maxIds: Int): UnreadSet =
+        runCatching { unreadIdsViaIds(token, streamId, maxIds) }
+            .onSuccess { android.util.Log.d("PressIA", "feedly unreadIds via ids (${it.ids.size})") }
+            .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }
+            .getOrNull() ?: unreadIdsViaContents(token, streamId, maxIds)
+
+    /** IDs seuls, sans l'exhaustivité : marquage de masse (voir [markStreamRead]). */
+    private suspend fun unreadIdsOfStream(token: String?, streamId: String, maxIds: Int): Set<String> =
+        unreadSetOfStream(token, streamId, maxIds).ids
+
     /** Énumération par IDs seuls : pas de dates, donc jusqu'à épuisement ou plafond. */
-    private suspend fun unreadIdsViaIds(token: String?, scope: String, maxIds: Int): UnreadSet {
+    private suspend fun unreadIdsViaIds(token: String?, streamId: String, maxIds: Int): UnreadSet {
         val ids = HashSet<String>()
         var cont: String? = null
         var complete = false
         var stagnant = 0
         while (ids.size < maxIds) {
             val before = ids.size
-            val page = api.streamIds(auth(token), "user/$scope/category/global.all", count = 1000, unreadOnly = true, cont = cont)
+            val page = api.streamIds(auth(token), streamId, count = 1000, unreadOnly = true, cont = cont)
             if (page.ids.isEmpty()) { complete = true; break }
             ids += page.ids
             // Pages qui n'apportent rien de neuf : on sort au lieu de boucler.
@@ -178,13 +241,13 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      * Repli : on ne retient que les articles que le serveur dit non-lus, au cas où le filtre
      * serait ignoré ; on s'arrête dès qu'une page est entièrement plus vieille que la fenêtre.
      */
-    private suspend fun unreadIdsViaContents(token: String?, scope: String, maxIds: Int): UnreadSet? {
+    private suspend fun unreadIdsViaContents(token: String?, streamId: String, maxIds: Int): UnreadSet {
         val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
         val ids = HashSet<String>()
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
-            val s = api.stream(auth(token), "user/$scope/category/global.all", count = 500, unreadOnly = true, cont = cont)
+            val s = api.stream(auth(token), streamId, count = 500, unreadOnly = true, cont = cont)
             if (s.items.isEmpty()) { complete = true; break }
             s.items.filter { it.unread && publishedMs(it.published) >= cutoff }.forEach { ids += it.id }
             val oldest = s.items.minOf { publishedMs(it.published) }

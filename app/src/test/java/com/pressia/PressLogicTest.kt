@@ -7,6 +7,8 @@ import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
 import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.OAuth
+import com.pressia.data.remote.feedlyGlobalStream
+import com.pressia.data.remote.feedlyMarkAllMarkers
 import com.pressia.data.remote.reconcileUnchanged
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
@@ -847,6 +849,31 @@ class PressLogicTest {
         assertTrue(com.pressia.data.markAllReadPush(listOf(row(""))).global)
         // Aucune cible : rien à pousser (la ligne sera simplement vidée).
         assertTrue(com.pressia.data.markAllReadPush(emptyList()).nothing)
+    }
+
+    @Test fun `tout marquer lu Feedly passe par les identifiants`() {
+        // Feedly accepte puis ignore ses marqueurs de masse (« feeds », « categories ») :
+        // HTTP 200, corps vide, compteurs inchangés (constaté en direct sur un flux à 3
+        // non-lus). Le marquage doit donc partir article par article, par paquets — sinon la
+        // synchro suivante rouvre tout, le serveur faisant foi.
+        val ids = (1..250).map { "entry-$it" }
+        val payloads = feedlyMarkAllMarkers(ids)
+        assertEquals(3, payloads.size)
+        payloads.forEach {
+            assertEquals("markAsRead", it.action)
+            assertEquals("entries", it.type)
+            assertNull(it.feedIds)
+            assertNull(it.categoryIds)
+        }
+        assertEquals(ids, payloads.flatMap { it.entryIds!! })
+        // Rien à marquer : aucun appel, pas un marqueur vide qui part dans le vide.
+        assertTrue(feedlyMarkAllMarkers(emptyList()).isEmpty())
+    }
+
+    @Test fun `flux global Feedly exige un identifiant de compte`() {
+        assertEquals("user/u1/category/global.all", feedlyGlobalStream("u1"))
+        assertNull(feedlyGlobalStream(""))
+        assertNull(feedlyGlobalStream("  "))
     }
 
     @Test fun `flux en retard a rattraper`() {

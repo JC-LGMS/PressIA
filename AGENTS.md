@@ -177,6 +177,13 @@ pour le replier).
   (`pendingReadIds`, `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue`
   enchaîne les pages (plafond `PUSH_MAX_PAGES`). Ne jamais vider la file sur un état initial
   de `provider` (`drop(1)`), et une ligne sans flux vaut « tout le compte », pas « à jeter ».
+- Marquage de masse Feedly : `POST /v3/markers` accepte `type":"feeds"` (ou `"categories"`,
+  avec ou sans `asOf`) puis les **ignore** — HTTP 200, corps vide, `markers/counts` inchangé
+  (vérifié en direct). Seul `type":"entries"` marque vraiment : `FeedlyProvider.markAllRead` /
+  `markAllReadGlobal` énumèrent donc les non-lus du flux (`streams/ids`, paquets de 100
+  identifiants). Bonus : ça rattrape les articles que le serveur croit encore non lus alors que
+  l'app les a marqués lus (marquage de masse d'une version précédente), que la réconciliation
+  suivante rouvrirait sinon. Ne pas « optimiser » ce chemin en un appel de masse.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

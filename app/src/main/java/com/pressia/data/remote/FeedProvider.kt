@@ -16,6 +16,13 @@ interface FeedProvider {
     suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String? = null, newerThanMs: Long? = null): StreamPage
     suspend fun markRead(token: String?, articleIds: List<String>)
     suspend fun markUnread(token: String?, articleIds: List<String>)
+    /**
+     * Marque lus tous les non-lus du périmètre, côté compte. L'implémentation doit **réellement**
+     * atteindre le serveur : un appel accepté sans effet (HTTP 200 compris) est invisible pour
+     * l'application, et la réconciliation suivante rouvre alors les articles marqués — le serveur
+     * fait foi (cas Feedly, dont le marqueur de masse `type":"feeds"` est ignoré : voir
+     * `FeedlyProvider.markAllRead`).
+     */
     suspend fun markAllRead(token: String?, feedIds: List<String>)
     /**
      * « Tout marquer lu » sans périmètre de flux (vue « Tous les articles »). Défaut : non
