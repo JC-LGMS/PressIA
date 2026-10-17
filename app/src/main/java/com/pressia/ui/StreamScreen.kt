@@ -1,5 +1,6 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -89,6 +90,10 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                 // Le composant exige l'alternance vrai→faux de isRefreshing pour fermer son état
                 // interne : on l'impulse brièvement au relâchement pendant que la synchro continue
                 // sans lui.
+                // Le PullToRefreshBox est TOUJOURS présent (même quand la liste est vide ou en
+                // chargement) : sans cela, le geste de tirage n'est pas détecté dans les zones
+                // sans article visible. À l'intérieur, le contenu est toujours scrollable
+                // (LazyColumn) pour que le geste soit capturé quoi qu'il affiche.
                 var gestureRefresh by remember { mutableStateOf(false) }
                 androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                     isRefreshing = gestureRefresh,
@@ -104,8 +109,32 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     },
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+                    if (localArticles == null) {
+                        // Changement de périmètre : blanc d'une image, jamais les anciens articles.
+                        // Contenu scrollable minimal pour permettre le tirage vers le bas.
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item { Spacer(Modifier.height(1.dp)) }
+                        }
+                    } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            item {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        if (!unreadOnly) "Rien ici — synchronisez."
+                                        else "Rien ici — synchronisez ou touchez l'œil pour voir les lus.",
+                                        modifier = Modifier.padding(24.dp)
+                                    )
+                                }
+                            }
+                            item { Spacer(Modifier.height(1.dp)) }
+                        }
+                    } else {
+                        // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
+                        ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+                    }
                 }
             }
         }
