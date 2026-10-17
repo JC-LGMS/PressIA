@@ -172,6 +172,11 @@ pour le replier).
   état + `reloadFromPrefs`/`save()` dans l'écran Réglages, entrée dans `Prefs.ENTRIES`
   (sinon absent de l'export/import — test `entrees de preferences` à étendre), valeur
   par défaut cohérente partout où elle est lue.
+- File montante : `pendingSync()` est une **page** (`LIMIT 100`), pas la file. Tout code qui
+  raisonne sur « les actions en attente » doit passer par une requête dédiée
+  (`pendingReadIds`, `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue`
+  enchaîne les pages (plafond `PUSH_MAX_PAGES`). Ne jamais vider la file sur un état initial
+  de `provider` (`drop(1)`), et une ligne sans flux vaut « tout le compte », pas « à jeter ».
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.
