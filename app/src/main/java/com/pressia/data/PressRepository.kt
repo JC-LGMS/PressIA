@@ -248,6 +248,17 @@ class PressRepository(
      * URLs manquantes est déjà à jour), elle rend donc 0 aussitôt.
      */
     private val thumbsMutex = Mutex()
+    /**
+     * Verrou de la file montante. `pushQueue` part de sept endroits (lecture d'un article,
+     * étoile, « tout marquer lu », marquages à l'unité et leurs annulations, pipeline, synchro
+     * de connexion) et seuls les deux derniers tiennent [syncMutex] : deux appels qui se
+     * chevauchaient relisaient la **même** page de file (la lecture précède la poussée, qui
+     * dure un aller-retour réseau) et poussaient deux fois les mêmes lignes, chacun annonçant
+     * le total de la file dans le log (« file: N lignes poussées », N compté deux fois).
+     * Un verrou dédié, et non [syncMutex] : `syncPipeline` le détient déjà quand il appelle
+     * `pushQueue`, un Mutex n'étant pas réentrant, ce serait un interblocage.
+     */
+    private val pushMutex = Mutex()
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
     /**
      * Variante non bloquante : exécute [block] sous verrou, ou rend null sans attendre si une
@@ -2056,7 +2067,13 @@ class PressRepository(
     /** File montante non vide ? (pour n'annoncer l'envoi que s'il a vraiment lieu). */
     suspend fun hasPendingSync(): Boolean = withContext(Dispatchers.IO) { dao.pendingSync().isNotEmpty() }
 
-    suspend fun pushQueue(): Int = withContext(Dispatchers.IO) {
+    /**
+     * Pousse la file montante, sous verrou (voir [pushMutex]) : deux appels concurrents
+     * attendent leur tour au lieu de repousser les mêmes lignes.
+     */
+    suspend fun pushQueue(): Int = pushMutex.withLock { pushQueueUnlocked() }
+
+    private suspend fun pushQueueUnlocked(): Int = withContext(Dispatchers.IO) {
         val accounts = cloudAccounts()
         var done = 0
         var pages = 0
@@ -2149,7 +2166,22 @@ class PressRepository(
                         if (push.nothing) drop(run)
                         else runCatching {
                             if (push.feedIds.isNotEmpty()) p.markAllRead(account.token, push.feedIds)
-                            if (push.global) p.markAllReadGlobal(account.token)
+                            // « Tout le compte » (ligne sans flux) vaut pour **tous** les comptes
+                            // cloud : rattachée au premier seulement, elle laissait les articles
+                            // des autres non lus côté serveur, que la réconciliation suivante
+                            // rouvrait localement. Chaque compte part donc séparément ; un échec
+                            // reporte la ligne entière — le marquage est idempotent, les comptes
+                            // déjà servis le seront à nouveau sans dommage.
+                            if (push.global) accounts.forEach { acc ->
+                                runCatching { providerFor(acc.provider).markAllReadGlobal(acc.token) }
+                                    .onSuccess { clearAccountExpired(acc.id) }
+                                    .onFailure { e ->
+                                        if (e is CancellationException) throw e
+                                        noteRateLimit(e, acc.label)
+                                        if (isAuthFailure(e)) markAccountExpired(acc.id)
+                                        throw e
+                                    }
+                            }
                         }
                             .onSuccess { drop(run) }
                             .onFailure {
@@ -2176,7 +2208,10 @@ class PressRepository(
      */
     private suspend fun accountFor(action: SyncActionEntity, accounts: List<CloudAccount>): CloudAccount? {
         val feedId = action.feedId ?: action.articleId.takeIf { it.isNotBlank() }?.let { dao.article(it)?.feedId }
-        // Sans flux (marquage « tout le compte ») : le premier compte, comme avant.
+        // Sans flux : « tout le compte » (vue « Tous les articles »), ou état d'un article dont
+        // le flux n'est plus connu. La ligne est traitée avec le premier compte (`pushPage`
+        // pousse alors le marquage global à **tous** les comptes, voir la branche
+        // « markAllRead ») : n'importe lequel fait l'affaire comme porteur du groupe.
         if (feedId.isNullOrBlank()) return accounts.first()
         val owner = dao.subscription(feedId)?.provider
         if (isLocalProvider(owner)) return null

@@ -191,7 +191,15 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
   raisonne sur « les actions en attente » doit passer par une requête dédiée
   (`pendingReadIds`, `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue`
   enchaîne les pages (plafond `PUSH_MAX_PAGES`). Ne jamais vider la file sur un état initial
-  de `provider` (`drop(1)`), et une ligne sans flux vaut « tout le compte », pas « à jeter ».
+  de `provider` (`drop(1)`), et une ligne sans flux vaut « tout le compte », pas « à jeter » —
+  `pushPage` la pousse à **tous** les comptes cloud (branche « markAllRead »), le premier ne
+  servant qu'à porter le groupe (`accountFor`) : la rattacher au seul premier laissait les
+  articles des autres non lus côté serveur, rouverts par la réconciliation suivante.
+- `pushQueue` passe par `pushMutex` — pas `syncMutex`, non réentrant, que `syncPipeline` détient
+  déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
+  article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et
+  poussaient deux fois les mêmes lignes : deux `file: N lignes poussées` identiques dans le log
+  pour un seul marquage.
 - Marquage de masse Feedly : `POST /v3/markers` accepte `type":"feeds"` (ou `"categories"`,
   avec ou sans `asOf`) puis les **ignore** — HTTP 200, corps vide, `markers/counts` inchangé
   (vérifié en direct). Seul `type":"entries"` marque vraiment : `FeedlyProvider.markAllRead` /
