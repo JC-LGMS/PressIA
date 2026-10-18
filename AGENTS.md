@@ -184,6 +184,21 @@ pour le replier).
   identifiants). Bonus : ça rattrape les articles que le serveur croit encore non lus alors que
   l'app les a marqués lus (marquage de masse d'une version précédente), que la réconciliation
   suivante rouvrirait sinon. Ne pas « optimiser » ce chemin en un appel de masse.
+- Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`
+  dit laquelle. Couper le mode (icône, pastille, double-tap) doit **réécrire** `content` avec la
+  version du flux et remettre `fullFetched` à 0 : sans cette écriture la copie Readability restait
+  en base et l'article rouvert reprenait la version extraite. Avant d'écraser `content` par une
+  extraction, `saveExtractedContent` recopie le HTML du flux dans `summary` quand il est plus riche
+  que l'extrait RSS (flux « complets » : Next) — c'est ce que « Revenir à l'extrait RSS » retrouve,
+  sinon l'article revenait tronqué au petit extrait. La synchro, elle, réécrit `content`/`summary`
+  avec les valeurs du serveur (`upsertArticles` remplace la ligne) : l'extraction ne survit pas à
+  une synchro, et c'est la version du flux qui revient — comportement voulu.
+- `isSameImage` compare les noms de fichier **après nettoyage des variantes CDN**
+  (`…-1024x495.webp`, `…__800_800__overflow.jpg`) : sans ça la vignette du flux (`imageUrl`)
+  s'affichait en plus de la même image déjà présente dans le contenu (Les Numériques, Next).
+- `articleBlocks` ne retient que `p, li, h1..h3, pre, blockquote, img` : certains flux livrent le
+  corps en texte nu (`…texte…<br><img …>`, cas des Numériques). Les nœuds texte de premier niveau
+  sont enveloppés dans un `<p>` avant sélection, sinon l'article s'affichait sans son texte.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

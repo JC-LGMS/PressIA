@@ -871,7 +871,9 @@ class PressRepository(
         if (a.url.isBlank()) return@withContext FullFetch(a.content, false)
         return@withContext when (val r = Readability.fetchFullResult(a.url)) {
             is Readability.FullResult.Ok -> {
-                dao.saveFullContent(id, r.html)
+                // La version du flux est mise de côté avant d'être écrasée (voir le DAO) : c'est
+                // elle que « Revenir à l'extrait RSS » doit retrouver, pas le petit extrait.
+                dao.saveExtractedContent(id, r.html, fromFeed = !a.fullFetched)
                 dao.logExtract(ExtractEventEntity(articleId = id, feedId = a.feedId, ok = true))
                 FullFetch(r.html, false)
             }
@@ -886,6 +888,15 @@ class PressRepository(
                 FullFetch(a.content ?: a.summary, false)
             }
         }
+    }
+
+    /**
+     * Coupe « article complet » d'un article : la version du flux redevient son contenu (voir
+     * ArticleScreen). L'annulation vaut pour les réouvertures de CET article — le mode épinglé
+     * par l'icône, lui, est celui de la session et reste piloté par `readabilityOn`.
+     */
+    suspend fun revertFullContent(id: String, html: String) = withContext(Dispatchers.IO) {
+        dao.revertFullContent(id, html)
     }
 
     // ----- Sync descendante -----

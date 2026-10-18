@@ -371,6 +371,15 @@ class PressLogicTest {
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.T && (it as com.pressia.ui.ABlock.T).text.contains("Intro") })
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.I && (it as com.pressia.ui.ABlock.I).url == "https://ex.com/a.jpg" })
     }
+    @Test fun `blocs article texte nu conserve`() {
+        // Flux qui livre le corps hors balise de bloc (Les Numériques) : le texte doit rester,
+        // dans l'ordre, avant l'image.
+        val html = "Le corps de l'article, sans balise de paragraphe.<br><img src=\"https://ex.com/b.jpg\">"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        assertEquals(2, blocks.size)
+        assertTrue(blocks[0] is com.pressia.ui.ABlock.T && (blocks[0] as com.pressia.ui.ABlock.T).text.startsWith("Le corps"))
+        assertTrue(blocks[1] is com.pressia.ui.ABlock.I && (blocks[1] as com.pressia.ui.ABlock.I).url == "https://ex.com/b.jpg")
+    }
     @Test fun `articles regroupes par jour avec entete`() {
         val now = 1_760_000_000_000L
         val day = 86_400_000L
@@ -404,6 +413,29 @@ class PressLogicTest {
         assertTrue(com.pressia.ui.isSameImage("//cdn.ex.com/photo.jpg", "https://www.cdn.ex.com/photo.jpg"))
         assertFalse(com.pressia.ui.isSameImage("https://cdn.ex.com/photo.jpg", "https://cdn.ex.com/autre.jpg"))
         assertFalse(com.pressia.ui.isSameImage("", "https://cdn.ex.com/photo.jpg"))
+        // Variantes de recadrage (Les Numériques) et de taille (Next) : même photo que l'original,
+        // la vignette du flux ne doit pas s'afficher en plus de l'image déjà dans le contenu.
+        assertTrue(com.pressia.ui.isSameImage(
+            "https://cdn.lesnumeriques.com/optim/native/26/262116/e4cbdc58-shokz__800_800__overflow.jpg",
+            "https://cdn.lesnumeriques.com/optim/native/26/262116/e4cbdc58-shokz.jpg"))
+        assertTrue(com.pressia.ui.isSameImage(
+            "https://next.ink/wp-content/uploads/2026/10/Bd-givre-titre-1024x495.webp",
+            "https://next.ink/wp-content/uploads/2026/10/Bd-givre-titre.webp"))
+        // Deux photos différentes restent différentes (un simple suffixe n'est pas une variante).
+        assertFalse(com.pressia.ui.isSameImage(
+            "https://cdn.ex.com/photo-350x230.jpg", "https://cdn.ex.com/photo-2.jpg"))
+    }
+    @Test fun `version du flux preferee a l'extrait court`() {
+        val base = com.pressia.data.local.ArticleEntity(
+            id = "a", feedId = "f", title = "t",
+            summary = "extrait court", content = "<p>" + "x".repeat(400) + "</p>")
+        // Flux « complet » : son HTML est déjà lisible en entier, il fait foi.
+        assertEquals(base.content, com.pressia.ui.feedHtml(base))
+        // Flux qui ne donne qu'un petit extrait : c'est l'extrait qui s'affiche.
+        val thin = base.copy(content = "<p>court</p>")
+        assertEquals("extrait court", com.pressia.ui.feedHtml(thin))
+        // Extraction en base : la version du flux mise de côté dans `summary` reprend la main.
+        assertEquals("extrait court", com.pressia.ui.feedHtml(base.copy(fullFetched = true)))
     }
     @Test fun `duree de lecture lisible`() {
         assertEquals("0 s", com.pressia.data.fmtDuration(0))

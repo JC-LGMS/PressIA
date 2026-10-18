@@ -578,13 +578,18 @@ fun dayLabel(key: String, now: Long = System.currentTimeMillis()): String = when
     } catch (_: Exception) { key }
 }
 
-/** Deux URL d'image désignent-elles la même image (CDN, paramètres de requête) ? */
+/** Deux URL d'image désignent-elles la même image (CDN, paramètres de requête, variantes de taille) ? */
 fun isSameImage(a: String, b: String): Boolean {
     fun norm(u: String): String {
         var x = u.trim().substringBefore("?")
         if (x.startsWith("//")) x = "https:$x"
         x = x.substringAfter("://").removePrefix("www.")
-        return x.substringAfterLast('/').lowercase()
+        var f = x.substringAfterLast('/').lowercase()
+        // Variantes de recadrage des CDN : « …__800_800__overflow.jpg », « …__800_800__2083-201.jpg ».
+        f = f.replace(Regex("__\\d+_\\d+__[^.]*"), "")
+        // Variantes de taille : « …-1024x495.webp », « …_350x230.jpg ».
+        f = f.replace(Regex("[-_]\\d{2,4}x\\d{2,4}(?=\\.[a-z0-9]+$)"), "")
+        return f
     }
     val na = norm(a); val nb = norm(b)
     return na.isNotBlank() && na == nb

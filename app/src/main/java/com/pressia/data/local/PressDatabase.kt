@@ -285,6 +285,26 @@ interface PressDao {
     suspend fun markIdsUnread(ids: List<String>)
     @Query("UPDATE articles SET content = :html, fullFetched = 1 WHERE id = :id")
     suspend fun saveFullContent(id: String, html: String)
+
+    /**
+     * Enregistre le HTML extrait par Readability, la version du flux mise de côté au préalable.
+     *
+     * `content` peut déjà porter un HTML de flux plus riche que l'extrait RSS (flux « complets » :
+     * le serveur livre le corps de l'article) ; l'écraser le ferait disparaître, et « Revenir à
+     * l'extrait RSS » — maintenant ou après réouverture de l'article — retomberait sur le petit
+     * extrait, article tronqué. Recopié dans `summary`, il reste retrouvable.
+     * [fromFeed] est faux quand le contenu en place est déjà une extraction : rien à mettre de côté.
+     */
+    @Transaction
+    suspend fun saveExtractedContent(id: String, html: String, fromFeed: Boolean) {
+        if (fromFeed) keepRichestText(id)
+        saveFullContent(id, html)
+    }
+
+    /** `summary` garde la plus riche des deux versions du flux (extrait RSS ou HTML du flux). */
+    @Query("UPDATE articles SET summary = content WHERE id = :id AND content IS NOT NULL AND length(content) > IFNULL(length(summary), 0)")
+    suspend fun keepRichestText(id: String)
+
     /**
      * Vide le cache Readability : l'extrait RSS (summary) redevient le contenu, à
      * ré-extraire au prochain double-tap. Les articles sont conservés, seul le HTML
@@ -292,6 +312,13 @@ interface PressDao {
      */
     @Query("UPDATE articles SET content = summary, fullFetched = 0 WHERE fullFetched = 1")
     suspend fun clearFullContents(): Int
+    /**
+     * Coupe « article complet » pour un article : la version du flux redevient son contenu et il
+     * n'est plus marqué complet — sa réouverture affiche donc la même version qu'à l'appui sur
+     * « Revenir à l'extrait RSS », même si la copie Readability attendait encore en base.
+     */
+    @Query("UPDATE articles SET content = :html, fullFetched = 0 WHERE id = :id")
+    suspend fun revertFullContent(id: String, html: String)
     /**
      * Traces d'extraction et de lecture d'un flux parti (désabonnement, compte supprimé) :
      * sans article, elles ne servent plus (ni stats ni rejeu). Ne jamais appeler avec une

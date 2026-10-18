@@ -649,11 +649,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // IDs avant marquage (exactement ceux qui vont passer en lus, favoris/read later
         // exclus) : l'annulation sait quoi rouvrir.
         val marked = if (ids.isEmpty()) repo.allMarkableIds() else repo.feedsMarkableIds(ids)
+        // Annulation proposée AVANT l'écriture et la poussée au compte : le bouton de la barre
+        // bascule en flèche d'annulation dès l'appui, sans attendre la file montante ni le réseau
+        // (plusieurs secondes sur « tout le compte »).
+        offerUndo(marked)
         repo.markAllRead(ids)
         // Tout est lu : rien à garder « collant », sinon la liste « non-lus seuls » restait pleine.
         keepIds.value = emptySet()
         refresh()
-        offerUndo(marked)
     }
     /**
      * Marque des articles lus à l'unité (menu d'appui long « plus récents/anciens ») : gardés
@@ -661,10 +664,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     fun markIdsRead(ids: List<String>) = viewModelScope.launch {
         if (ids.isEmpty()) return@launch
+        // Même ordre que « tout marquer lu » : l'annulation est proposée avant la poussée.
+        offerUndo(ids)
         repo.markArticlesRead(ids)
         keepIds.value = keepIds.value + ids.toSet()
         refresh()
-        offerUndo(ids)
     }
     /** Proposition d'annulation d'un marquage groupé (« tout marquer lu », menu appui long). */
     data class UndoOffer(val ids: List<String>, val label: String)

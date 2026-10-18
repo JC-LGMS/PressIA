@@ -24,6 +24,22 @@ import androidx.compose.ui.unit.sp
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
 
+/** Contenu RSS d'origine d'un article (jamais le HTML extrait par Readability, pour éviter
+ * les allers-retours dégradés). */
+fun rssHtml(a: ArticleEntity?): String? = a?.summary?.takeIf { it.isNotBlank() } ?: a?.content
+
+/**
+ * Version « flux » d'un article, hors extraction Readability : le HTML livré par le flux ou le
+ * compte quand il est déjà lisible en entier — un flux « complet » en donne plus que son extrait
+ * RSS — sinon l'extrait. C'est la version affichée à l'ouverture, et celle que retrouve
+ * « Revenir à l'extrait RSS » : une extraction ne doit jamais se faire passer pour elle.
+ */
+fun feedHtml(a: ArticleEntity?): String? {
+    val c = a?.content
+    return if (a != null && !a.fullFetched && com.pressia.data.readability.Readability.isUsableFull(c)) c
+    else rssHtml(a)
+}
+
 /** Écran article : extrait RSS, double-tap et balayages configurables (défaut : Readability
  * et navigation), partage système. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,13 +79,13 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val prevId = if (idx > 0) ids[idx - 1] else null
     val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
     var offsetX by remember(articleId) { mutableFloatStateOf(0f) }
+    // Course du doigt réellement parcourue, dans les deux sens et même quand le geste n'a rien à
+    // faire (voisin absent) : c'est elle qui déclenche le message « pas d'article plus ancien ».
+    var dragX by remember(articleId) { mutableFloatStateOf(0f) }
     var dragging by remember(articleId) { mutableStateOf(false) }
     // Le défilement repart du haut à chaque article : sans clé, le voisin ouvert par balayage
     // s'affichait à la position de l'article quitté.
     val scrollState = remember(articleId) { ScrollState(0) }
-
-    /** Contenu RSS d'origine (jamais le HTML complet, pour éviter les allers-retours dégradés). */
-    fun rssHtml(a: ArticleEntity?): String? = a?.summary?.takeIf { it.isNotBlank() } ?: a?.content
 
     /**
      * Extraction de l'article complet (voir `ensureFull`). En ouverture automatique (mode
@@ -99,10 +115,13 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     LaunchedEffect(articleId) {
         val a = vm.repo.article(articleId)
         article = a
-        // N'affiche jamais un cache vérolé (anti-robot/paywall) : repli sur l'extrait RSS.
-        val usable = com.pressia.data.readability.Readability.isUsableFull(a?.content)
-        html = if (usable) a?.content else rssHtml(a)
-        fullMode = (a?.fullFetched == true) && usable
+        // La copie Readability mise en cache n'est affichée que si l'article est encore en mode
+        // complet (`fullFetched`) ; sinon c'est la version du flux (voir `feedHtml`) : couper le
+        // mode vaut pour les réouvertures, pas seulement pour l'instant de l'appui.
+        // Cache vérolé (anti-robot/paywall) : jamais affiché, repli sur la version du flux.
+        val extracted = if (a != null && a.fullFetched && com.pressia.data.readability.Readability.isUsableFull(a.content)) a.content else null
+        html = extracted ?: feedHtml(a)
+        fullMode = extracted != null
         if (a != null) {
             feedName = vm.repo.feedTitle(a.feedId)
             feedSub = vm.repo.subscription(a.feedId)
@@ -135,10 +154,17 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     suspend fun toggleReadability() {
         val a = article ?: return
         if (fullMode || vm.readabilityOn) {
-            html = rssHtml(a)
+            // Version du flux : le HTML du flux quand il est déjà lisible en entier, sinon
+            // l'extrait RSS (voir `feedHtml`) — sans ça, un article du flux déjà complet
+            // revenait tronqué au petit extrait.
+            val back = feedHtml(a)
+            html = back
             fullMode = false
             blockedNotice = false
             vm.readabilityOn = false
+            // La coupe est persistée : l'article rouvert affiche la version du flux, pas la copie
+            // Readability restée en base (l'épingle de session, elle, suit `readabilityOn`).
+            if (back != null) vm.repo.revertFullContent(a.id, back)
             toast(ctx, "Extrait RSS affiché")
         } else {
             vm.readabilityOn = true
@@ -249,26 +275,32 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                 .pointerInput(prevId, nextId, swipeLeft, swipeRight) {
                     if (prevId != null || nextId != null || swipeLeft != "none" || swipeRight != "none") {
                     detectHorizontalDragGestures(
-                        onDragStart = { dragging = true },
+                        onDragStart = { dragging = true; dragX = 0f },
                         onHorizontalDrag = { change, amount ->
                             change.consume()
+                            // Course brute du doigt : sert au relâchement, même quand le contenu ne
+                            // suit pas (voir `dragX`).
+                            dragX = (dragX + amount).coerceIn(-600f, 600f)
                             val go = if (amount < 0) (!leftNav && swipeLeft != "none") || (leftNav && nextId != null)
                             else (!rightNav && swipeRight != "none") || (rightNav && prevId != null)
-                            if (go) {
-                                offsetX = (offsetX + amount).coerceIn(-600f, 600f)
-                            }
+                            // Le contenu ne suit le doigt que si le geste aboutit à quelque chose.
+                            offsetX = if (go) dragX else 0f
                         },
                         onDragEnd = {
                             dragging = false
                             when {
-                                offsetX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
-                                offsetX >= 120f && rightNav && prevId != null -> vm.selectedArticleId = prevId
-                                offsetX <= -120f && !leftNav && swipeLeft != "none" -> { fireArticleAction(swipeLeft); offsetX = 0f }
-                                offsetX >= 120f && !rightNav && swipeRight != "none" -> { fireArticleAction(swipeRight); offsetX = 0f }
-                                else -> offsetX = 0f
+                                dragX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
+                                dragX >= 120f && rightNav && prevId != null -> vm.selectedArticleId = prevId
+                                // Sens « navigation » sans voisin : le geste tombe dans le vide, on le dit.
+                                dragX <= -120f && leftNav -> toast(ctx, "Pas d'article plus ancien")
+                                dragX >= 120f && rightNav -> toast(ctx, "Pas d'article plus récent")
+                                dragX <= -120f && !leftNav && swipeLeft != "none" -> fireArticleAction(swipeLeft)
+                                dragX >= 120f && !rightNav && swipeRight != "none" -> fireArticleAction(swipeRight)
                             }
+                            offsetX = 0f
+                            dragX = 0f
                         },
-                        onDragCancel = { dragging = false; offsetX = 0f }
+                        onDragCancel = { dragging = false; offsetX = 0f; dragX = 0f }
                     )
                     }
                 }
@@ -474,6 +506,13 @@ sealed interface ABlock {
 fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
     return try {
         val doc = org.jsoup.Jsoup.parse(html, baseUrl)
+        // Certains flux livrent le texte nu, hors de toute balise de bloc (« …texte…<br><img …> »,
+        // cas des Numériques) : le sélecteur ne trouverait que l'image et l'article s'afficherait
+        // sans son corps. Ces nœuds texte sont enveloppés dans un paragraphe pour suivre le même
+        // chemin que les autres, à leur place dans le document.
+        doc.body()?.childNodes()?.filterIsInstance<org.jsoup.nodes.TextNode>()
+            ?.filter { it.text().isNotBlank() }?.toList()
+            ?.forEach { it.replaceWith(org.jsoup.nodes.Element("p").text(it.text())) }
         val out = mutableListOf<ABlock>()
         val seen = mutableSetOf<String>()
         fun abs(u: String): String? {

@@ -70,10 +70,10 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                                 toast(ctx, "Marquage annulé")
                             }) { Icon(Icons.Filled.Undo, "annuler le marquage") }
                         } else {
-                            IconButton({
-                                vm.markAllRead()
-                                toast(ctx, "Tous marqués comme lus")
-                            }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
+                            // Pas de toast de succès : le bouton qui bascule en « annuler »
+                            // (l'annulation est proposée avant l'écriture, voir `markAllRead`)
+                            // le dit assez.
+                            IconButton({ vm.markAllRead() }) { Icon(Icons.Filled.DoneAll, "tout marquer lu") }
                         }
                     }
                 )
