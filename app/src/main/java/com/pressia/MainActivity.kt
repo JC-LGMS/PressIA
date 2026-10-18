@@ -83,6 +83,11 @@ class MainActivity : ComponentActivity() {
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
                     if (current in CONTENT_ROUTES) lastContent = current
+                    // Sortie de la vue article (liste, accueil, dossier, écran utilitaire) : sauf
+                    // réglage « Readability persistant », le mode complet épinglé retombe. Le
+                    // balayage d'un article à l'autre ne change pas de destination : il le garde,
+                    // comme demandé.
+                    if (current != "article") vm.onLeftArticle()
                 }
 
                 /**
@@ -96,8 +101,8 @@ class MainActivity : ComponentActivity() {
                     // LaunchedEffect(current) ci-dessus).
                     if (route == "stream") vm.refresh()
                     // Revenir à l'accueil désépingle le mode Readability (sauf réglage
-                    // « persistant ») : voir `onArrivedHome`.
-                    if (route == "home") scope.launch { vm.onArrivedHome() }
+                    // « persistant ») : voir `onLeftArticle`.
+                    if (route == "home") scope.launch { vm.onLeftArticle() }
                     nav.navigate(route) {
                         popUpTo(nav.graph.findStartDestination().id) { inclusive = false }
                         launchSingleTop = true
@@ -134,7 +139,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         // Accueil = « Tous les articles » : on change de flux, on ne quitte pas l'écran.
                         // Comme openContent("home") ci-dessus : le retour désépingle Readability.
-                        scope.launch { vm.onArrivedHome() }
+                        scope.launch { vm.onLeftArticle() }
                         vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
                     }
                 }
@@ -259,11 +264,15 @@ class MainActivity : ComponentActivity() {
                     ) {
                     ModalNavigationDrawer(
                         drawerState = drawer,
-                        // Pas de swipe de bord sur l'écran article : il partage le balayage
-                        // droit (article précédent) avec le détecteur de l'article, et selon
-                        // le geste c'est le menu qui s'ouvre au lieu de naviguer. Le bouton
-                        // menu reste le seul accès au tiroir sur cet écran.
-                        gesturesEnabled = current != "article",
+                        // Balayage de bord : actif partout, sauf là où le geste vers la droite a
+                        // déjà un sens — écran article (article précédent, partagé avec le
+                        // détecteur de l'article) et liste d'un dossier ou d'un flux (retour, voir
+                        // StreamScaffold). Le bouton menu y reste l'accès au tiroir.
+                        // Tiroir ouvert, le balayage est toujours actif : c'est lui qui permet de
+                        // le refermer (geste ou clic hors du panneau — le clic de fermeture du
+                        // Material ne suit pas `gesturesEnabled` à lui seul).
+                        gesturesEnabled = drawer.isOpen ||
+                            (current != "article" && !(current == "stream" && !atHome)),
                         drawerContent = {
                             PressDrawer(vm, currentRoute = current,
                                 onNavigate = { r ->
@@ -306,7 +315,14 @@ class MainActivity : ComponentActivity() {
                                     BackRule()
                                     StreamScaffold(vm, vm.scope.label,
                                         onOpen = { openArticle(it.id) },
-                                        onMenu = { openDrawer() })
+                                        onMenu = { openDrawer() },
+                                        // Balayage droit sur une liste de dossier ou de flux :
+                                        // même action que le bouton retour, plutôt que l'ouverture
+                                        // du tiroir (réservée aux écrans d'accueil). Tiroir ouvert,
+                                        // c'est lui qui est visible : le geste ne fait rien de plus.
+                                        onSwipeBack = {
+                                            if (drawer.currentValue == DrawerValue.Closed) goHome()
+                                        })
                                 }
                                 composable("article") {
                                     BackRule()

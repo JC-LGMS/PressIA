@@ -119,16 +119,20 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Mode « article complet » (Readability) épinglé pour la session : quand l'icône
      * Readability l'active, tous les articles ouverts passent en complet. Sauf réglage
-     * « Readability persistant », le retour à l'accueil le désépingle (voir
-     * [onArrivedHome]) ; le désactiver manuellement le coupe aussitôt.
+     * « Readability persistant », la sortie de l'écran article le désépingle (voir
+     * [onLeftArticle]) ; le désactiver manuellement le coupe aussitôt.
      */
     var readabilityOn by mutableStateOf(false)
 
     /**
-     * Arrivée à l'accueil : sauf « Readability persistant », le mode complet épinglé
+     * Sortie de la vue article : sauf « Readability persistant », le mode complet épinglé
      * retombe — les articles suivants s'ouvrent en extrait RSS jusqu'à réactivation.
+     *
+     * Le balayage d'un article à l'autre ne quitte pas l'écran (même destination) : le mode y
+     * survit, comme demandé. Sont donc concernés aussi bien le retour à la liste, l'accueil ou
+     * un dossier que le passage par un écran utilitaire (Favoris, Réglages…).
      */
-    suspend fun onArrivedHome() {
+    suspend fun onLeftArticle() {
         if (prefs.data.first()[Prefs.READABILITY_STICKY] != true) readabilityOn = false
     }
     /** Infos du compte connecté (écran Comptes). */

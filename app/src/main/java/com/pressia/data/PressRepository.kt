@@ -1056,7 +1056,15 @@ class PressRepository(
                 .map { account ->
                     async {
                         onSource?.invoke(account.label)
-                        runCatching { syncAccount(account, feedId, categoryId, max) }
+                        // Avancement de la réception par flux (découverte d'un flux jamais
+                        // approvisionné, puis rattrapage des flux en retard) : c'est la partie
+                        // longue d'un compte, et sans compteur le bandeau semble figé. Le pas est
+                        // celui du compte ; plusieurs comptes en parallèle partagent le bandeau,
+                        // comme l'étape elle-même.
+                        val step: (Int, Int) -> Unit = { d, t ->
+                            syncStep.value = "Réception des articles… (${account.label}, flux $d/$t)"
+                        }
+                        runCatching { syncAccount(account, feedId, categoryId, max, step) }
                             .onFailure {
                                 // Ne jamais avaler l'annulation : sinon la synchro
                                 // « annulée » continue en tâche de fond (résurrection
@@ -1331,14 +1339,17 @@ class PressRepository(
         // Compteur de flux (découverte + rattrapage sans chevauchement : le rattrapage exclut
         // les découverts) : l'appelant affiche « x/y » s'il tient le bandeau, sinon silencieux
         // (plusieurs comptes partagent le même bandeau en synchro normale).
+        // Le total est celui de la phase en cours — le rattrapage n'est connu qu'après (il dépend
+        // des compteurs mis à jour par la découverte) : « 1/3 » puis « 4/5 » reste croissant et
+        // finit sur le vrai total, là où un total figé au nombre d'abonnements annonçait « 3/42 »
+        // puis s'arrêtait.
         var feedDone = 0
-        val feedTotal = subs.size.coerceAtLeast(1)
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
             fresh.forEach { feedId ->
                 added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs).first
                 feedDone++
-                onFeed?.invoke(feedDone, feedTotal)
+                onFeed?.invoke(feedDone, fresh.size)
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
@@ -1358,7 +1369,7 @@ class PressRepository(
                     val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs)
                     added += a
                     feedDone++
-                    onFeed?.invoke(feedDone, feedTotal)
+                    onFeed?.invoke(feedDone, fresh.size + lagging.size)
                     android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
                 }
             }
@@ -1368,8 +1379,15 @@ class PressRepository(
 
     /** Synchronise un compte : flux d'articles, puis dossiers, abonnements (dont articles
      * et miniatures des flux désabonnés), historique des flux découverts et rattrapage des
-     * flux sous-approvisionnés si vue globale. */
-    private suspend fun syncAccount(account: CloudAccount, feedId: String?, categoryId: String?, max: Int): Int {
+     * flux sous-approvisionnés si vue globale. [onFeed] fait avancer le bandeau flux par flux
+     * (voir `syncDown`), silencieux depuis la première synchronisation qui a son propre récit. */
+    private suspend fun syncAccount(
+        account: CloudAccount,
+        feedId: String?,
+        categoryId: String?,
+        max: Int,
+        onFeed: ((done: Int, total: Int) -> Unit)? = null
+    ): Int {
         try {
             val p = providerFor(account.provider)
             if (feedId != null || categoryId != null) {
@@ -1459,13 +1477,14 @@ class PressRepository(
             }
             // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
             // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
-            // bornes que l'approvisionnement global (quota, fenêtre, plafond). Silencieuse :
-            // le bandeau dit déjà « Réception… ». Les nouveaux comptent dans le total.
+            // bornes que l'approvisionnement global (quota, fenêtre, plafond). Les nouveaux
+            // comptent dans le total. Le bandeau « Réception des articles… » suit le compteur
+            // de flux ([onFeed]), cette passe étant la partie longue d'un compte.
             val prefsData = prefsHead
             val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
             val cutoff = historyCutoffMs(System.currentTimeMillis(), monthsHead)
             val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread, newerThan).first
+            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread, newerThan, onFeed).first
         // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
         clearAccountExpired(account.id)
         return added

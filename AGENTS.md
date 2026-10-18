@@ -199,6 +199,22 @@ pour le replier).
 - `articleBlocks` ne retient que `p, li, h1..h3, pre, blockquote, img` : certains flux livrent le
   corps en texte nu (`…texte…<br><img …>`, cas des Numériques). Les nœuds texte de premier niveau
   sont enveloppés dans un `<p>` avant sélection, sinon l'article s'affichait sans son texte.
+- Tiroir (`MainActivity`) : `gesturesEnabled = drawer.isOpen || (current != "article" && !(current == "stream" && !atHome))`.
+  Le balayage de bord est coupé là où le geste vers la droite a déjà un sens — article précédent sur
+  l'écran article, retour à l'accueil sur une liste de dossier ou de flux (`StreamScaffold.onSwipeBack`)
+  — mais **rétabli tiroir ouvert** : c'est ce qui permet de le refermer, le `onClose` du scrim
+  Material étant conditionné par `gesturesEnabled` (sinon le clic hors du panneau ne fait rien).
+- Readability « persistant » coupé : le mode complet épinglé retombe dès qu'on **quitte la vue
+  article** (`LaunchedEffect(current)` dans `MainActivity` → `vm.onLeftArticle()`), pas seulement au
+  retour à l'accueil ; le balayage d'un article à l'autre ne change pas de destination et le
+  conserve. Un article déjà extrait, lui, reste en complet à la réouverture : c'est `fullFetched` en
+  base, pas l'épingle de session.
+- Réglages : les sections sont posées par `SettingsSection(titre)` (`ExtraScreens.kt`, filet + titre
+  coloré) — un nouveau réglage rejoint la section de son usage.
+- Bandeau de synchro : l'avancement par flux d'un compte (découverte, puis rattrapage) vient de
+  `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
+  celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le
+  compteur est croissant et finit sur le vrai total, jamais sur le nombre d'abonnements.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

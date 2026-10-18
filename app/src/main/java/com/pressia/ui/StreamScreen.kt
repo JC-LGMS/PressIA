@@ -1,5 +1,6 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -8,6 +9,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -15,12 +18,40 @@ import kotlinx.coroutines.launch
 /** Écran flux façon Press : titre périmètre + actions sync / tout-lu / filtre lus. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.ArticleEntity) -> Unit, onMenu: () -> Unit) {
+fun StreamScaffold(
+    vm: PressVM,
+    title: String,
+    onOpen: (com.pressia.data.local.ArticleEntity) -> Unit,
+    onMenu: () -> Unit,
+    onSwipeBack: (() -> Unit)? = null
+) {
     // Filtre mémorisé par périmètre (voir PressVM.unreadOnly) : suit le flux courant.
     val viewMode by vm.viewMode.collectAsState()
     val unreadOnly = vm.unreadOnly
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    // Balayage droit sous la liste d'un dossier ou d'un flux : même action que le bouton retour
+    // (voir l'appelant). Les lignes d'articles gardent leurs propres gestes — elles consomment le
+    // glissement avant ce détecteur ; « en dessous de la liste » (zone vide, ou lignes sans geste
+    // configuré) c'est donc bien ici que le geste arrive. Seuil de 120 px, comme l'écran article :
+    // un frôlement ne ramène pas à l'accueil.
+    val backThreshold = with(LocalDensity.current) { 120.dp.toPx() }
+    var backDrag by remember { mutableStateOf(0f) }
+    val backSwipe = if (onSwipeBack == null) Modifier else Modifier.pointerInput(onSwipeBack) {
+        detectHorizontalDragGestures(
+            onDragStart = { backDrag = 0f },
+            onHorizontalDrag = { change, amount ->
+                change.consume()
+                backDrag = (backDrag + amount).coerceIn(0f, 600f)
+            },
+            onDragEnd = {
+                val go = backDrag >= backThreshold
+                backDrag = 0f
+                if (go) onSwipeBack()
+            },
+            onDragCancel = { backDrag = 0f }
+        )
+    }
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
     // L'initial est null (« rien émis pour ce périmètre ») et non l'ancien snapshot `vm.articles` :
@@ -99,7 +130,7 @@ fun StreamScaffold(vm: PressVM, title: String, onOpen: (com.pressia.data.local.A
                     gestureRefresh = false
                 }
             },
-            modifier = Modifier.padding(pad).fillMaxSize()
+            modifier = Modifier.padding(pad).fillMaxSize().then(backSwipe)
         ) {
             val localArticles = reactive
             if (localArticles == null) {

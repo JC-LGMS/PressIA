@@ -450,6 +450,21 @@ private fun FaviconSourceRow(
     }
 }
 
+/**
+ * Séparateur de section des Réglages : filet discret puis titre coloré, pour regrouper les
+ * options par usage plutôt que de les aligner en un seul bloc. Le premier titre de l'écran se
+ * passe du filet (la barre du haut fait déjà la séparation) — voir [first].
+ */
+@Composable
+private fun SettingsSection(title: String, first: Boolean = false) {
+    if (!first) HorizontalDivider(Modifier.padding(top = 4.dp))
+    Text(
+        title,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary
+    )
+}
+
 /** Réglages façon Press + sync. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -578,7 +593,7 @@ fun SettingsScreen(vm: PressVM) {
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.padding(16.dp).verticalScroll(scroll).fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Affichage", style = MaterialTheme.typography.titleMedium)
+        SettingsSection("Affichage", first = true)
         Text("Thème de nuit (bouton Nuit du menu)")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("dark" to "Sombre", "amoled" to "AMOLED").forEach { (id, l) ->
@@ -656,13 +671,27 @@ fun SettingsScreen(vm: PressVM) {
                 Icon(Icons.Filled.Add, "couleur personnalisée")
             }
         }
-        HorizontalDivider()
+        SettingsSection("Accueil")
         Text("Page de démarrage")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("subs" to "Accueil", "stream" to "Tous les articles").forEach { (id, l) ->
                 FilterChip(home == id, { home = id; save() }, { Text(l) })
             }
         }
+        Text("Dossiers des comptes")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(mergeFolders, { mergeFolders = true; save() }, { Text("Fusionner") })
+            FilterChip(!mergeFolders, { mergeFolders = false; save() }, { Text("Séparer") })
+        }
+        Text(
+            if (mergeFolders)
+                "Un seul dossier par nom commun à tous vos comptes, comme dans Feedly."
+            else
+                "Un dossier par compte, même si deux comptes ont un dossier du même nom : les vôtres ne peuvent plus se confondre avec ceux d'un autre compte.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        SettingsSection("Lecture des articles")
         Text("Ouverture des articles")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("internal" to "Dans PressIA", "custom" to "Onglet\npersonnalisé", "external" to "Navigateur").forEach { (id, l) ->
@@ -684,8 +713,9 @@ fun SettingsScreen(vm: PressVM) {
         }
         Text(
             "L'icône « Readability » de l'écran article (à cocher dans « Icônes d'action » ci-dessous) " +
-                "passe tous les articles ouverts en article complet. Coupé (défaut), le retour à " +
-                "l'accueil désactive ce mode ; coché, il reste jusqu'à désactivation manuelle.",
+                "passe tous les articles ouverts en article complet. Coupé (défaut), quitter l'écran " +
+                "article désactive ce mode — le balayage d'un article à l'autre le conserve, lui ; " +
+                "coché, il reste jusqu'à désactivation manuelle.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -716,19 +746,7 @@ fun SettingsScreen(vm: PressVM) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text("Dossiers des comptes")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(mergeFolders, { mergeFolders = true; save() }, { Text("Fusionner") })
-            FilterChip(!mergeFolders, { mergeFolders = false; save() }, { Text("Séparer") })
-        }
-        Text(
-            if (mergeFolders)
-                "Un seul dossier par nom commun à tous vos comptes, comme dans Feedly."
-            else
-                "Un dossier par compte, même si deux comptes ont un dossier du même nom : les vôtres ne peuvent plus se confondre avec ceux d'un autre compte.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        SettingsSection("Listes d'articles")
         Text("Vue des articles")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("compact" to "Compacte", "list" to "Liste", "card" to "Carte", "magazine" to "Magazine").forEach { (id, l) ->
@@ -794,7 +812,7 @@ fun SettingsScreen(vm: PressVM) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        HorizontalDivider()
+        SettingsSection("Tailles de police")
         Text("Police des titres de liste : $titleFont sp")
         Slider(titleFont.toFloat(), { titleFont = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
         Text("Police des dates et heures : $dateFont sp")
@@ -820,8 +838,7 @@ fun SettingsScreen(vm: PressVM) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        HorizontalDivider()
-        Text("Hors-ligne & synchronisation", style = MaterialTheme.typography.titleMedium)
+        SettingsSection("Hors-ligne & synchronisation")
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Synchroniser au lancement"); Spacer(Modifier.weight(1f))
             Switch(syncOnLaunch, { syncOnLaunch = it; save() })
@@ -876,22 +893,23 @@ fun SettingsScreen(vm: PressVM) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
-            FilledTonalButton(
-                { vm.refreshFavicons() },
-                enabled = !vm.refreshingFavicons,
-                contentPadding = PaddingValues(horizontal = 12.dp)
-            ) {
-                if (vm.refreshingFavicons) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons",
-                    textAlign = TextAlign.Center
-                )
+        }
+        SettingsSection("Favicons")
+        FilledTonalButton(
+            { vm.refreshFavicons() },
+            enabled = !vm.refreshingFavicons,
+            contentPadding = PaddingValues(horizontal = 12.dp)
+        ) {
+            if (vm.refreshingFavicons) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
             }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons",
+                textAlign = TextAlign.Center
+            )
         }
         Text("Favicons : agrégateur ou sources en direct")
         FaviconSourceRow(
@@ -906,7 +924,6 @@ fun SettingsScreen(vm: PressVM) {
             "Icônes déclarées par les sites eux-mêmes (repli : /favicon.ico).",
             refreshing = vm.refreshingFavicons
         ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
-        HorizontalDivider()
         }
         ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
