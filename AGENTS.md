@@ -142,9 +142,13 @@ pour le replier).
   `filesDir/thumbs`. Gabarit = **plus grande miniature affichée** (bannière magazine :
   largeur écran × 180 dp), jamais l'original full-size. Une URL partagée ne se télécharge qu'une fois.
 - Suivi : `ArticleEntity.imageCached`. `syncThumbs()` (`PressRepository`) télécharge tout ce qui
-  manque (lus + non lus, 4 en parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi
-  uniquement » hors Wi-Fi). Appelé en fin de `syncDown`, `syncReadLater` et `backfill` : **toute**
-  sync (bouton, lancement, worker, connexion de compte) récupère les images.
+  manque (lus + non lus, 6 en parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi
+  uniquement » hors Wi-Fi). Appelé en fin de `syncDown` (`withThumbs = true`) et de `backfill` :
+  **toute** sync (bouton, lancement, worker, connexion de compte) récupère les images.
+- `syncThumbs` est sous `thumbsMutex`, et **ne jamais** relancer une passe depuis `syncReadLater` :
+  le pipeline en lance déjà une en parallèle (`supervisorScope`), et deux passes simultanées
+  lisaient la même liste d'URLs et téléchargeaient deux fois les mêmes images (constaté : 26
+  images sur 32 demandées deux fois).
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 :
   la prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits
   via Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec
@@ -211,6 +215,24 @@ pour le replier).
   base, pas l'épingle de session.
 - Réglages : les sections sont posées par `SettingsSection(titre)` (`ExtraScreens.kt`, filet + titre
   coloré) — un nouveau réglage rejoint la section de son usage.
+- Flux RSS locaux (`provider = "local"`, identifiant = l'URL) : leur état lu est **purement local**
+  (aucun serveur ne le renvoie). `syncDown` appelle donc `storeArticles(…, keepRead = true)` pour
+  eux : `upsertArticles` remplace la ligne entière, et sans ce drapeau chaque synchronisation
+  repassait tous les articles du flux en non lus. Les comptes cloud gardent l'inverse (l'état
+  distant fait foi) — voir `mergeIncomingArticle`, où `unread`/`readAt` ne sont repris que si
+  `keepRead`. Toute nouvelle écriture d'articles locaux doit passer par ce chemin.
+- Pas de plafond sur le nombre de flux RSS locaux : `LocalProvider.stream` les interroge tous, en
+  parallèle bornée (8 à la fois). Un `take(n)` en laissait silencieusement une partie sans articles
+  (constaté avec 32 flux : 30 servis seulement).
+- `deleteLocalFeed` = articles + traces d'extraction/lecture + miniatures orphelines (`gcThumbs`)
+  + images pleine taille du cache Coil (`articleMediaOfFeed` → `htmlImageUrls` sur `content`/
+  `summary` → `purgeImages`). `gcThumbs` ne couvre que `filesDir/thumbs` ; une image encore
+  réclamée par un autre flux reste en cache, et le nettoyage du cache Coil se voit dans le log
+  (`images purgées : n/m`).
+- Ajout d'un flux local : `PressVM.localFeedAdding` couvre l'enregistrement **et** la première
+  synchronisation (bouton désactivé, `done` appelé dans tous les cas) — sans quoi un second appui
+  relançait tout. `SubscriptionsScreen` (ajout dans un dossier) ferme sa boîte de dialogue et
+  signale par un toast.
 - Bandeau de synchro : l'avancement par flux d'un compte (découverte, puis rattrapage) vient de
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le

@@ -420,9 +420,12 @@ class LocalProvider : FeedProvider {
         val targets = if (feedId != null) feeds.filter { it.id == feedId } else feeds
         // En parallèle (8 flux à la fois) : en séquentiel, un seul flux lent (timeout 15 s)
         // retardait tous les autres. Le tri final rend l'ordre d'arrivée indifférent.
+        // Aucun plafond sur le nombre de flux : un compte sans cloud peut en avoir autant que
+        // voulu, le parallélisme borné suffit à tenir le rythme (un `take(30)` en laissait
+        // silencieusement une partie sans articles).
         val permits = Semaphore(8)
         val all = coroutineScope {
-            targets.take(30).map { f ->
+            targets.map { f ->
                 async {
                     permits.withPermit {
                         runCatching { LocalRssFetcher.fetch(f.url.ifBlank { f.id }, f.id, max) }

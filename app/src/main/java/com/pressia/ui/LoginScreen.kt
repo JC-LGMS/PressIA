@@ -203,8 +203,18 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                 }
             },
             Modifier.fillMaxWidth(),
-            enabled = rssUrl.isNotBlank()
-        ) { Text("Ajouter ce flux") }
+            // Désactivé pendant l'enregistrement + la première synchronisation (voir
+            // `PressVM.localFeedAdding`) : le bouton se réactive tout seul à la fin.
+            enabled = rssUrl.isNotBlank() && !vm.localFeedAdding
+        ) {
+            if (vm.localFeedAdding) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Ajout en cours…")
+            } else {
+                Text("Ajouter ce flux")
+            }
+        }
 
         if (localFeeds.isNotEmpty()) {
             localFeeds.forEach { f ->

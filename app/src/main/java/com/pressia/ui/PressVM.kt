@@ -147,6 +147,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var collapsedFolders by mutableStateOf<Set<String>>(emptySet())
     /** Flux RSS saisis à la main, pour l'écran Comptes. */
     var localFeeds by mutableStateOf<List<SubscriptionEntity>>(emptyList())
+    /**
+     * Ajout d'un flux RSS local en cours (téléchargement de la première page + première
+     * synchronisation) : l'écran Comptes désactive son bouton pendant ce temps, sinon un second
+     * appui relançait tout l'enregistrement pour rien.
+     */
+    var localFeedAdding by mutableStateOf(false)
+        private set
 
     /** Apparence choisie dans le drawer : auto / jour / nuit. */
     val appearance: StateFlow<String> = prefs.flow(Prefs.APPEARANCE, "auto").stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
@@ -414,18 +421,31 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         account = repo.accountInfo()
     }
 
-    /** Ajoute un flux RSS local et le synchronise une première fois. */
+    /**
+     * Ajoute un flux RSS local et le synchronise une première fois. [localFeedAdding] couvre
+     * toute l'opération (enregistrement + première sync) : le bouton de l'écran Comptes reste
+     * désactivé jusque-là, `done` étant appelé dans tous les cas (échec compris).
+     */
     fun addLocalFeed(url: String, folderId: String? = null, done: (Boolean) -> Unit = {}) = viewModelScope.launch {
-        val link = repo.addLocalFeed(url, folderId)
-        if (link == null) {
+        if (localFeedAdding) {
             done(false)
             return@launch
         }
-        repo.syncDown(link)
-        refreshNow()
-        // Voir deleteLocalFeed : le compteur Comptes ne suit pas `refreshNow`.
-        account = repo.accountInfo()
-        done(true)
+        localFeedAdding = true
+        var ok = false
+        try {
+            val link = repo.addLocalFeed(url, folderId)
+            if (link != null) {
+                repo.syncDown(link)
+                ok = true
+            }
+        } finally {
+            refreshNow()
+            // Voir deleteLocalFeed : le compteur Comptes ne suit pas `refreshNow`.
+            account = repo.accountInfo()
+            localFeedAdding = false
+            done(ok)
+        }
     }
 
     // ----- Dossiers -----

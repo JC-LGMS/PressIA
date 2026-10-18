@@ -240,6 +240,14 @@ class PressRepository(
     private val syncMutex = Mutex()
     /** Sérialise la mise à jour des empreintes (lecture-modification-écriture d'une map JSON). */
     private val hashMutex = Mutex()
+    /**
+     * Verrou de la passe miniatures. Deux passes se chevauchaient à chaque synchro — le
+     * pipeline en lance une et le tableau « Read later », exécuté en parallèle, en relançait une
+     * de son côté : les deux lisaient la même liste d'URLs et téléchargeaient deux fois les mêmes
+     * images. La seconde ne trouve plus rien à faire une fois la première finie (la requête des
+     * URLs manquantes est déjà à jour), elle rend donc 0 aussitôt.
+     */
+    private val thumbsMutex = Mutex()
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
     /**
      * Variante non bloquante : exécute [block] sous verrou, ou rend null sans attendre si une
@@ -1043,7 +1051,9 @@ class PressRepository(
             local.feeds = dao.subscriptions()
             if (local.feeds.any { isLocalProvider(it.provider) }) onSource?.invoke("flux locaux")
             val page = local.stream(null, feedId, categoryId, max)
-            added += storeArticles(page.articles)
+            // keepRead : le flux RSS ne porte aucun état de lecture, tout article déjà connu
+            // garde donc son lu/non-lu local (voir `storeArticles`).
+            added += storeArticles(page.articles, keepRead = true)
         }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }
 
         // Comptes cloud en parallèle : chacun a son jeton et ses propres dossiers, et les
@@ -1130,7 +1140,14 @@ class PressRepository(
      * Seules les réussites incrémentent : des URL en échec ou lentes retardent les paliers,
      * mais le total s'affiche sans attendre.
      */
-    suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
+    suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int =
+        thumbsMutex.withLock { syncThumbsLocked(onProgress) }
+
+    /**
+     * Corps de [syncThumbs], sous son verrou (voir [thumbsMutex]) : jamais deux passes en
+     * parallèle sur la même liste d'URLs.
+     */
+    private suspend fun syncThumbsLocked(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext 0
         val urls = dao.pendingThumbUrls()
         if (urls.isEmpty()) return@withContext 0
@@ -1835,8 +1852,13 @@ class PressRepository(
      * les étoiles PressIA comme le tableau « Read later » sont des états locaux qu'aucun flux
      * distant ne renvoie. Seule exception : un article qui arrive explicitement marqué
      * `laterSaved` (import du tableau du compte) gagne ce drapeau, sans jamais le perdre.
+     *
+     * [keepRead] préserve en plus l'état lu/non-lu des articles déjà connus, pour les flux RSS
+     * locaux : le fichier du flux ne porte aucune information de lecture, donc chaque
+     * resynchronisation les repassait tous en non lus. Les comptes cloud gardent l'inverse —
+     * l'état distant fait foi (la file montante a déjà été poussée avant la descente).
      */
-    private suspend fun storeArticles(articles: List<ArticleEntity>): Int {
+    private suspend fun storeArticles(articles: List<ArticleEntity>, keepRead: Boolean = false): Int {
         if (articles.isEmpty()) return 0
         val known = HashSet<String>()
         val prev = HashMap<String, ArticleFlags>()
@@ -1848,14 +1870,7 @@ class PressRepository(
                 prev[it.id] = it
             }
         }
-        val merged = articles.map { a ->
-            val p = prev[a.id]
-            // La miniature déjà stockée survit à la réinsertion : sans cela chaque
-            // synchronisation (REPLACE) oublierait le fichier local et tout retéléchargerait.
-            val cached = p?.imageCached ?: a.imageCached
-            if (p == null) return@map if (cached) a.copy(imageCached = true) else a
-            a.copy(starred = p.starred, laterSaved = p.laterSaved || a.laterSaved, imageCached = cached)
-        }
+        val merged = articles.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead) }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
         return fresh
@@ -1961,7 +1976,9 @@ class PressRepository(
                 }
             }.awaitAll().sum()
         }
-        syncThumbs()
+        // Pas de passe miniatures ici : les appelants (pipeline, première synchronisation) en
+        // lancent déjà une en parallèle, et un second passage simultané doublait les
+        // téléchargements. `pokeLists` suffit pour faire suivre le tableau.
         // Le tableau a changé : les favoris suivent sans attendre la fin du pipeline.
         pokeLists()
         added
@@ -2455,16 +2472,38 @@ class PressRepository(
      * Désabonne un flux. Un flux appartenant à un compte est retiré chez ce compte ; un flux RSS
      * local est simplement effacé de la base, avec ses articles, ses HTML extraits et ses traces.
      * Puis les miniatures orphelines (même motif que le désabonnement en synchro : sinon les
-     * images du flux supprimé resteraient sur disque, sans article pour les réclamer).
+     * images du flux supprimé resteraient sur disque, sans article pour les réclamer), et les
+     * images pleine taille du cache Coil.
      */
     suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext
         if (!isLocalProvider(sub.provider)) return@withContext
+        // URLs d'images relevées avant la suppression des lignes : vignette déclarée et images
+        // du corps (HTML complet ou extrait). Les images des autres flux partageant une URL
+        // restent en cache — le filtre est appliqué plus bas, une fois les articles partis.
+        val images = dao.articleMediaOfFeed(feedId).flatMap { m ->
+            listOfNotNull(m.imageUrl?.takeIf { it.isNotBlank() }) +
+                htmlImageUrls(m.content, m.url) + htmlImageUrls(m.summary, m.url)
+        }.distinct()
         dao.deleteSubscription(feedId)
         dao.deleteArticlesOfFeed(feedId)
         dao.deleteExtractEventsOfFeeds(listOf(feedId))
         dao.deleteReadingEventsOfFeeds(listOf(feedId))
         gcThumbs()
+        purgeImages(images.filterNot { it in dao.allThumbUrls() })
+    }
+
+    /**
+     * Retire du cache disque Coil les images d'un flux supprimé. `gcThumbs` ne couvre que les
+     * fichiers de miniatures de [ThumbStore] ; les images pleine taille affichées dans un article
+     * (bannière, images du corps) sont, elles, rangées par Coil sous leur URL — sans cette passe
+     * elles resteraient sur l'appareil, invisibles mais bien présentes.
+     */
+    private suspend fun purgeImages(urls: List<String>) {
+        if (urls.isEmpty()) return
+        val cache = coil.Coil.imageLoader(appCtx).diskCache ?: return
+        val n = urls.count { url -> runCatching { cache.remove(url) }.getOrDefault(false) }
+        android.util.Log.i("PressIA", "images purgées : $n/${urls.size} (cache Coil)")
     }
 
     /**
@@ -2474,6 +2513,43 @@ class PressRepository(
     suspend fun verifyFeedlySession(token: String): String? = withContext(Dispatchers.IO) {
         runCatching { feedly.profile(token)?.takeIf { it.isNotBlank() } }.getOrNull()
     }
+}
+
+/**
+ * URLs absolues des images d'un HTML d'article (corps, extrait), résolues contre [baseUrl].
+ * Même repérage que l'affichage (`articleBlocks`) : sert à purger le cache d'images d'un flux
+ * supprimé, où les images du corps comptent autant que la vignette déclarée par le flux.
+ */
+fun htmlImageUrls(html: String?, baseUrl: String): List<String> {
+    if (html.isNullOrBlank()) return emptyList()
+    return try {
+        org.jsoup.Jsoup.parse(html, baseUrl).select("img[src]").mapNotNull { el ->
+            val raw = el.absUrl("src").ifBlank { el.attr("src") }.trim()
+            val abs = if (raw.startsWith("//")) "https:$raw" else raw
+            abs.takeIf { it.startsWith("http") }
+        }.distinct()
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+/**
+ * Reporte sur un article resynchronisé les drapeaux que seul l'appareil connaît : étoile
+ * PressIA, « Read later » du compte (que l'article peut apporter sans jamais le perdre) et
+ * suivi des miniatures — sans quoi chaque insertion (REPLACE) les effacerait, et tout serait
+ * retéléchargé. [keepRead] ajoute l'état lu/non-lu, qui n'a de sens localement que pour un flux
+ * RSS sans compte : le fichier du flux ne le porte pas, l'écraser repassait tous ses articles
+ * en non lus à chaque synchronisation.
+ */
+fun mergeIncomingArticle(incoming: ArticleEntity, prev: ArticleFlags?, keepRead: Boolean): ArticleEntity {
+    if (prev == null) return incoming
+    return incoming.copy(
+        starred = prev.starred,
+        laterSaved = prev.laterSaved || incoming.laterSaved,
+        imageCached = prev.imageCached,
+        unread = if (keepRead) prev.unread else incoming.unread,
+        readAt = if (keepRead) prev.readAt else incoming.readAt
+    )
 }
 
 data class AccountInfo(

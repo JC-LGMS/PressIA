@@ -234,7 +234,7 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, imageCached FROM articles WHERE id IN (:ids)")
+    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
@@ -339,6 +339,14 @@ interface PressDao {
     /** Toutes les URLs d'images encore référencées : sert au nettoyage des fichiers orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
+    /**
+     * Images d'un flux juste avant sa suppression : vignette déclarée et HTML du corps, d'où
+     * sont tirées les images affichées dans les articles. Le balayage des miniatures
+     * ([ThumbStore.gc]) ne couvre que les fichiers locaux ; le cache d'images Coil (images
+     * pleine taille) a besoin des URLs, article par article.
+     */
+    @Query("SELECT imageUrl, url, summary, content FROM articles WHERE feedId = :feedId")
+    suspend fun articleMediaOfFeed(feedId: String): List<ArticleMedia>
     /** Marque tous les articles partageant cette URL : le fichier local est unique par URL. */
     @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl = :url")
     suspend fun markThumbCached(url: String)
@@ -505,13 +513,23 @@ data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolea
 data class FeedCount(val feedId: String, val c: Int)
 /** État lu d'un article local à sauvegarder (voir [PressDao.localReadStates]). */
 data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
+/** Images d'un article d'un flux supprimé (voir [PressDao.articleMediaOfFeed]). */
+data class ArticleMedia(val imageUrl: String?, val url: String, val summary: String?, val content: String?)
 /** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */
 data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
 data class ExtractKey(val articleId: String, val createdAt: Long)
 
 /** Drapeaux locaux d'un article déjà en base, relus avant réinsertion (voir [PressDao.flagsOf]). */
-data class ArticleFlags(val id: String, val starred: Boolean, val laterSaved: Boolean, val imageCached: Boolean)
+data class ArticleFlags(
+    val id: String,
+    val starred: Boolean,
+    val laterSaved: Boolean,
+    val imageCached: Boolean,
+    /** État lu/non-lu et date de lecture : locaux pour un flux RSS sans compte (voir [mergeIncomingArticle]). */
+    val unread: Boolean = true,
+    val readAt: Long? = null
+)
 
 /** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
 data class ReconcileState(val id: String, val unread: Boolean)

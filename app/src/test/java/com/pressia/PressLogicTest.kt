@@ -1045,4 +1045,53 @@ class PressLogicTest {
         // Sans host exploitable : null (l'UI affiche l'initiale).
         assertNull(com.pressia.data.faviconUrlFor(null, null, null, "pas une url"))
     }
+
+    private fun flags(
+        id: String = "a", starred: Boolean = false, later: Boolean = false,
+        cached: Boolean = false, unread: Boolean = true, readAt: Long? = null
+    ) = com.pressia.data.local.ArticleFlags(id, starred, later, cached, unread, readAt)
+
+    @Test fun `resync d un flux local garde l etat lu`() {
+        // Le fichier du flux ne porte aucun état de lecture : sans préservation, chaque
+        // synchronisation repassait en non lus tous les articles déjà lus.
+        val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T")
+        val prev = flags(unread = false, readAt = 1234L)
+        val kept = com.pressia.data.mergeIncomingArticle(incoming, prev, keepRead = true)
+        assertFalse(kept.unread)
+        assertEquals(1234L, kept.readAt)
+        // Un article rouvert localement (unread = true) le reste aussi : l'article fait foi.
+        val reopened = com.pressia.data.mergeIncomingArticle(incoming, flags(unread = true, readAt = null), keepRead = true)
+        assertTrue(reopened.unread)
+        assertNull(reopened.readAt)
+    }
+
+    @Test fun `resync d un compte cloud garde l etat distant`() {
+        // Compte connecté : le serveur fait foi (la file montante a déjà été poussée avant).
+        val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T", unread = false)
+        val kept = com.pressia.data.mergeIncomingArticle(incoming, flags(unread = true), keepRead = false)
+        assertFalse(kept.unread)
+    }
+
+    @Test fun `resync garde etoiles read later et miniatures`() {
+        val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T")
+        val kept = com.pressia.data.mergeIncomingArticle(
+            incoming, flags(starred = true, later = true, cached = true), keepRead = false
+        )
+        assertTrue(kept.starred)
+        assertTrue(kept.laterSaved)
+        assertTrue(kept.imageCached)
+        // Article inconnu : rien à reporter, la ligne arrive telle quelle.
+        assertEquals(incoming, com.pressia.data.mergeIncomingArticle(incoming, null, keepRead = true))
+    }
+
+    @Test fun `images d un corps HTML resolues et dedupliquees`() {
+        val html = """<p>texte</p><img src="/relatif.jpg"><img src="https://ex.com/abs.jpg">
+            <img src="//cdn.ex.com/proto.jpg"><img src="https://ex.com/abs.jpg"><img src="data:image/png;base64,AAA">"""
+        assertEquals(
+            listOf("https://ex.com/relatif.jpg", "https://ex.com/abs.jpg", "https://cdn.ex.com/proto.jpg"),
+            com.pressia.data.htmlImageUrls(html, "https://ex.com/article")
+        )
+        assertEquals(emptyList<String>(), com.pressia.data.htmlImageUrls(null, "https://ex.com"))
+        assertEquals(emptyList<String>(), com.pressia.data.htmlImageUrls("   ", "https://ex.com"))
+    }
 }
