@@ -136,6 +136,17 @@ en arrière via la flèche retour de l'app (jamais `KEYCODE_BACK` dans une page 
 risque de quitter l'écran au lieu de fermer le clavier — préférer toucher une zone neutre
 pour le replier).
 
+**Flux RSS locaux de test : pas de HTTP en clair.** `LocalRssFetcher` passe par OkHttp, qui
+refuse le HTTP en clair (OkHttp 4.12, `RealConnection` → `CLEARTEXT … not permitted by network
+security policy`) dès lors que le manifeste ne déclare pas `usesCleartextTraffic` — cible
+targetSdk 34, aucun `networkSecurityConfig` : l'échec est **silencieux** (l'app affiche « Flux
+ajouté et synchronisé. » mais zéro article, et le serveur de test ne voit aucune requête).
+Pour tester contre un serveur sur la machine hôte (`10.0.2.2`), poser un manifeste **de debug**
+temporaire (`app/src/debug/AndroidManifest.xml`, `android:usesCleartextTraffic="true"`), le
+retirer avant de committer. Un petit serveur Python maison (`ThreadingHTTPServer` sur
+`0.0.0.0:8899`, flux `/fN.xml` + images `/img/N.jpg`) suffit : il compte les requêtes par URL,
+ce qui vérifie en direct « une seule requête par image » et « tous les flux interrogés ».
+
 ## Images / miniatures (non intuitif, tout est là)
 
 - Stockage : `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans
