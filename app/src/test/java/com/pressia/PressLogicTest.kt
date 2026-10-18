@@ -372,13 +372,18 @@ class PressLogicTest {
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.I && (it as com.pressia.ui.ABlock.I).url == "https://ex.com/a.jpg" })
     }
     @Test fun `blocs article texte nu conserve`() {
-        // Flux qui livre le corps hors balise de bloc (Les Numériques) : le texte doit rester,
-        // dans l'ordre, avant l'image.
-        val html = "Le corps de l'article, sans balise de paragraphe.<br><img src=\"https://ex.com/b.jpg\">"
+        // Flux qui livre le corps hors balise de bloc, relevé en vrai sur Les Numériques : nœuds
+        // texte de premier niveau, un <br>, l'image, un autre <br>, la suite. Le texte doit
+        // rester des deux côtés de l'image, dans l'ordre du document (avant le correctif, le
+        // sélecteur ne trouvait que l'image et l'article s'affichait sans son corps).
+        val html = "Notre comparatif de 204 voitures accueille le test de la voiture.<br>" +
+            "<img src=\"https://ex.com/b.jpg\"><br>" +
+            "Le bilan reste néanmoins assez positif au regard du tarif."
         val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
-        assertEquals(2, blocks.size)
-        assertTrue(blocks[0] is com.pressia.ui.ABlock.T && (blocks[0] as com.pressia.ui.ABlock.T).text.startsWith("Le corps"))
+        assertEquals(3, blocks.size)
+        assertTrue(blocks[0] is com.pressia.ui.ABlock.T && (blocks[0] as com.pressia.ui.ABlock.T).text.startsWith("Notre comparatif"))
         assertTrue(blocks[1] is com.pressia.ui.ABlock.I && (blocks[1] as com.pressia.ui.ABlock.I).url == "https://ex.com/b.jpg")
+        assertTrue(blocks[2] is com.pressia.ui.ABlock.T && (blocks[2] as com.pressia.ui.ABlock.T).text.contains("bilan"))
     }
     @Test fun `articles regroupes par jour avec entete`() {
         val now = 1_760_000_000_000L
