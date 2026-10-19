@@ -51,6 +51,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
     val instaMode by vm.instapaperMode.collectAsState()
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
+    var removingFeed by remember { mutableStateOf<SubscriptionEntity?>(null) }
 
     val accounts = vm.accounts
     val activeId by vm.activeAccountId.collectAsState()
@@ -228,7 +229,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
                         prettyFeedTitle(f.title), maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton({ vm.deleteLocalFeed(f.id); toast(ctx, "Flux désabonné") }) {
+                    IconButton({ removingFeed = f }) {
                         Icon(Icons.Filled.Delete, "désabonner", Modifier.size(18.dp))
                     }
                 }
@@ -321,6 +322,27 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
         ColumnPositionIndicator(loginScroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
 
+    removingFeed?.let { f ->
+        AlertDialog(
+            onDismissRequest = { removingFeed = null },
+            title = { Text("Désabonner ce flux ?") },
+            text = {
+                Text(
+                    "« ${prettyFeedTitle(f.title)} » et ses articles seront supprimés de l'appareil. " +
+                        "Les statistiques de lecture déjà comptées sont conservées."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    val id = f.id
+                    removingFeed = null
+                    vm.deleteLocalFeed(id)
+                    toast(ctx, "Flux désabonné")
+                }) { Text("Désabonner", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ removingFeed = null }) { Text("Annuler") } }
+        )
+    }
     removing?.let { acc ->
         AlertDialog(
             onDismissRequest = { removing = null },

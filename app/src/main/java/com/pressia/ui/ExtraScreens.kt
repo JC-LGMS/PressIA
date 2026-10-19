@@ -248,6 +248,8 @@ fun StatsScreen(vm: PressVM) {
     var period by remember { mutableStateOf(StatsPeriod.WEEK) }
     var year by remember { mutableIntStateOf(0) }
     var sort by remember { mutableStateOf(FeedSort.TIME_DESC) }
+    var confirmReset by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(period, year) { vm.loadStats(period, year) }
     val s = vm.stats
     val years = vm.statsYears
@@ -373,8 +375,38 @@ fun StatsScreen(vm: PressVM) {
                 }
             }
         }
+        // Les traces de lecture ne partent plus avec un flux ou un compte supprimé : c'est donc
+        // à l'utilisateur de décider quand les statistiques repartent de zéro. Confirmation
+        // obligatoire, la remise à zéro étant irréversible.
+        HorizontalDivider(Modifier.padding(top = 8.dp))
+        OutlinedButton({ confirmReset = true }, Modifier.fillMaxWidth()) {
+            Text("Remettre les statistiques à zéro")
+        }
         }
         ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
+    }
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("Remettre les statistiques à zéro ?") },
+            text = {
+                Text(
+                    "Temps de lecture cumulé, articles ouverts, réussites d'extraction : tout " +
+                        "repart de maintenant. Vos articles, leurs états lus/non lus, vos favoris " +
+                        "et vos réglages ne sont pas touchés."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmReset = false
+                    scope.launch {
+                        vm.repo.resetStats()
+                        vm.loadStats(period, year)
+                    }
+                }) { Text("Remettre à zéro", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ confirmReset = false }) { Text("Annuler") } }
+        )
     }
 }
 
@@ -712,7 +744,7 @@ fun SettingsScreen(vm: PressVM) {
             Switch(readabilitySticky, { readabilitySticky = it; save() })
         }
         Text(
-            "L'icône « Readability » de l'écran article (à cocher dans « Icônes d'action » ci-dessous) " +
+            "L'icône « Readability » de l'écran article " +
                 "passe tous les articles ouverts en article complet. Coupé (défaut), quitter l'écran " +
                 "article désactive ce mode — le balayage d'un article à l'autre le conserve, lui ; " +
                 "coché, il reste jusqu'à désactivation manuelle.",
@@ -924,6 +956,10 @@ fun SettingsScreen(vm: PressVM) {
             "Icônes déclarées par les sites eux-mêmes (repli : /favicon.ico).",
             refreshing = vm.refreshingFavicons
         ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
+        // Le bandeau de synchro se pose au-dessus du bas de l'écran, par-dessus le contenu :
+        // sans cette réserve, la dernière section (Favicons) restait cachée derrière lui sans
+        // qu'on puisse défiler plus bas pour la lire.
+        Spacer(Modifier.height(72.dp))
         }
         ColumnPositionIndicator(scroll, Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
     }
@@ -1434,7 +1470,9 @@ private val ABOUT_TOPICS = listOf(
         "Cache, favicons, déconnexion",
         "« Vider le cache » supprime images et articles complets extraits mais garde les articles (ré-extraits à " +
             "l'ouverture) ; « Actualiser favicons » ne touche pas aux miniatures (source : agrégateur ou sites en " +
-            "direct). Se déconnecter supprime articles, miniatures, cache et file d'attente du compte."
+            "direct). Le détail du cache (« articles », « images affichées », « miniatures ») est dans Réglages. " +
+            "Se déconnecter supprime articles, miniatures, cache d'images et file d'attente du compte, et rend " +
+            "l'espace libéré ; les statistiques de lecture, elles, sont conservées (remise à zéro depuis Stats)."
     ),
     AboutTopic(
         "Dossiers fusionnés ou séparés",

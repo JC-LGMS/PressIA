@@ -243,11 +243,37 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
 - Pas de plafond sur le nombre de flux RSS locaux : `LocalProvider.stream` les interroge tous, en
   parallèle bornée (8 à la fois). Un `take(n)` en laissait silencieusement une partie sans articles
   (constaté avec 32 flux : 30 servis seulement).
-- `deleteLocalFeed` = articles + traces d'extraction/lecture + miniatures orphelines (`gcThumbs`)
-  + images pleine taille du cache Coil (`articleMediaOfFeed` → `htmlImageUrls` sur `content`/
-  `summary` → `purgeImages`). `gcThumbs` ne couvre que `filesDir/thumbs` ; une image encore
-  réclamée par un autre flux reste en cache, et le nettoyage du cache Coil se voit dans le log
-  (`images purgées : n/m`).
+- `deleteLocalFeed` = articles + miniatures orphelines (`gcThumbs`) + images pleine taille du cache
+  Coil (`articleMediaOfFeed` → `htmlImageUrls` sur `content`/`summary` → `purgeImages`) + `vacuum()`.
+  Les **traces de lecture restent** (voir la note « statistiques » plus bas). `gcThumbs` ne couvre
+  que `filesDir/thumbs` ; une image encore réclamée par un autre flux reste en cache, et le
+  nettoyage du cache Coil se voit dans le log (`images purgées : n/m`).
+- Statistiques = registre conservé : les traces `reading_events`/`extract_events` **ne partent plus**
+  avec un flux ni avec un compte (`deleteAccount`, désabonnement en synchro, `deleteLocalFeed`) —
+  les effacer remettait les stats à zéro dès qu'on supprimait un compte. Leurs lectures s'affichent
+  alors sous le libellé `DELETED_FEED_LABEL` (« Flux supprimé »), faute de titre en base. La remise à
+  zéro est **manuelle** (bouton + confirmation sur l'écran Stats → `resetStats`) et pose
+  `Prefs.STATS_SINCE`, borne basse appliquée par `statsLowerBound` : elle est indispensable au
+  compteur « passés en lu sans ouvrir », déduit de `articles.readAt` (un état d'article que la remise
+  à zéro ne touche pas). Nouvelle clé ⇒ entrée dans `Prefs.ENTRIES` + test des préférences.
+- Suppression de masse (compte, flux, remise à zéro des stats) ⇒ `vacuum()` : `VACUUM` puis
+  `PRAGMA wal_checkpoint(TRUNCATE)`. Sans le second, le `VACUUM` réécrit la base dans le WAL, le
+  fichier principal garde sa taille, le WAL gonfle et « Cache utilisé » **monte** après une
+  suppression (mesuré : 1,8 Mo → 120 Ko avec le point de contrôle, contre 1,8 Mo → 1,9 Mo sans).
+  « articles » dans le détail du cache = les fichiers `pressia.db*` (db + WAL + shm), c'est pourquoi
+  la taille ne redescend pas toute seule quand les articles partent.
+- Toute suppression est **confirmée** : corbeille d'un flux local (`LoginScreen`, dialogue « Désabonner
+  ce flux ? ») comme « Déconnecter » un compte. Les menus de flux des abonnements ne suppriment pas
+  (déplacer / monter / descendre) — une nouvelle action destructrice doit passer par un dialogue.
+- Ajout d'un flux local : sa **première synchronisation est annoncée** comme les autres
+  (`lockSync()` + `syncMsg` dans `PressVM.addLocalFeed`, appels appariés en `finally`) — sans quoi
+  l'ajout restait muet, sans bandeau ni snackbar, pendant tout le premier téléchargement.
+- Périmètre orphelin (`MainActivity`) : quand le flux ou le dossier courant vient d'être supprimé
+  depuis un autre écran (compte déconnecté, flux désabonné), un `LaunchedEffect` remet le périmètre
+  sur « Tous les articles » et `lastContent` sur l'accueil — sinon le retour arrière remontait sur
+  une liste vide, y compris après un détour par une autre page secondaire. La validation d'un
+  dossier doit interroger `vm.folders` **et** `vm.categories` : un dossier fusionné porte un
+  identifiant `merged:…` absent des catégories brutes (faux positif sinon).
 - Ajout d'un flux local : `PressVM.localFeedAdding` couvre l'enregistrement **et** la première
   synchronisation (bouton désactivé, `done` appelé dans tous les cas) — sans quoi un second appui
   relançait tout. `SubscriptionsScreen` (ajout dans un dossier) ferme sa boîte de dialogue et

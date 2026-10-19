@@ -569,6 +569,20 @@ class PressLogicTest {
         listOf("double_tap_action", "article_swipe_left", "article_swipe_right").forEach {
             assertTrue("$it doit figurer dans ENTRIES", it in names)
         }
+        // Borne de remise à zéro des stats : une sauvegarde restaurée doit la retrouver, sinon
+        // les statistiques effacées réapparaîtraient avec les traces restaurées.
+        assertTrue("stats_since doit figurer dans ENTRIES", "stats_since" in names)
+        assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "stats_since" })
+    }
+
+    @Test fun `borne basse des stats apres remise a zero`() {
+        // Sans remise à zéro (0), la période demandée reste la borne.
+        assertEquals(1000L, com.pressia.data.statsLowerBound(1000L, 0L))
+        assertEquals(0L, com.pressia.data.statsLowerBound(0L, 0L))
+        // Remise à zéro postérieure au début de la période : elle prend le dessus.
+        assertEquals(2000L, com.pressia.data.statsLowerBound(1000L, 2000L))
+        // Remise à zéro antérieure : la période demandée reste la borne.
+        assertEquals(2000L, com.pressia.data.statsLowerBound(2000L, 1000L))
     }
 
     private fun entryNames(): Set<String> = Prefs.ENTRIES.map { it.name }.toSet()

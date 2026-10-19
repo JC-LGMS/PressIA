@@ -320,9 +320,14 @@ interface PressDao {
     @Query("UPDATE articles SET content = :html, fullFetched = 0 WHERE id = :id")
     suspend fun revertFullContent(id: String, html: String)
     /**
-     * Traces d'extraction et de lecture d'un flux parti (désabonnement, compte supprimé) :
-     * sans article, elles ne servent plus (ni stats ni rejeu). Ne jamais appeler avec une
-     * liste vide (`IN ()` invalide) — l'appelant garde le cas courant.
+     * Traces d'extraction et de lecture d'un flux parti (désabonnement, compte supprimé).
+     *
+     * **Plus appelées depuis qu'un flux supprimé ne remet plus les statistiques à zéro** : elles
+     * ne servent qu'aux stats, qui doivent survivre à la disparition du flux (voir
+     * `PressRepository.resetStats`, qui les efface quand l'utilisateur le demande vraiment).
+     * Conservées ici pour que la décision reste réversible en un seul endroit.
+     *
+     * Ne jamais appeler avec une liste vide (`IN ()` invalide) — l'appelant garde le cas courant.
      */
     @Query("DELETE FROM extract_events WHERE feedId IN (:feedIds)")
     suspend fun deleteExtractEventsOfFeeds(feedIds: List<String>): Int
@@ -432,9 +437,9 @@ interface PressDao {
     /** Bornes des lectures enregistrées : [0] = plus ancien, [1] = plus récent. */
     @Query("SELECT IFNULL(MIN(openedAt), 0) FROM reading_events")
     suspend fun firstReadingAt(): Long
-    /** Années (AAAA) ayant au moins une lecture, de la plus récente à la plus ancienne. */
-    @Query("SELECT DISTINCT strftime('%Y', openedAt / 1000, 'unixepoch', 'localtime') AS y FROM reading_events ORDER BY y DESC")
-    suspend fun readingYears(): List<String>
+    /** Années (AAAA) ayant au moins une lecture depuis [since], de la plus récente à la plus ancienne. */
+    @Query("SELECT DISTINCT strftime('%Y', openedAt / 1000, 'unixepoch', 'localtime') AS y FROM reading_events WHERE openedAt >= :since ORDER BY y DESC")
+    suspend fun readingYears(since: Long): List<String>
     @Query("SELECT COUNT(*) FROM reading_events WHERE openedAt BETWEEN :from AND :to")
     suspend fun readsBetween(from: Long, to: Long): Int
     /** Ouvertures agrégées par jour local (« 2026-10-01 »). */

@@ -41,6 +41,13 @@ const val MERGED_PREFIX = "merged:"
 private const val PUSH_MAX_PAGES = 20
 
 /**
+ * Libellé des lectures rattachées à un flux qui n'existe plus (compte supprimé, désabonnement) :
+ * leurs traces sont conservées pour que les statistiques ne repartent pas de zéro, et l'écran
+ * Stats les regroupe sous ce nom faute de titre en base.
+ */
+private const val DELETED_FEED_LABEL = "Flux supprimé"
+
+/**
  * Convertit le jeu de favoris choisi dans l'UI en valeur attendue par les requêtes de favoris.
  *
  * L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
@@ -259,6 +266,7 @@ class PressRepository(
      * `pushQueue`, un Mutex n'étant pas réentrant, ce serait un interblocage.
      */
     private val pushMutex = Mutex()
+
     suspend fun <T> withSyncLock(block: suspend () -> T): T = syncMutex.withLock { block() }
     /**
      * Variante non bloquante : exécute [block] sous verrou, ou rend null sans attendre si une
@@ -352,8 +360,9 @@ class PressRepository(
         val accounts = cloudAccounts().filterNot { it.id == accountId }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         clearAccountExpired(accountId)
-        // Flux du compte avant leur effacement : leurs traces d'extraction/lecture et leur
-        // file de sync partent avec leurs articles (même motif que le désabonnement en synchro).
+        // Flux du compte avant leur effacement : leur file de sync part avec leurs articles
+        // (même motif que le désabonnement en synchro). Leurs traces de lecture, elles, restent
+        // (voir plus bas) : les statistiques ne repartent pas de zéro avec un compte supprimé.
         val feedsOfAccount = dao.subscriptions().filter { it.provider == accountId }.map { it.id }
         dao.clearArticlesOf(accountId)
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
@@ -363,11 +372,11 @@ class PressRepository(
         // interrompue) : sans flux, ils pollueraient sinon le global, les non-lus et
         // les favoris alors qu'il n'y a plus de compte.
         dao.deleteOrphanArticles()
-        if (feedsOfAccount.isNotEmpty()) {
-            dao.deleteExtractEventsOfFeeds(feedsOfAccount)
-            dao.deleteReadingEventsOfFeeds(feedsOfAccount)
-            dao.deleteQueueOfFeeds(feedsOfAccount)
-        }
+        // Les traces de lecture et d'extraction **restent** : elles ne servent qu'aux
+        // statistiques, qui ne doivent pas repartir de zéro parce qu'un compte est supprimé
+        // (au plus leurs lectures s'affichent sous « Flux supprimé »). Seule la file montante
+        // du compte part avec lui.
+        if (feedsOfAccount.isNotEmpty()) dao.deleteQueueOfFeeds(feedsOfAccount)
 
         if (accounts.isEmpty()) {
             prefs.set(Prefs.ACTIVE_ACCOUNT, "")
@@ -385,6 +394,9 @@ class PressRepository(
         // Coil d'abord (favicons, plein format) : testé, il gardait ~2 Mo après déconnexion.
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
         gcThumbs()
+        // Puis la base, dont les articles viennent de partir : sans VACUUM le fichier garde
+        // les pages libérées et « Cache utilisé » ne bouge pas d'un octet.
+        vacuum()
     }
 
     /**
@@ -1492,16 +1504,15 @@ class PressRepository(
             dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
             // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
             // visibles partout : global, non-lus, favoris), avec leurs HTML extraits
-            // (Readability, colonne content) et leurs traces d'extraction/lecture, puis
-            // leurs miniatures orphelines.
+            // (Readability, colonne content), puis leurs miniatures orphelines. Les traces de
+            // lecture/extraction restent : les statistiques ne repartent pas de zéro parce
+            // qu'un flux a disparu côté serveur (voir deleteAccount).
             // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
             if (gone.isNotEmpty()) {
                 android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
                 gone.forEach { dao.deleteArticlesOfFeed(it) }
-                val goneIds = gone.toList()
-                dao.deleteExtractEventsOfFeeds(goneIds)
-                dao.deleteReadingEventsOfFeeds(goneIds)
                 gcThumbs()
+                vacuum()
             }
             // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
             // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
@@ -2018,6 +2029,26 @@ class PressRepository(
     }
 
     /**
+     * Récupère l'espace libéré par une suppression de masse (compte, flux, remise à zéro des
+     * stats). SQLite laisse les pages libérées dans le fichier : « Cache utilisé » ne redescend
+     * pas alors que plus rien n'y est lu — le fichier garde sa taille jusqu'au prochain VACUUM.
+     *
+     * Le `VACUUM` réécrit la base **dans le journal WAL** ; sans le point de contrôle qui suit,
+     * le fichier principal garde sa taille et le WAL, lui, gonfle : le cache affiché montait
+     * même après une suppression. `TRUNCATE` recopie les pages compactées dans le fichier
+     * principal et ramène le WAL à zéro, seul état où la taille affichée redevient vraie.
+     *
+     * Hors transaction, `VACUUM` la refuse, et jamais bloquant pour l'appelant : un ménage
+     * impossible ne laisse qu'un fichier plus gros que nécessaire.
+     */
+    private suspend fun vacuum() = withContext(Dispatchers.IO) {
+        runCatching {
+            db.openHelper.writableDatabase.execSQL("VACUUM")
+            db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+        }.onFailure { android.util.Log.w("PressIA", "VACUUM impossible : ${it.message}") }
+    }
+
+    /**
      * Rejoue les favoris venus d'une restauration de sauvegarde sur les articles désormais présents.
      * Seuls ceux qui sont effectivement arrivés sont retirés de la mémoire, les autres attendront
      * une synchronisation ultérieure.
@@ -2287,7 +2318,11 @@ class PressRepository(
     /** Détail du cache formaté (« articles 17,3 Mo · images 68,0 Ko · miniatures 284,0 Ko »). */
     suspend fun cacheDetail(): String {
         val (db, coil, thumbs) = cacheBreakdown()
-        return "articles ${formatCacheBytes(db)} · images ${formatCacheBytes(coil)} · miniatures ${formatCacheBytes(thumbs)}"
+        // « images » = cache disque de Coil : images pleine taille affichées dans un article
+        // (bannière, corps) et favicons, par opposition aux « miniatures » (filesDir/thumbs,
+        // téléchargées en amont par syncThumbs). Le libellé le dit, la question revenait.
+        return "articles ${formatCacheBytes(db)} · images affichées ${formatCacheBytes(coil)} · " +
+            "miniatures ${formatCacheBytes(thumbs)}"
     }
 
     /**
@@ -2437,28 +2472,50 @@ class PressRepository(
     }
 
     // ----- Stats -----
-    /** Années ayant au moins une lecture ( ex. [2026, 2025] ). */
+    /** Années ayant au moins une lecture ( ex. [2026, 2025] ), depuis la borne de remise à zéro. */
     suspend fun statsYears(): List<Int> = withContext(Dispatchers.IO) {
-        dao.readingYears().mapNotNull { it.toIntOrNull() }
+        dao.readingYears(statsSince()).mapNotNull { it.toIntOrNull() }
     }
 
     /** Première lecture enregistrée (0 si aucune). */
     suspend fun firstReadingAt(): Long = withContext(Dispatchers.IO) { dao.firstReadingAt() }
 
+    /** Borne basse des statistiques : 0 = depuis toujours (voir [resetStats]). */
+    private suspend fun statsSince(): Long = prefs.data.first()[Prefs.STATS_SINCE] ?: 0L
+
+    /**
+     * Remet les statistiques à zéro : les traces de lecture et d'extraction sont effacées et la
+     * borne [Prefs.STATS_SINCE] est posée à maintenant. Cette borne est nécessaire pour le
+     * compteur « passés en lu sans ouvrir », qui se déduit des articles (`readAt`) : `readAt`
+     * reste, lui, un état d'article qu'une remise à zéro des stats n'a pas à toucher.
+     */
+    suspend fun resetStats() = withContext(Dispatchers.IO) {
+        dao.clearReadingEvents()
+        dao.clearExtractEvents()
+        prefs.set(Prefs.STATS_SINCE, System.currentTimeMillis())
+        vacuum()
+    }
+
     suspend fun stats(from: Long, to: Long): ReadingStats = withContext(Dispatchers.IO) {
-        val total = dao.readsBetween(from, to)
-        val perDay = dao.readsPerLocalDay(from, to)
-        val seconds = dao.secondsBetween(from, to)
-        val quick = dao.readWithoutOpeningBetween(from, to)
+        // Une remise à zéro borne le bas de la période : rien de ce qui précède n'est compté,
+        // pas même les articles marqués lus avant elle.
+        val f = statsLowerBound(from, statsSince())
+        val total = dao.readsBetween(f, to)
+        val perDay = dao.readsPerLocalDay(f, to)
+        val seconds = dao.secondsBetween(f, to)
+        val quick = dao.readWithoutOpeningBetween(f, to)
         val titles = dao.subscriptions().associateBy({ it.id }, { it.title })
         val cats = dao.categories().associateBy({ it.id }, { it.label })
-        val perCategory = dao.secondsByCategory(from, to)
+        val perCategory = dao.secondsByCategory(f, to)
             .map { (cats[it.categoryId] ?: it.categoryId.orEmpty()) to it.secs }
             .filter { it.first.isNotBlank() }
-        val perFeed = dao.secondsByFeed(from, to).map { f ->
-            (titles[f.feedId] ?: f.feedId) to (f.secs to f.c)
-        }
-        val ex = dao.extractStatsBetween(from, to).associate { it.ok to it.c }
+        // Les traces d'un flux supprimé sont conservées (les stats ne repartent pas de zéro avec
+        // un compte) : sans titre en base, ses lectures se regroupent sous un même libellé.
+        val perFeed = dao.secondsByFeed(f, to)
+            .groupBy { titles[it.feedId] ?: DELETED_FEED_LABEL }
+            .map { (label, rows) -> label to (rows.sumOf { it.secs } to rows.sumOf { it.c }) }
+            .sortedByDescending { it.second.first }
+        val ex = dao.extractStatsBetween(f, to).associate { it.ok to it.c }
         ReadingStats(
             totalOpens = total,
             readWithoutOpening = quick,
@@ -2468,7 +2525,7 @@ class PressRepository(
             perDay = perDay.map { it.day to it.c },
             readabilityOk = ex[true] ?: 0,
             readabilityKo = ex[false] ?: 0,
-            from = from,
+            from = f,
             to = to
         )
     }
@@ -2505,10 +2562,11 @@ class PressRepository(
 
     /**
      * Désabonne un flux. Un flux appartenant à un compte est retiré chez ce compte ; un flux RSS
-     * local est simplement effacé de la base, avec ses articles, ses HTML extraits et ses traces.
-     * Puis les miniatures orphelines (même motif que le désabonnement en synchro : sinon les
-     * images du flux supprimé resteraient sur disque, sans article pour les réclamer), et les
-     * images pleine taille du cache Coil.
+     * local est simplement effacé de la base, avec ses articles et ses HTML extraits. Ses traces
+     * de lecture ne partent pas (elles nourrissent les statistiques, qui survivent à un
+     * désabonnement comme à une suppression de compte). Puis les miniatures orphelines (même
+     * motif que le désabonnement en synchro : sinon les images du flux supprimé resteraient sur
+     * disque, sans article pour les réclamer), et les images pleine taille du cache Coil.
      */
     suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext
@@ -2522,10 +2580,13 @@ class PressRepository(
         }.distinct()
         dao.deleteSubscription(feedId)
         dao.deleteArticlesOfFeed(feedId)
-        dao.deleteExtractEventsOfFeeds(listOf(feedId))
-        dao.deleteReadingEventsOfFeeds(listOf(feedId))
+        // Ses traces de lecture et d'extraction restent : elles ne servent qu'aux statistiques,
+        // qui doivent survivre au désabonnement (elles s'afficheront sous « Flux supprimé »).
+        // Seules les images sans plus aucun article pour les réclamer sont retirées.
         gcThumbs()
         purgeImages(images.filterNot { it in dao.allThumbUrls() })
+        // Le fichier de base garde sinon les pages libérées par les articles partis.
+        vacuum()
     }
 
     /**
@@ -2652,6 +2713,12 @@ fun statsRange(period: StatsPeriod, year: Int = 0, now: Long = System.currentTim
     }
     return longArrayOf(from, now)
 }
+
+/**
+ * Borne basse effective des statistiques : la période demandée, jamais avant la remise à zéro
+ * (voir [Prefs.STATS_SINCE]). Fonction pure, testable sans base ni appareil.
+ */
+fun statsLowerBound(from: Long, since: Long): Long = maxOf(from, since)
 
 /** Début de la journée locale (00:00) contenant [ts]. */
 fun startOfDay(ts: Long): Long {

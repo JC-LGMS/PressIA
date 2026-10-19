@@ -425,6 +425,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Ajoute un flux RSS local et le synchronise une première fois. [localFeedAdding] couvre
      * toute l'opération (enregistrement + première sync) : le bouton de l'écran Comptes reste
      * désactivé jusque-là, `done` étant appelé dans tous les cas (échec compris).
+     *
+     * La première synchronisation est annoncée comme les autres (bandeau + snackbar, dès qu'une
+     * URL valide est reconnue) : sans cela l'ajout restait muet pendant tout le premier
+     * téléchargement, alors qu'il peut durer (flux de plusieurs centaines d'articles).
      */
     fun addLocalFeed(url: String, folderId: String? = null, done: (Boolean) -> Unit = {}) = viewModelScope.launch {
         if (localFeedAdding) {
@@ -436,8 +440,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             val link = repo.addLocalFeed(url, folderId)
             if (link != null) {
-                repo.syncDown(link)
-                ok = true
+                lockSync()
+                try {
+                    syncMsg = "Réception des articles du nouveau flux…"
+                    repo.syncDown(link)
+                    ok = true
+                } finally {
+                    unlockSync()
+                }
             }
         } finally {
             refreshNow()

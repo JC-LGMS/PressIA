@@ -188,6 +188,34 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                /**
+                 * Périmètre orphelin : le flux (ou le dossier) courant vient d'être supprimé
+                 * depuis un autre écran — typiquement un compte déconnecté depuis l'écran
+                 * Comptes. Sans ce nettoyage, le retour arrière remonterait sur une liste vide,
+                 * et « Tous les articles » resterait filtré sur un flux disparu.
+                 *
+                 * L'accueil redevient la « dernière page de contenu » : les écrans utilitaires
+                 * (Comptes, Réglages, Stats…) y renvoient ensuite, y compris après un détour par
+                 * une autre page secondaire, au lieu de remonter sur la page morte.
+                 */
+                LaunchedEffect(vm.loaded, vm.scope.feedId, vm.scope.categoryId, vm.subs, vm.categories, vm.folders) {
+                    if (!vm.loaded) return@LaunchedEffect
+                    val feed = vm.scope.feedId
+                    val cat = vm.scope.categoryId
+                    // Dossier : valider aussi contre `folders`, un dossier fusionné portant un
+                    // identifiant « merged:… » absent de la liste brute des catégories.
+                    val orphan = (feed != null && vm.subs.none { it.id == feed }) ||
+                        (cat != null && vm.categories.none { it.id == cat } &&
+                            vm.folders.none { it.id == cat })
+                    if (orphan) {
+                        // Le retour arrière ne quitte pas l'écran : on ne fait que réparer le
+                        // périmètre et la destination de retour, l'utilisateur reste où il est.
+                        vm.switchScope(Scope(label = "Tous les articles"))
+                        vm.refresh()
+                        lastContent = startRoute
+                    }
+                }
+
                 // Bandeau de synchro : le vrai SnackbarHost (géométrie et animations
                 // d'origine), mais le texte affiché suit vm.syncMsg en direct via le slot
                 // custom — pas de dismiss/re-show à chaque mise à jour du compteur

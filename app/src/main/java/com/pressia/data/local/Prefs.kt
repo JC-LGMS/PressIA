@@ -113,6 +113,14 @@ class Prefs(private val ctx: Context) {
          */
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
         val LAST_BACKUP_META = stringPreferencesKey("last_backup_meta")
+        /**
+         * Borne basse des statistiques de lecture (ms, 0 = depuis toujours). Posée par
+         * « Remettre les statistiques à zéro » (voir `PressRepository.resetStats`) : tout ce
+         * qui précède est ignoré, y compris les compteurs dérivés des articles. Les traces
+         * elles-mêmes ne disparaissent plus avec un flux supprimé — sans quoi supprimer un
+         * compte remettait les statistiques à zéro.
+         */
+        val STATS_SINCE = longPreferencesKey("stats_since")
         /** Échelle des libellés du drawer, en pourcentage de la taille du thème (80..140). */
         val DRAWER_TEXT_SCALE = intPreferencesKey("drawer_text_scale")
         /** Échelle des libellés dossier / flux de l'écran Accueil, en pourcentage (70..140). */
@@ -234,6 +242,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
             PrefEntry.Str("last_backup_meta", LAST_BACKUP_META),
+            PrefEntry.LongPref("stats_since", STATS_SINCE),
             PrefEntry.IntPref("drawer_text_scale", DRAWER_TEXT_SCALE),
             PrefEntry.IntPref("home_text_scale", HOME_TEXT_SCALE),
             PrefEntry.Bool("hide_empty_subs", HIDE_EMPTY_SUBS),
