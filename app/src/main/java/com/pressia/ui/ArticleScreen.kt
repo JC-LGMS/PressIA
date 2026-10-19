@@ -298,9 +298,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                             when {
                                 dragX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
                                 dragX >= 120f && rightNav && prevId != null -> vm.selectedArticleId = prevId
-                                // Sens « navigation » sans voisin : le geste tombe dans le vide, on le dit.
-                                dragX <= -120f && leftNav -> toast(ctx, "Pas d'article plus ancien")
-                                dragX >= 120f && rightNav -> toast(ctx, "Pas d'article plus récent")
+                                // Sens « navigation » sans voisin : on revient à la liste (retour)
+                                // et on garde le toast informatif.
+                                dragX <= -120f && leftNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
+                                dragX >= 120f && rightNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
                                 dragX <= -120f && !leftNav && swipeLeft != "none" -> fireArticleAction(swipeLeft)
                                 dragX >= 120f && !rightNav && swipeRight != "none" -> fireArticleAction(swipeRight)
                             }

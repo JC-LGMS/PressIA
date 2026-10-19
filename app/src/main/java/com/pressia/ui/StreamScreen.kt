@@ -134,7 +134,9 @@ fun StreamScaffold(
         // retour. L'icône Accueil apparaît dès les premiers pixels du glissement vers la droite,
         // s'intensifie jusqu'au seuil (où le relâchement ramène à l'accueil) et disparaît si le
         // geste n'aboutit pas — un frôlement ne doit pas laisser de trace.
+        // Le contenu suit le doigt (translationX) pour un feedback visuel fluide, comme l'écran article.
         Box(Modifier.padding(pad).fillMaxSize().then(backSwipe)) {
+            val contentOffsetX = if (onSwipeBack != null) backDrag else 0f
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = gestureRefresh,
                 onRefresh = {
@@ -148,6 +150,7 @@ fun StreamScaffold(
                     }
                 },
                 modifier = Modifier.fillMaxSize()
+                    .graphicsLayer { translationX = contentOffsetX }
             ) {
                 val localArticles = reactive
                 if (localArticles == null) {
