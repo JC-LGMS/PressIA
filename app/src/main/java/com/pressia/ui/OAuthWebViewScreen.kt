@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.pressia.BuildConfig
 import com.pressia.data.local.Prefs
@@ -126,7 +127,7 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
                 // Barre de synchro tout en haut de l'écran, au-dessus du titre.
                 if (vm.syncing) SyncProgress()
                 TopAppBar(
-                    title = { Text(if (provider == "feedly") "Connexion Feedly" else "Connexion Inoreader") },
+                    title = { Text(if (provider == "feedly") "Connexion Feedly" else "Connexion Inoreader", fontSize = 19.sp) },
                     navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
                     actions = {
                         IconButton({ webView?.reload() }) { Icon(Icons.Filled.Refresh, "recharger") }

@@ -705,7 +705,7 @@ fun ViewTitle(icon: ImageVector?, text: String) {
             Icon(icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp)
+        Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 19.sp)
     }
 }
 

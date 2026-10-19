@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.pressia.data.local.ArticleEntity
 
 /**
@@ -86,7 +87,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                             FeedAvatar(feed, 28)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text("Favoris", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Favoris", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 19.sp)
                     }
                 },
                 navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },

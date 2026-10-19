@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.pressia.data.local.Prefs
 import kotlinx.coroutines.delay
@@ -263,7 +264,7 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
                 // Barre de synchro tout en haut de l'écran, au-dessus du titre.
                 if (vm.syncing) SyncProgress()
                 TopAppBar(
-                    title = { Text("Connexion Feedly") },
+                    title = { Text("Connexion Feedly", fontSize = 19.sp) },
                     navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
                     actions = {
                         IconButton({ webView?.loadUrl(authUrl) }) { Icon(Icons.Filled.Refresh, "recharger") }

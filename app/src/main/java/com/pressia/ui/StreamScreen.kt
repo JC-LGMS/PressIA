@@ -85,10 +85,15 @@ fun StreamScaffold(
                                 FeedAvatar(feed, 28)
                                 Spacer(Modifier.width(8.dp))
                             }
+                            // Dossier : icône dossier à côté du titre.
+                            if (vm.scope.categoryId != null && feed == null) {
+                                Icon(Icons.Filled.Folder, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.width(6.dp))
+                            }
                             Text(
                                 if (unreadCount > 0) "$title ($unreadCount)" else title,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                fontSize = 16.sp
+                                fontSize = 19.sp
                             )
                         }
                     },
