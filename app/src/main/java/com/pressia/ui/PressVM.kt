@@ -347,7 +347,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * local, hors persistance.
      */
     var unreadOnly by mutableStateOf(true)
-        private set
 
     private fun unreadScopeKey(s: Scope): String = when {
         s.feedId != null -> "feed:${s.feedId}"
