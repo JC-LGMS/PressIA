@@ -165,8 +165,16 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
   via Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec
   leur extrait RSS, la prochaine ouverture complète ré-extrait.
 - Listes : les 3 `AsyncImage` d'`ArticleRow` passent par `thumbModel()` (fichier local si
-  présent, sinon URL paresseuse au scroll — aucun préchargement de liste). L'écran article garde
-  les URL pleine qualité (hero / inline / viewer).
+  présent, sinon URL paresseuse au scroll — aucun préchargement de liste). **L'écran article aussi**
+  (bannière et images du corps) : quand l'URL a déjà été récupérée en miniature à la synchro, le
+  fichier local est affiché au lieu d'être retéléchargé. C'est le cas de `imageUrl`, et de la
+  première image du corps pour tout flux sans `enclosure`/`media:*` — `LocalRssFetcher` prend alors
+  la première `<img>` de la description, donc la miniature **est** la première image de l'article
+  (vérifié : 1 requête par image à la synchro, puis 0 à l'ouverture contre 1 avant). Compromis
+  assumé : la copie locale est au gabarit des bannières (largeur d'écran × 180 dp), une image
+  carrée ou haute est donc agrandie à l'affichage ; la visionneuse (appui) garde l'URL d'origine,
+  c'est là qu'on récupère la pleine qualité, et une image du corps non pré-téléchargée se charge
+  normalement (une requête, à l'affichage).
 
 ## Pièges connus
 

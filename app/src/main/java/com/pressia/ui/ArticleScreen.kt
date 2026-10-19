@@ -363,10 +363,17 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             val blocks = remember(html, article?.url) { articleBlocks(html.orEmpty(), article?.url.orEmpty()) }
             // Image principale du flux (mise en cache hors-ligne), masquée si l'extrait RSS affiche
             // déjà cette image (doublon) ou en mode complet (images de la page extraite).
+            //
+            // Les images passent par [thumbModel] : quand l'URL a déjà été téléchargée en miniature
+            // à la synchronisation — c'est le cas de `imageUrl`, et de la première image du corps
+            // quand le flux n'a pas d'`enclosure` — le fichier local est affiché au lieu d'être
+            // retéléchargé. La copie locale est au gabarit des bannières (largeur d'écran × 180 dp) :
+            // le gain est un aller-retour réseau en moins à chaque ouverture, la contrepartie une
+            // image haute agrandie ; le viewer, lui, garde l'URL d'origine pour le zoom.
             val heroUrl = article?.imageUrl?.takeIf { it.startsWith("http") }
             val heroDuplicate = heroUrl != null && blocks.any { it is ABlock.I && isSameImage(it.url, heroUrl) }
             if (heroUrl != null && !fullMode && !heroDuplicate) {
-                coil.compose.AsyncImage(heroUrl, null,
+                coil.compose.AsyncImage(thumbModel(ctx, heroUrl), null,
                     Modifier.fillMaxWidth().padding(vertical = 8.dp)
                         .clickable { viewerUrl = heroUrl },
                     contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
@@ -380,7 +387,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         style = if (justify) MaterialTheme.typography.bodyLarge.copy() else MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
-                    is ABlock.I -> coil.compose.AsyncImage(b.url, null,
+                    is ABlock.I -> coil.compose.AsyncImage(thumbModel(ctx, b.url), null,
                         Modifier.fillMaxWidth().padding(vertical = 8.dp)
                             .clickable { viewerUrl = b.url },
                         contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
