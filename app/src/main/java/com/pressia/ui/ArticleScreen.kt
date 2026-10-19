@@ -3,6 +3,7 @@ package com.pressia.ui
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -40,9 +41,15 @@ fun feedHtml(a: ArticleEntity?): String? {
     else rssHtml(a)
 }
 
-/** Écran article : extrait RSS, double-tap et balayages configurables (défaut : Readability
- * et navigation), partage système. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Écran article : extrait RSS, double-tap et balayages configurables (défaut : Readability
+ * et navigation), partage système.
+ *
+ * Les images suivent les mêmes gestes que l'article : un simple tap ouvre la visionneuse, un
+ * double-tap déclenche l'action réglée pour le double-tap (voir `ImageTap`) — l'image applique
+ * donc elle-même [doubleTap], qui est déjà la valeur courante au recomposé.
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: () -> Unit) {
     val ctx = LocalContext.current
@@ -308,7 +315,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
         Column(
             Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)
                 .graphicsLayer { translationX = offsetX }
-                .pointerInput(Unit) {
+                .pointerInput(doubleTap) {
                     detectTapGestures(onDoubleTap = { fireArticleAction(doubleTap) })
                 }
         ) {
@@ -367,15 +374,18 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             // Les images passent par [thumbModel] : quand l'URL a déjà été téléchargée en miniature
             // à la synchronisation — c'est le cas de `imageUrl`, et de la première image du corps
             // quand le flux n'a pas d'`enclosure` — le fichier local est affiché au lieu d'être
-            // retéléchargé. La copie locale est au gabarit des bannières (largeur d'écran × 180 dp) :
-            // le gain est un aller-retour réseau en moins à chaque ouverture, la contrepartie une
-            // image haute agrandie ; le viewer, lui, garde l'URL d'origine pour le zoom.
+            // retéléchargé. La copie locale est au gabarit des bannières (carré de la largeur
+            // d'écran) : le gain est un aller-retour réseau en moins à chaque ouverture, la
+            // contrepartie une image haute agrandie au pincement.
             val heroUrl = article?.imageUrl?.takeIf { it.startsWith("http") }
             val heroDuplicate = heroUrl != null && blocks.any { it is ABlock.I && isSameImage(it.url, heroUrl) }
             if (heroUrl != null && !fullMode && !heroDuplicate) {
                 coil.compose.AsyncImage(thumbModel(ctx, heroUrl), null,
                     Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        .clickable { viewerUrl = heroUrl },
+                        .combinedClickable(
+                            onClick = { viewerUrl = heroUrl },
+                            onDoubleClick = { fireArticleAction(doubleTap) }
+                        ),
                     contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
             }
             blocks.forEach { b ->
@@ -389,7 +399,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     )
                     is ABlock.I -> coil.compose.AsyncImage(thumbModel(ctx, b.url), null,
                         Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                            .clickable { viewerUrl = b.url },
+                            .combinedClickable(
+                                onClick = { viewerUrl = b.url },
+                                onDoubleClick = { fireArticleAction(doubleTap) }
+                            ),
                         contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
                 }
             }
@@ -469,6 +482,7 @@ private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): P
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ImageViewer(url: String, onClose: () -> Unit) {
+    val ctx = LocalContext.current
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     androidx.compose.ui.window.Dialog(
@@ -482,7 +496,11 @@ private fun ImageViewer(url: String, onClose: () -> Unit) {
                 }
         ) {
             coil.compose.AsyncImage(
-                url, null,
+                // [thumbModel] plutôt que l'URL brute : une image déjà téléchargée (miniature
+                // locale à la synchronisation, ou simple présence dans le cache disque Coil pour
+                // les images du corps) s'ouvre en grand sans repartir sur le réseau. Le pincement
+                // zoome la copie locale, au gabarit de l'écran.
+                thumbModel(ctx, url), null,
                 Modifier.fillMaxSize()
                     .graphicsLayer(
                         scaleX = scale, scaleY = scale,

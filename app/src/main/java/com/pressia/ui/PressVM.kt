@@ -55,6 +55,18 @@ val DOUBLE_TAP_IDS = listOf("readability", "star", "read", "share", "instapaper"
 /** Actions des balayages dans un article ouvert (« older »/« newer » = navigation). */
 val ARTICLE_SWIPE_IDS = listOf("older", "newer", "star", "read", "share", "instapaper", "none")
 
+/**
+ * Nombre de non-lus d'un périmètre, pour le compteur affiché entre parenthèses à côté du titre
+ * d'une liste : le flux lui-même, la somme de ses flux pour un dossier — un dossier fusionné
+ * compris, `folderUnreads` portant les deux clés (voir `unreadByFolder`) — et tous les flux pour
+ * « Tous les articles ». Pur et testé.
+ */
+fun scopeUnread(s: Scope, unreads: Map<String, Int>, folderUnreads: Map<String, Int>): Int = when {
+    s.feedId != null -> unreads[s.feedId] ?: 0
+    s.categoryId != null -> folderUnreads[s.categoryId] ?: 0
+    else -> unreads.values.sum()
+}
+
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
 val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "readability", "instapaper")
 
@@ -413,6 +425,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         prefs.set(Prefs.HIDE_EMPTY_SUBS, !hideEmptySubs.value)
     }
 
+    /** Non-lus du périmètre affiché, pour le compteur du titre (voir [scopeUnread]). */
+    fun unreadCountFor(s: Scope = scope): Int = scopeUnread(s, unreads, folderUnreads)
+
     /** Supprime un flux RSS local ; les autres comptes ne sont pas touchés. */
     fun deleteLocalFeed(feedId: String) = viewModelScope.launch {
         repo.deleteLocalFeed(feedId)
@@ -598,8 +613,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * ni animation) — le [refresh] qui suit dans MainActivity suffit à remplir les listes
      * depuis le cache.
      *
-     * Le lancement ne précharge pas les favicons (déjà en cache Coil, rechargés à
-     * l'affichage) : seuls le manuel et « Actualiser favicons » le font.
+     * Le lancement ne précharge pas les favicons plus que le bouton : la passe n'a lieu que
+     * lorsqu'elle est due (voir `faviconsDue`), sinon les icônes déjà en cache se rechargent à
+     * l'affichage sans requête.
      *
      * Option et fraîcheur sont revérifiées sous le verrou partagé (l'app ne synchronise
      * que lorsqu'elle est ouverte : pas d'autre déclencheur concurrent).
@@ -627,7 +643,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                     try {
                         syncMsg = try {
                             if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
-                            else finishSync(repo.syncPipeline(withFavicons = false))
+                            else finishSync(repo.syncPipeline())
                         } catch (e: Exception) {
                             failSync()
                         }
@@ -690,6 +706,21 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         repo.markAllRead(ids)
         // Tout est lu : rien à garder « collant », sinon la liste « non-lus seuls » restait pleine.
         keepIds.value = emptySet()
+        refresh()
+    }
+
+    /**
+     * « Tout marquer lu » sur un périmètre choisi ailleurs que dans la liste courante : l'appui
+     * long sur un flux ou un dossier de l'accueil (voir `SubscriptionsScreen`). Même mécanique que
+     * [markAllRead] — annulation proposée avant l'écriture, rien de « collant » ensuite — mais le
+     * périmètre est celui de la ligne touchée, pas celui de l'écran ouvert. Une liste vide ne
+     * déclenche rien : il n'y a pas de « tout le compte » implicite ici.
+     */
+    fun markAllReadFor(feedIds: List<String>) = viewModelScope.launch {
+        if (feedIds.isEmpty()) return@launch
+        val marked = repo.feedsMarkableIds(feedIds)
+        offerUndo(marked)
+        repo.markAllRead(feedIds)
         refresh()
     }
     /**

@@ -758,6 +758,12 @@ fun SettingsScreen(vm: PressVM) {
             label = "Double-tap",
             onSelect = { doubleTap = it; save() }
         )
+        Text(
+            "Vaut aussi pour les images de l'article : un simple tap en ouvre une en grand, un double-tap " +
+                "y déclenche la même action que ci-dessus.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Text("Balayage gauche dans un article")
         ActionDropDown(
             options = ARTICLE_SWIPE_IDS.filter { it != "newer" }.map { it to articleNavLabel(it) },
@@ -944,6 +950,12 @@ fun SettingsScreen(vm: PressVM) {
             )
         }
         Text("Favicons : agrégateur ou sources en direct")
+        Text(
+            "Préchargées seulement quand il y a lieu : première synchronisation, flux arrivé depuis, cache " +
+                "vidé, puis une fois par mois. Le bouton ci-dessus les refait tout de suite, dans tous les cas.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         FaviconSourceRow(
             faviconSource == com.pressia.data.FAVICON_SOURCE_AGGREGATOR,
             "Agrégateur",
@@ -1001,7 +1013,10 @@ fun BackupScreen(vm: PressVM) {
         if (uri != null) scope.launch {
             try {
                 val json = vm.repo.exportJson(exportSel, exportTokens)
-                ctx.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                // Écriture vérifiée (voir writeBackupFile) : sans elle, un flux de sortie nul ou
+                // tronqué laissait annoncer « Sauvegarde effectuée » alors qu'aucun fichier
+                // n'existait — le pire des messages, puisqu'il décourage de recommencer.
+                val written = writeBackupFile(ctx, uri, json.toByteArray())
                 // Restaurer n'est pas sauvegarder : seule une exportation réussie pose la date.
                 val now = System.currentTimeMillis()
                 vm.repo.prefs.set(Prefs.LAST_BACKUP_AT, now)
@@ -1027,10 +1042,13 @@ fun BackupScreen(vm: PressVM) {
                     }
                     vm.repo.prefs.set(Prefs.LAST_BACKUP_META, meta.toString())
                 } catch (_: Exception) {}
-                backupMsg = "Sauvegarde créée (${json.length / 1024} Ko)."
+                backupMsg = "Sauvegarde créée (${byteSizeText(written)})."
                 toast(ctx, "Sauvegarde effectuée")
             } catch (e: Exception) {
-                backupMsg = "Export impossible : ${e.message}"
+                // Le message reste à l'écran : l'échec doit être lisible même si le toast manqué
+                // (le message du bas est le compte rendu, le toast n'est que la confirmation).
+                backupMsg = "Export impossible : ${e.message ?: e.javaClass.simpleName}"
+                toast(ctx, "Sauvegarde non écrite")
             }
         }
     }
@@ -1137,9 +1155,44 @@ fun BackupScreen(vm: PressVM) {
     }
 }
 
-/** Date et heure locales courtes (« 14/10/2026 14:32 »). */
-private fun formatBackupAt(ts: Long): String =
-    java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.FRANCE).format(java.util.Date(ts))
+/** Date et heure locales courtes (« 14/10/2026 à 14:32 »), même forme que le menu et l'accueil. */
+private fun formatBackupAt(ts: Long): String = fmtDateTimeFr(ts)
+
+/** Taille d'un fichier en clair : octets sous 1 Ko (un petit export ne s'arrondit pas à zéro). */
+private fun byteSizeText(bytes: Long): String =
+    if (bytes < 1024) "$bytes octets" else "${bytes / 1024} Ko"
+
+/**
+ * Écrit la sauvegarde dans le document choisi par l'utilisateur et rend la taille réellement
+ * présente sur le disque, en levant si rien d'exploitable n'a été écrit.
+ *
+ * Le document vient du sélecteur « Créer un fichier » : selon le fournisseur,
+ * `openOutputStream` peut rendre null (application en échec, document disparu entre le choix et
+ * l'écriture). Avale ce cas et l'écran annonçait « Sauvegarde effectuée » sans le moindre fichier
+ * — le message le plus trompeur possible, puisqu'il décourage de recommencer (constaté). Relire
+ * la taille par le descripteur ferme aussi le cas d'un flux accepté puis tronqué.
+ */
+private fun writeBackupFile(
+    ctx: android.content.Context,
+    uri: android.net.Uri,
+    bytes: ByteArray
+): Long {
+    val out = ctx.contentResolver.openOutputStream(uri)
+        ?: throw java.io.IOException("fichier impossible à ouvrir en écriture")
+    out.use {
+        it.write(bytes)
+        it.flush()
+    }
+    // `statSize` vaut -1 quand le fournisseur ne sait pas la donner : ce n'est pas un échec pour
+    // autant, le flux a été accepté et refermé sans erreur — on rend alors ce qu'on a écrit.
+    val size = runCatching {
+        ctx.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+    }.getOrDefault(-1L)
+    if (size in 0 until bytes.size.toLong()) {
+        throw java.io.IOException("écriture incomplète ($size/${bytes.size} octets)")
+    }
+    return if (size > 0) size else bytes.size.toLong()
+}
 
 /** Modale de choix des icônes d'action de l'écran article : visibilité + ordre. */
 @Composable
@@ -1408,14 +1461,24 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Synchronisation : bouton, lancement, geste",
         "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
-            "récupèrent la même chose : nouveaux articles, tableau « Read later », images des articles (miniature " +
-            "déclarée et images du corps, une seule requête par image même partagée) et favicons. " +
-            "Sans compte ni flux, la synchro manuelle le dit au lieu de tourner à vide ; hors-ligne, rien ne part."
+            "récupèrent la même chose : nouveaux articles, tableau « Read later » et images des articles " +
+            "(miniature déclarée et images du corps, une seule requête par image même partagée). Les favicons, " +
+            "eux, ne se téléchargent que lorsqu'ils manquent ou que le mois a passé : première synchronisation, " +
+            "flux arrivé depuis, cache vidé, puis une fois par mois (et à la demande avec « Actualiser " +
+            "favicons »). Sans compte ni flux, la synchro manuelle le dit au lieu de tourner à vide ; " +
+            "hors-ligne, rien ne part. Le bas du menu rappelle la date et l'heure de la dernière " +
+            "synchronisation réussie."
     ),
     AboutTopic(
         "Lecture hors-ligne et article complet",
         "Extraits, images et articles complets (extraits via Readability) sont conservés pour lire sans réseau. " +
             "« Images hors-ligne » et « Wi-Fi uniquement » règlent ce qui se télécharge et quand."
+    ),
+    AboutTopic(
+        "Images : grand format sans re-téléchargement",
+        "Toucher une image de l'article l'ouvre en plein écran (pincer pour zoomer, tap pour fermer). PressIA y " +
+            "affiche la copie déjà téléchargée — la miniature conservée par la synchronisation, ou l'image du " +
+            "corps servie par le cache disque : ouvrir une image ne redemande rien au réseau."
     ),
     AboutTopic(
         "Vues : compacte, liste, carte, magazine",
@@ -1424,10 +1487,19 @@ private val ABOUT_TOPICS = listOf(
             "dernier non-lu simple avant le tout bas (sauf Favoris et Read later)."
     ),
     AboutTopic(
-        "Appui long : marquer lus autour d'un article",
+        "Repères d'écran : compteurs et retour",
+        "Le titre d'une liste annonce entre parenthèses le nombre d'articles non lus de son périmètre — " +
+            "« Tous les articles (12) », un dossier, un flux — comme « Accueil (n) », et rien quand tout est " +
+            "lu. Sur la liste d'un dossier ou d'un flux, le balayage vers la droite affiche une icône Accueil " +
+            "dès le début du geste et ramène à l'accueil au relâchement ; un frôlement ne fait rien."
+    ),
+    AboutTopic(
+        "Appui long : marquages groupés",
         "Un appui long sur un article propose « marquer lus les plus récents / les plus anciens », l'article " +
-            "touché restant tel quel. Les favoris et le Read later ne sont jamais touchés par ce menu. " +
-            "Chaque marquage groupé (« tout marquer lu » inclus) propose un bouton Annuler."
+            "touché restant tel quel. Sur l'accueil, un appui long sur un flux ou sur un dossier ouvre le menu " +
+            "de la ligne, où « Tout marquer comme lu » porte exactement le périmètre touché. Les favoris et le " +
+            "Read later ne sont jamais touchés par ces marquages. Chaque marquage groupé (« tout marquer lu » " +
+            "inclus) propose un bouton Annuler."
     ),
     AboutTopic(
         "Favoris et Read later : jamais marqués lus",
@@ -1439,8 +1511,9 @@ private val ABOUT_TOPICS = listOf(
         "Gestes configurables",
         "Balayage vers la gauche ou la droite (favori, lu/non-lu, partage, Instapaper), bouton de fin de ligne, " +
             "icônes de l'écran article : tout se règle. Dans l'article ouvert, double-tap, balayage gauche " +
-            "et balayage droit se choisissent aussi (navigation entre articles par défaut). Toucher le favicon " +
-            "ou la miniature marque lu sans ouvrir (désactivable)."
+            "et balayage droit se choisissent aussi (navigation entre articles par défaut) ; sur une image, " +
+            "un simple tap l'ouvre en grand et un double-tap déclenche l'action réglée pour le double-tap. " +
+            "Toucher le favicon ou la miniature marque lu sans ouvrir (désactivable)."
     ),
     AboutTopic(
         "Ouverture : PressIA, onglet, navigateur",
@@ -1464,14 +1537,18 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Sauvegarde et restauration",
         "Un seul fichier : options, statistiques, abonnements et favoris/lus, au choix ; les jetons ne partent " +
-            "que si on les inclut. Seuls les dossiers créés en local sont sauvegardés : ceux des comptes sont " +
-            "re-créés par la synchronisation."
+            "que si on les inclut. L'export n'annonce « Sauvegarde effectuée » qu'après avoir vérifié ce qui " +
+            "est réellement écrit dans le fichier. Restaurer deux fichiers d'affilée ne perd rien : les favoris " +
+            "et les lus de flux locaux dont les articles ne sont pas encore arrivés s'ajoutent à ceux du " +
+            "fichier précédent, en attente d'une synchronisation. Seuls les dossiers créés en local sont " +
+            "sauvegardés : ceux des comptes sont re-créés par la synchronisation."
     ),
     AboutTopic(
         "Cache, favicons, déconnexion",
         "« Vider le cache » supprime les images téléchargées et les articles complets extraits, mais garde les " +
-            "articles (ré-extraits à l'ouverture) ; la synchronisation suivante reprend les images. « Actualiser " +
-            "favicons » ne touche qu'aux favicons (source : agrégateur ou sites en direct). Le détail du cache " +
+            "articles (ré-extraits à l'ouverture) ; la synchronisation suivante reprend les images et les " +
+            "favicons, redevenus dus. « Actualiser favicons » ne touche qu'aux favicons (source : agrégateur ou " +
+            "sites en direct) et repart pour un mois. Le détail du cache " +
             "(« articles », « images », « miniatures ») est dans Réglages. " +
             "Se déconnecter supprime articles, miniatures, cache d'images et file d'attente du compte, et rend " +
             "l'espace libéré ; les statistiques de lecture, elles, sont conservées (remise à zéro depuis Stats)."

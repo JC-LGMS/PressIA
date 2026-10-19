@@ -555,6 +555,14 @@ fun fmtDay(ts: Long): String = try {
     DateFormat.getDateInstance(DateFormat.SHORT).format(Date(ts))
 } catch (_: Exception) { "" }
 
+/**
+ * Date et heure locales complètes en français (« 19/10/2026 à 11:53 ») : dernière
+ * synchronisation réussie (menu) et dernière sauvegarde (écran Sauvegarde).
+ */
+fun fmtDateTimeFr(ts: Long): String = try {
+    java.text.SimpleDateFormat("dd/MM/yyyy 'à' HH:mm", java.util.Locale.FRANCE).format(Date(ts))
+} catch (_: Exception) { "" }
+
 /** Clé de jour local (AAAA-MM-JJ) : sert à regrouper les articles par journée. */
 fun dayKey(ts: Long): String {
     val c = java.util.Calendar.getInstance()

@@ -74,6 +74,54 @@ fun isSyncFresh(lastMs: Long, nowMs: Long, windowMin: Int): Boolean =
     lastMs > 0L && windowMin > 0 && nowMs - lastMs < windowMin * 60_000L
 
 /**
+ * Rafraîchissement périodique des favicons : une passe complète par mois (30 jours). Les icônes
+ * ne changent presque jamais, et un passage sur tous les abonnements à chaque synchronisation
+ * coûtait des dizaines de requêtes pour rien.
+ */
+const val FAVICONS_REFRESH_MS = 30L * 24 * 60 * 60 * 1000
+
+/**
+ * Nouvelle tentative pour une icône toujours absente (échec réseau passager, fournisseur
+ * capricieux) : au plus une fois par jour. Sans ce plancher, une icône que le site ne sert
+ * jamais relançait une requête à *chaque* synchronisation.
+ */
+const val FAVICONS_RETRY_MS = 24L * 60 * 60 * 1000
+
+/**
+ * Faut-il lancer une passe de favicons maintenant ? Réponse : première passe de l'appareil,
+ * rafraîchissement mensuel, abonnement arrivé depuis la dernière passe, ou icône encore absente
+ * du cache (cache vidé, échec passager) — au plus une fois par jour dans ce dernier cas.
+ *
+ * Sans aucun abonnement, jamais : il n'y a rien à récupérer. Pur et testé.
+ */
+fun faviconsDue(
+    lastAt: Long,
+    now: Long,
+    previousIds: Set<String>,
+    currentIds: Set<String>,
+    missing: Int
+): Boolean {
+    if (currentIds.isEmpty()) return false
+    if (lastAt <= 0L) return true
+    val age = now - lastAt
+    if (age >= FAVICONS_REFRESH_MS) return true
+    if (currentIds.any { it !in previousIds }) return true
+    return missing > 0 && age >= FAVICONS_RETRY_MS
+}
+
+/** Découpe la liste d'identifiants de [Prefs.FAVICONS_FEEDS] (un par ligne). */
+fun parseFaviconFeedIds(raw: String?): Set<String> =
+    raw.orEmpty().split('\n').map { it.trim() }.filter { it.isNotBlank() }.toSet()
+
+/**
+ * Encode la liste d'identifiants de [Prefs.FAVICONS_FEEDS]. Une ligne par identifiant : les
+ * identifiants d'abonnements cloud (`feedly#ab12:tech/x`) comme les URL de flux locaux peuvent
+ * contenir des virgules, jamais un saut de ligne.
+ */
+fun encodeFaviconFeedIds(ids: Collection<String>): String =
+    ids.map { it.trim() }.filter { it.isNotBlank() }.distinct().sorted().joinToString("\n")
+
+/**
  * Début de la fenêtre d'historique à la connexion : 1 mois vaut exactement 31 jours
  * (fenêtre au-delà de laquelle Feedly passe en lu), 2 mois et plus sont calendaires
  * (même jour du mois). Zéro ou négatif = sans limite de temps (0 ms : aucun article
@@ -995,9 +1043,9 @@ class PressRepository(
     /**
      * Pipeline de synchronisation complet, commun à tous les déclencheurs : file
      * montante, articles (+ taille), puis miniatures et « Read later » en parallèle,
-     * et favicons (sauf [withFavicons] faux : le lancement ne précharge pas les favicons —
-     * ils sont déjà en cache Coil et se rechargent à l'affichage, seul le manuel le fait ;
-     * et seulement s'il y a des abonnements : pas d'étape à vide pour zéro flux).
+     * et favicons — **quand la passe est due** (voir [faviconsDue] : première fois, abonnement
+     * arrivé depuis, cache vidé, une fois par mois), ce qui rend l'étape inoffensive au
+     * lancement comme au bouton, et seulement s'il y a des abonnements.
      * Publie les étapes dans [syncStep] au fil de l'eau et recule
      * [Prefs.LAST_SYNC_AT] en cas de succès (lève en cas d'échec, comme avant).
      * Le verrou partagé, l'indicateur et le message final restent à l'appelant
@@ -1011,7 +1059,7 @@ class PressRepository(
      * ni l'inverse. La taille ayant déjà eu lieu dans [syncDown], aucun article que le
      * Read later marque ne peut être supprimé entre-temps.
      */
-    suspend fun syncPipeline(withFavicons: Boolean = true): Int {
+    suspend fun syncPipeline(): Int {
         // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
         // en cours, lu par le message final.
         syncRateLimit = null
@@ -1035,10 +1083,7 @@ class PressRepository(
             later.await()
         }
         val tFav = System.currentTimeMillis()
-        if (withFavicons && withThumbs && dao.subscriptions().isNotEmpty()) {
-            syncStep.value = "Récupération des favicons…"
-            syncFavicons()
-        }
+        if (withThumbs) syncFaviconsIfNeeded()
         // Toute synchro bien finie recule le garde-fou : le lancement suivant saute si
         // elle date de moins de X minutes.
         prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
@@ -1316,10 +1361,7 @@ class PressRepository(
                 thumbs.await()
                 later.await()
             }
-            if (withThumbs && dao.subscriptions().isNotEmpty()) {
-                syncStep.value = "Récupération des favicons…"
-                syncFavicons()
-            }
+            if (withThumbs) syncFaviconsIfNeeded()
             prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
             completed
             } finally {
@@ -2101,14 +2143,13 @@ class PressRepository(
      * une synchronisation ultérieure.
      */
     private suspend fun replayRestoredStarred() {
-        val pending = prefs.flow(Prefs.RESTORED_STARRED, "").first()
-            .split("\n").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+        val pending = parseRestoredStarred(prefs.flow(Prefs.RESTORED_STARRED, "").first())
         if (pending.isEmpty()) return
-        val arrived = dao.existingIds(pending.toList()).toSet()
+        val arrived = dao.existingIds(pending).toSet()
         if (arrived.isEmpty()) return
         dao.markStarred(arrived.toList())
         val stillWaiting = pending - arrived
-        prefs.set(Prefs.RESTORED_STARRED, stillWaiting.joinToString("\n"))
+        prefs.set(Prefs.RESTORED_STARRED, encodeRestoredStarred(stillWaiting))
     }
 
     /**
@@ -2383,8 +2424,9 @@ class PressRepository(
 
     /**
      * Ne vide que les images et les extractions (force le re-téléchargement). Les images
-     * d'articles sont récupérées à la prochaine synchronisation, les favicons au prochain
-     * affichage — voir [refreshFavicons] pour un re-téléchargement immédiat des favicons.
+     * d'articles sont récupérées à la prochaine synchronisation, les favicons à la
+     * synchronisation suivante — la passe est remise à zéro ici, donc due immédiatement
+     * (voir [faviconsDue]) ; [refreshFavicons] la refait tout de suite sans attendre.
      * Les contenus extraits repartent de l'extrait RSS au prochain double-tap.
      */
     suspend fun clearImages() = withContext(Dispatchers.IO) {
@@ -2392,7 +2434,64 @@ class PressRepository(
         dao.resetThumbsCached()
         dao.clearFullContents()
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
+        // Le cache vidé emporte les favicons : la passe redevient due, sans attendre le délai
+        // d'une nouvelle tentative (voir `faviconsDue`).
+        prefs.set(Prefs.FAVICONS_AT, 0L)
+        prefs.set(Prefs.FAVICONS_FEEDS, "")
     }
+
+    /**
+     * Passe de favicons, **seulement si elle est due** — première passe de l'appareil, abonnement
+     * arrivé depuis la dernière passe, icône absente du cache (cache vidé, échec passager), ou
+     * rafraîchissement mensuel (voir [faviconsDue]).
+     *
+     * C'est la décoration la moins volatile de l'application : la relancer à chaque
+     * synchronisation coûtait des dizaines de requêtes pour des icônes inchangées. Une passe due
+     * se retient ([Prefs.FAVICONS_AT] + [Prefs.FAVICONS_FEEDS]) ; une passe refusée par les
+     * réglages (« Images hors-ligne » coupé, « Wi-Fi uniquement » hors Wi-Fi) ne se retient pas,
+     * et reste donc due. Annonce son étape (voir `syncPipeline`).
+     */
+    private suspend fun syncFaviconsIfNeeded(): Int {
+        val subs = dao.subscriptions()
+        if (subs.isEmpty()) return 0
+        val data = prefs.data.first()
+        val due = faviconsDue(
+            lastAt = data[Prefs.FAVICONS_AT] ?: 0L,
+            now = System.currentTimeMillis(),
+            previousIds = parseFaviconFeedIds(data[Prefs.FAVICONS_FEEDS]),
+            currentIds = subs.map { it.id }.toSet(),
+            missing = missingFaviconCount(subs, data)
+        )
+        if (!due) return 0
+        syncStep.value = "Récupération des favicons…"
+        val n = syncFavicons()
+        // Une passe refusée (-1) n'a rien fait : la retenir la ferait sauter un mois entier.
+        if (n >= 0) {
+            prefs.set(Prefs.FAVICONS_AT, System.currentTimeMillis())
+            prefs.set(Prefs.FAVICONS_FEEDS, encodeFaviconFeedIds(subs.map { it.id }))
+        }
+        return n
+    }
+
+    /**
+     * Nombre d'abonnements dont l'icône n'est pas dans le cache disque Coil — même résolution
+     * qu'à l'affichage (voir [faviconUrlFor]) : c'est le signal « il manque quelque chose » de
+     * [faviconsDue] (nouveau flux, cache vidé, échec réseau de la passe précédente).
+     */
+    private suspend fun missingFaviconCount(subs: List<SubscriptionEntity>, data: androidx.datastore.preferences.core.Preferences): Int =
+        withContext(Dispatchers.IO) {
+            val direct = data[Prefs.FAVICON_SOURCE] == FAVICON_SOURCE_DIRECT
+            val resolved = parseResolved(data[Prefs.FAVICON_RESOLVED])
+            // Cache disque indisponible (mémoire insuffisante au démarrage de Coil) : on ne
+            // prétend pas qu'il manque tout, sinon la passe repartait à chaque synchronisation.
+            val cache = coil.Coil.imageLoader(appCtx).diskCache ?: return@withContext 0
+            subs.count { sub ->
+                val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct, resolved[sub.id])
+                    ?: return@count false
+                // Même clé que le préchargement et la purge (voir `purgeImages`).
+                runCatching { cache.openSnapshot(url) == null }.getOrDefault(false)
+            }
+        }
 
     /**
      * Pré-télécharge les favicons de tous les abonnements (mise en cache disque Coil, sans
@@ -2507,7 +2606,12 @@ class PressRepository(
                 // résolue serait périmée — tout est redécouvert (voir `syncFavicons`).
                 prefs.set(Prefs.FAVICON_RESOLVED, "")
                 syncStep.value = "Favicons en cours…"
-                syncFavicons()
+                val n = syncFavicons()
+                // La passe vient d'être refaite de zéro : elle compte comme celle du mois, et
+                // couvre les abonnements présents maintenant.
+                prefs.set(Prefs.FAVICONS_AT, System.currentTimeMillis())
+                prefs.set(Prefs.FAVICONS_FEEDS, encodeFaviconFeedIds(dao.subscriptions().map { it.id }))
+                n
             } finally {
                 syncStep.value = null
             }

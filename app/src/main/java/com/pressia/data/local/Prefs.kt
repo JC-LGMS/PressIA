@@ -218,6 +218,22 @@ class Prefs(private val ctx: Context) {
          */
         val FAVICON_RESOLVED = stringPreferencesKey("favicon_resolved")
 
+        /**
+         * Instant (ms) de la dernière passe de favicons menée à son terme (0 = jamais servie) :
+         * avec [FAVICONS_FEEDS], c'est ce qui évite de relancer la passe à chaque
+         * synchronisation — seules la première, un nouveau flux, un cache vidé et un
+         * rafraîchissement mensuel la déclenchent (voir `faviconsDue`). Cache dérivé comme
+         * [RECONCILE_TOTALS] : hors [ENTRIES], jamais exporté (une restauration refait la passe).
+         */
+        val FAVICONS_AT = longPreferencesKey("favicons_at")
+
+        /**
+         * Identifiants des abonnements couverts par la dernière passe de favicons
+         * (voir [FAVICONS_AT]) : un flux absent de cette liste est un flux arrivé depuis, dont
+         * l'icône n'a jamais été demandée. Même statut : hors [ENTRIES], jamais exporté.
+         */
+        val FAVICONS_FEEDS = stringPreferencesKey("favicons_feeds")
+
         /** Toutes les préférences, typées : sauvegarde / restauration par nom. */
         val ENTRIES: List<PrefEntry> = listOf(
             PrefEntry.Str("provider", PROVIDER), PrefEntry.Str("token", TOKEN),

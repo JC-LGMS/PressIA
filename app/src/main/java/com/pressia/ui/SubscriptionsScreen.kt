@@ -1,6 +1,8 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,9 +36,11 @@ fun allFeedsRead(subs: List<SubscriptionEntity>, unreads: Map<String, Int>): Boo
  *
  * Choix retenus :
  *  - **l'état de pliage est partagé avec le drawer** et survit à la fermeture de l'application ;
- *  - **le marquage « tout lu » n'existe plus au niveau d'un flux** : l'icônealignait mal, se
- *    confondait avec celle du dossier et marquait parfois le mauvais périmètre. L'action
- *    reste disponible sur le flux affiché.
+ *  - **le marquage « tout lu » n'existe pas en icône au niveau d'un flux** : l'icône s'alignait mal,
+ *    se confondait avec celle du dossier et marquait parfois le mauvais périmètre. L'action reste
+ *    disponible là où elle ne prête pas à confusion : sur le flux affiché (barre d'actions), et
+ *    depuis l'**appui long** sur une ligne — flux ou dossier — qui ouvre le menu de la ligne, où
+ *    « Tout marquer comme lu » porte le périmètre exact de la ligne touchée ([PressVM.markAllReadFor]).
  *  - **le nouveau dossier est une icône** dans la barre d'action, pas un bouton pleine largeur
  *    qui décalait toute la liste vers le bas.
  */
@@ -149,7 +153,6 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                                 FolderRow(
                                     label = f.label,
                                     labelSp = folderSp,
-                                    unread = subs.sumOf { vm.unreads[it.id] ?: 0 },
                                     collapsed = vm.isCollapsed(f.id),
                                     canMoveUp = fi > 0,
                                     canMoveDown = fi < vm.folders.lastIndex,
@@ -162,7 +165,14 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                                     onAddFeed = { addingTo = f },
                                     onMoveUp = { vm.moveFolder(f, -1) },
                                     onMoveDown = { vm.moveFolder(f, 1) },
-                                    onDelete = { toDelete = f }
+                                    onDelete = { toDelete = f },
+                                    // Périmètre du dossier entier : tous ses flux, y compris ceux
+                                    // masqués par le filtre « sans non-lus » (ils n'ont rien à
+                                    // marquer, mais autant ne pas dépendre de l'affichage).
+                                    // Lambda : le menu (popup) relit le compteur à l'instant de
+                                    // l'affichage (voir le KDoc de FolderRow).
+                                    unread = { subs.sumOf { vm.unreads[it.id] ?: 0 } },
+                                    onMarkAllRead = { vm.markAllReadFor(subs.map { it.id }) }
                                 )
                             }
                             if (!vm.isCollapsed(f.id)) {
@@ -178,7 +188,8 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                                         onMoveUp = { vm.moveFeedOrder(s.id, -1, s.categoryId) },
                                         onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
                                         canMoveUp = i > 0,
-                                        canMoveDown = i < shown.lastIndex
+                                        canMoveDown = i < shown.lastIndex,
+                                        onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) }
                                     )
                                 }
                             }
@@ -199,7 +210,8 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                                 onMoveUp = { vm.moveFeedOrder(s.id, -1, null) },
                                 onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
                                 canMoveUp = i > 0,
-                                canMoveDown = i < visibleUncategorized.lastIndex
+                                canMoveDown = i < visibleUncategorized.lastIndex,
+                                onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) }
                             )
                         }
                     }
@@ -326,13 +338,21 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
 
 /**
  * Ligne de dossier : libellé, compteur, flèche de pliage toujours visible, menu d'actions.
- * Un appui sur la ligne ouvre le flux ; la flèche replie, le menu gère.
+ * Un appui ouvre le flux, un appui long ouvre le menu (qui porte aussi « Tout marquer comme
+ * lu » sur le dossier entier), la flèche replie, le menu gère.
+ *
+ * [unread] est une **lambda** et non un nombre : le menu est un popup, dont le contenu ne se
+ * recompose pas sur les changements d'état lus hors de lui (constaté : l'entrée « Tout marquer
+ * comme lu » restait grisée alors que le dossier avait des non-lus). Lire la lambda **dans** le
+ * lambda du menu la soumet à la recomposition du popup ; le badge, lui, vit dans l'arbre
+ * principal et peut l'appeler directement.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FolderRow(
     label: String,
     labelSp: Float,
-    unread: Int,
+    unread: () -> Int,
     collapsed: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
@@ -342,12 +362,15 @@ private fun FolderRow(
     onAddFeed: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onMarkAllRead: () -> Unit
 ) {
+    // Menu unique, ouvert par l'icône de droite comme par un appui long sur la ligne.
+    var open by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .combinedClickable(onClick = onOpen, onLongClick = { open = true })
             .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -368,15 +391,24 @@ private fun FolderRow(
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(start = 2.dp)
         )
-        if (unread > 0) {
+        if (unread() > 0) {
             Badge(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
-                Text(if (unread > 999) "999+" else "$unread")
+                Text(if (unread() > 999) "999+" else "${unread()}")
             }
         }
         Box {
-            var open by remember { mutableStateOf(false) }
             IconButton({ open = true }, Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "actions du dossier", Modifier.size(18.dp)) }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                // Marquage groupé du dossier : la ligne d'appui long l'ouvre aussi. Sans non-lus,
+                // l'entrée est désactivée — le geste ne doit pas donner l'impression d'agir à vide.
+                // `unread()` est relu **ici** : un popup ne se recompose pas sur les valeurs lues
+                // hors de lui (voir le KDoc de FolderRow).
+                DropdownMenuItem(
+                    text = { Text("Tout marquer comme lu") },
+                    enabled = unread() > 0,
+                    leadingIcon = { Icon(Icons.Filled.DoneAll, null) },
+                    onClick = { open = false; onMarkAllRead() }
+                )
                 DropdownMenuItem(
                     text = { Text("Renommer") },
                     leadingIcon = { Icon(Icons.Filled.Edit, null) },
@@ -452,6 +484,7 @@ private fun AddFeedDialog(title: String, onDismiss: () -> Unit, onConfirm: (Stri
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SubRow(
     vm: PressVM,
@@ -463,15 +496,21 @@ private fun SubRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     canMoveUp: Boolean,
-    canMoveDown: Boolean
+    canMoveDown: Boolean,
+    onMarkAllRead: () -> Unit
 ) {
     val pretty = prettyFeedTitle(sub.title)
+    val n = vm.unreads[sub.id] ?: 0
+    // Menu unique, ouvert par l'icône de droite comme par un appui long sur la ligne.
     var menu by remember { mutableStateOf(false) }
     Row(
-        mod.fillMaxWidth().clickable {
-            vm.switchScope(Scope(feedId = sub.id, label = pretty))
-            vm.refresh(); onOpenStream()
-        }.padding(start = 6.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+        mod.fillMaxWidth().combinedClickable(
+            onClick = {
+                vm.switchScope(Scope(feedId = sub.id, label = pretty))
+                vm.refresh(); onOpenStream()
+            },
+            onLongClick = { menu = true }
+        ).padding(start = 6.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         FeedAvatar(sub, 26)
@@ -480,7 +519,6 @@ private fun SubRow(
             pretty, fontSize = feedSp.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        val n = vm.unreads[sub.id] ?: 0
         if (n > 0) {
             Badge(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
                 Text(if (n > 999) "999+" else "$n")
@@ -489,6 +527,15 @@ private fun SubRow(
         Box {
             IconButton({ menu = true }, Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "actions du flux", Modifier.size(18.dp)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                // Marquage groupé du flux : la ligne d'appui long l'ouvre aussi (voir FolderRow).
+                // `vm.unreads` est relu **ici** : un popup ne se recompose pas sur les valeurs lues
+                // hors de lui — l'entrée restait grisée alors que le flux avait des non-lus.
+                DropdownMenuItem(
+                    text = { Text("Tout marquer comme lu") },
+                    enabled = (vm.unreads[sub.id] ?: 0) > 0,
+                    leadingIcon = { Icon(Icons.Filled.DoneAll, null) },
+                    onClick = { menu = false; onMarkAllRead() }
+                )
                 DropdownMenuItem(
                     text = { Text("Déplacer vers un dossier") },
                     leadingIcon = { Icon(Icons.Filled.DriveFileMove, null) },

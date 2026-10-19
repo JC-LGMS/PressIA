@@ -1,14 +1,18 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +65,11 @@ fun StreamScaffold(
     val live = remember(vm.scope, unreadOnly) { vm.streamList(unreadOnly) }
     val reactive by live.collectAsState(initial = null)
     val feed = vm.subs.firstOrNull { it.id == vm.scope.feedId }
+    // Non-lus du périmètre, affichés entre parenthèses à côté du titre (« Tous les articles (12) »,
+    // « Dossier (3) », « Flux (7) ») — même convention que « Accueil (n) », rien quand c'est à zéro.
+    val unreadCount = vm.unreadCountFor()
+    // Avancement du balayage de retour, pour l'icône Accueil affichée dès le début du geste.
+    val backProgress = (backDrag / backThreshold).coerceIn(0f, 1f)
     Scaffold(
         topBar = {
             // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
@@ -75,7 +84,10 @@ fun StreamScaffold(
                                 FeedAvatar(feed, 28)
                                 Spacer(Modifier.width(8.dp))
                             }
-                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (unreadCount > 0) "$title ($unreadCount)" else title,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
                         }
                     },
                     navigationIcon = { IconButton(onMenu) { Icon(Icons.Filled.Menu, "menu") } },
@@ -118,39 +130,63 @@ fun StreamScaffold(
         // conteneur défilant — Compose refuse une liste mesurée avec une hauteur infinie. Les deux
         // états sans article ont donc chacun leur petit LazyColumn (assez pour capter le tirage).
         var gestureRefresh by remember { mutableStateOf(false) }
-        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-            isRefreshing = gestureRefresh,
-            onRefresh = {
-                scope.launch {
-                    gestureRefresh = true
-                    // Par vm.sync() (suivi, annulable) plutôt qu'un lancement direct :
-                    // une déconnexion arrête aussi les synchronisations au geste.
-                    vm.sync()
-                    kotlinx.coroutines.delay(100)
-                    gestureRefresh = false
-                }
-            },
-            modifier = Modifier.padding(pad).fillMaxSize().then(backSwipe)
-        ) {
-            val localArticles = reactive
-            if (localArticles == null) {
-                // Changement de périmètre : blanc d'une image, jamais les anciens articles.
-                LazyColumn(Modifier.fillMaxSize()) { item { Spacer(Modifier.height(1.dp)) } }
-            } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    item {
-                        Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                if (!unreadOnly) "Rien ici — synchronisez."
-                                else "Rien ici — synchronisez ou touchez l'œil pour voir les lus.",
-                                modifier = Modifier.padding(24.dp)
-                            )
+        // Boîte extérieure : la liste (PullToRefreshBox) et, par-dessus, le repère du balayage de
+        // retour. L'icône Accueil apparaît dès les premiers pixels du glissement vers la droite,
+        // s'intensifie jusqu'au seuil (où le relâchement ramène à l'accueil) et disparaît si le
+        // geste n'aboutit pas — un frôlement ne doit pas laisser de trace.
+        Box(Modifier.padding(pad).fillMaxSize().then(backSwipe)) {
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = gestureRefresh,
+                onRefresh = {
+                    scope.launch {
+                        gestureRefresh = true
+                        // Par vm.sync() (suivi, annulable) plutôt qu'un lancement direct :
+                        // une déconnexion arrête aussi les synchronisations au geste.
+                        vm.sync()
+                        kotlinx.coroutines.delay(100)
+                        gestureRefresh = false
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                val localArticles = reactive
+                if (localArticles == null) {
+                    // Changement de périmètre : blanc d'une image, jamais les anciens articles.
+                    LazyColumn(Modifier.fillMaxSize()) { item { Spacer(Modifier.height(1.dp)) } }
+                } else if (localArticles.isEmpty() && vm.loaded && !vm.syncing) {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        item {
+                            Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    if (!unreadOnly) "Rien ici — synchronisez."
+                                    else "Rien ici — synchronisez ou touchez l'œil pour voir les lus.",
+                                    modifier = Modifier.padding(24.dp)
+                                )
+                            }
                         }
                     }
+                } else {
+                    // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
+                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
                 }
-            } else {
-                // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+            }
+            if (onSwipeBack != null && backDrag > 0f) {
+                // Même habillage que la bande de balayage des articles (fond teinté + icône
+                // primaire), ici en pastille : le repère doit rester lisible par-dessus la liste.
+                val p = backProgress
+                Box(
+                    Modifier.align(Alignment.CenterStart).padding(start = 12.dp).size(48.dp)
+                        .graphicsLayer { alpha = 0.35f + 0.65f * p }
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Home, "retour à l'accueil",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size((22f + 8f * p).dp)
+                    )
+                }
             }
         }
     }

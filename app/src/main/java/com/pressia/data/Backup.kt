@@ -48,11 +48,27 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
  */
 val NON_EXPORTED_PREFS = setOf(
     Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name,
-    Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name
+    Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name,
+    Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name
 )
 
 /** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
 data class RestoredRead(val feedId: String, val id: String, val readAt: Long?)
+
+/**
+ * Sérialise la file des favoris restaurés (identifiants d'articles, un par ligne).
+ *
+ * Une file, pas un réglage : elle porte les favoris d'une restauration dont les articles ne sont
+ * pas encore arrivés (voir `RESTORED_STARRED`). Deux restaurations d'affilée doivent donc
+ * **s'additionner** — écraser la file perdait les favoris du premier fichier, dont les articles
+ * n'étaient pas encore là pour les porter en base.
+ */
+fun encodeRestoredStarred(ids: Collection<String>): String =
+    ids.map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString("\n")
+
+/** Parse [encodeRestoredStarred], tolérant (lignes vides ou espaces seuls ignorés). */
+fun parseRestoredStarred(raw: String?): List<String> =
+    raw.orEmpty().split("\n").map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
 /**
  * Sérialise une file de lus à rejouer, une entrée par ligne (`feedId|articleId|readAt`).
@@ -313,9 +329,12 @@ suspend fun PressRepository.restaurationJson(
                 dao.markStarred(starred.toList())
                 // Les favoris importés sont mémorisés : sur une installation neuve les articles
                 // arrivent plus tard, et l'UPDATE ci-dessus n'aurait porté sur aucune ligne.
-                // Une sauvegarde sans aucun favori ne touche pas à la file : elle appartient à
-                // une autre restauration, encore en attente de ses propres articles.
-                prefs.set(Prefs.RESTORED_STARRED, starred.joinToString("\n"))
+                // La file **s'additionne** : restaurer un second fichier alors que les articles
+                // du premier ne sont pas encore arrivés ne doit pas perdre ses favoris — écraser
+                // la file laissait la première restauration sans effet (constaté). Même traitement
+                // que les lus locaux ci-dessous.
+                val prev = parseRestoredStarred(prefs.data.first()[Prefs.RESTORED_STARRED])
+                prefs.set(Prefs.RESTORED_STARRED, encodeRestoredStarred(prev + starred))
             }
             if (read.isNotEmpty()) {
                 // Même attente que les étoiles : les articles locaux arrivent à la prochaine sync.

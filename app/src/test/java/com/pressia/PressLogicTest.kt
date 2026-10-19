@@ -509,8 +509,70 @@ class PressLogicTest {
             assertTrue("$it ne doit pas sortir", it in com.pressia.data.NON_EXPORTED_PREFS)
             assertFalse("$it ne doit pas être réimportable", it in entryNames())
         }
+        // Idem pour la mémoire de la passe de favicons (date + abonnements couverts) : une
+        // restauration refait la passe, ces deux clés ne doivent pas voyager.
+        listOf("favicons_at", "favicons_feeds").forEach {
+            assertTrue("$it ne doit pas sortir", it in com.pressia.data.NON_EXPORTED_PREFS)
+            assertFalse("$it ne doit pas être réimportable", it in entryNames())
+        }
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
+    }
+
+    @Test fun `favoris restaures additionnes entre deux imports`() {
+        // Un premier fichier, dont les articles ne sont pas encore arrivés.
+        val premier = listOf("a:1", "a:2")
+        val file = com.pressia.data.encodeRestoredStarred(premier)
+        assertEquals(premier, com.pressia.data.parseRestoredStarred(file))
+        // Un second import alors que la file est encore en attente : elle s'additionne, sans
+        // doublon, au lieu d'écraser (l'écrasement perdait les favoris du premier fichier).
+        val second = listOf("b:7", "a:2")
+        val fusion = com.pressia.data.parseRestoredStarred(file) + second
+        val merged = com.pressia.data.parseRestoredStarred(com.pressia.data.encodeRestoredStarred(fusion))
+        assertEquals(listOf("a:1", "a:2", "b:7"), merged)
+        // File vide ou abîmée : jamais de ligne fantôme.
+        assertTrue(com.pressia.data.parseRestoredStarred(null).isEmpty())
+        assertTrue(com.pressia.data.parseRestoredStarred("\n  \n").isEmpty())
+        assertEquals("", com.pressia.data.encodeRestoredStarred(listOf("", "  ")))
+    }
+
+    @Test fun `favicons seulement quand c'est du`() {
+        val jour = 24 * 60 * 60 * 1000L
+        val maintenant = 1_700_000_000_000L
+        val ids = setOf("a", "b")
+        // Première passe de l'appareil : due, même avec tout en cache.
+        assertTrue(com.pressia.data.faviconsDue(0L, maintenant, emptySet(), ids, 0))
+        // Rien de nouveau, mois non écoulé, aucune icône manquante : pas de passe.
+        assertFalse(com.pressia.data.faviconsDue(maintenant - jour, maintenant, ids, ids, 0))
+        // Un flux arrivé depuis la dernière passe : due.
+        assertTrue(com.pressia.data.faviconsDue(maintenant - jour, maintenant, setOf("a"), ids, 0))
+        // Une icône absente : due, mais pas plus d'une fois par jour (échec passager réparé,
+        // icône jamais servie par le site non redemandée à chaque synchro).
+        assertTrue(com.pressia.data.faviconsDue(maintenant - jour, maintenant, ids, ids, 2))
+        assertFalse(com.pressia.data.faviconsDue(maintenant - 60_000L, maintenant, ids, ids, 2))
+        // Rafraîchissement mensuel.
+        assertTrue(com.pressia.data.faviconsDue(maintenant - 30 * jour, maintenant, ids, ids, 0))
+        assertFalse(com.pressia.data.faviconsDue(maintenant - 29 * jour, maintenant, ids, ids, 0))
+        // Aucun abonnement : jamais de passe, même la première fois.
+        assertFalse(com.pressia.data.faviconsDue(0L, maintenant, emptySet(), emptySet(), 0))
+        // Le marqueur d'abonnements couverts fait l'aller-retour (un par ligne).
+        val encoded = com.pressia.data.encodeFaviconFeedIds(listOf("b", "a", "a"))
+        assertEquals("a\nb", encoded)
+        assertEquals(setOf("a", "b"), com.pressia.data.parseFaviconFeedIds(encoded))
+        assertTrue(com.pressia.data.parseFaviconFeedIds(null).isEmpty())
+    }
+
+    @Test fun `compteur de non lus du perimetre affiche`() {
+        val unreads = mapOf("f1" to 3, "f2" to 4)
+        val folders = mapOf("d1" to 7, "merged:x" to 2)
+        // Un flux : son propre compteur.
+        assertEquals(3, com.pressia.ui.scopeUnread(com.pressia.ui.Scope(feedId = "f1"), unreads, folders))
+        assertEquals(0, com.pressia.ui.scopeUnread(com.pressia.ui.Scope(feedId = "inconnu"), unreads, folders))
+        // Un dossier, fusionné compris : le total du dossier.
+        assertEquals(7, com.pressia.ui.scopeUnread(com.pressia.ui.Scope(categoryId = "d1"), unreads, folders))
+        assertEquals(2, com.pressia.ui.scopeUnread(com.pressia.ui.Scope(categoryId = "merged:x"), unreads, folders))
+        // « Tous les articles » : la somme des flux, comme le compteur de l'accueil.
+        assertEquals(7, com.pressia.ui.scopeUnread(com.pressia.ui.Scope(), unreads, folders))
     }
 
     @Test fun `sauvegarde ne garde que les dossiers locaux`() {

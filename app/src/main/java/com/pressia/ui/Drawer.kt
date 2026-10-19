@@ -61,6 +61,11 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
     // Numéro de version affiché en bas du drawer, en petit.
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }
+    // Date de la dernière synchronisation **réussie** : `LAST_SYNC_AT` n'est écrit que sur un
+    // succès du pipeline (jamais sur un échec), 0 = aucune synchro terminée sur cet appareil.
+    val lastSyncAt by remember(vm.repo.prefs) {
+        vm.repo.prefs.flow(com.pressia.data.local.Prefs.LAST_SYNC_AT, 0L)
+    }.collectAsState(initial = 0L)
 
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
@@ -146,10 +151,21 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             DrawerRow(Icons.Filled.Info, "À propos", currentRoute == "about", feedSp) {
                 onNavigate("about"); onClose()
             }
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(6.dp))
+            // Pied du menu : dernière synchro réussie (français), puis la version de l'app.
+            Text(
+                if (lastSyncAt > 0) "Dernière synchro : ${fmtDateTimeFr(lastSyncAt)}"
+                else "Jamais synchronisé",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                modifier = Modifier.fillMaxWidth()
+            )
             if (!version.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
                     "v$version",
                     style = MaterialTheme.typography.labelSmall,
