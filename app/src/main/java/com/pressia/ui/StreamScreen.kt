@@ -17,6 +17,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
 /** Écran flux façon Press : titre périmètre + actions sync / tout-lu / filtre lus. */
@@ -86,7 +87,8 @@ fun StreamScaffold(
                             }
                             Text(
                                 if (unreadCount > 0) "$title ($unreadCount)" else title,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                fontSize = 16.sp
                             )
                         }
                     },
