@@ -219,7 +219,7 @@ class MainActivity : ComponentActivity() {
                 // Bandeau de synchro : le vrai SnackbarHost (géométrie et animations
                 // d'origine), mais le texte affiché suit vm.syncMsg en direct via le slot
                 // custom — pas de dismiss/re-show à chaque mise à jour du compteur
-                // de miniatures (« … 45/200 »), le texte se rafraîchit en place.
+                // d'images (« … 45/200 »), le texte se rafraîchit en place.
                 val snackbarHostState = remember { SnackbarHostState() }
                 // Un seul bandeau du début de la synchro jusqu'à la fin du message final :
                 // le show reste actif dans le scope (pas dans l'effet, sinon sa fin de

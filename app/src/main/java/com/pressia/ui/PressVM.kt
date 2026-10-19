@@ -768,7 +768,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     // ----- Images -----
     /**
-     * Actualisation favicons/miniatures en cours (bouton Réglages). Tourne dans le scope du
+     * Actualisation des favicons en cours (bouton Réglages). Tourne dans le scope du
      * modèle, donc survit à la navigation : quitter l'écran n'interrompt plus le travail
      * (le scope d'écran précédent annulait tout en silence : bouton figé et jamais de toast).
      */

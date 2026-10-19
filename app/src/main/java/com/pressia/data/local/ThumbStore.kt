@@ -16,18 +16,20 @@ import java.util.concurrent.TimeUnit
 /**
  * Miniatures d'articles stockées en local, à la taille affichée — jamais l'original full-size.
  *
- * La plus grande miniature utilisée dans les listes est la bannière de la vue magazine
- * (largeur d'écran × 180 dp) : c'est ce gabarit qui borne ce qui est enregistré. Les vues
- * carte (72 dp) et liste (56 dp) se contentent de réduire ce même fichier à l'affichage.
+ * Le gabarit est un **carré de la largeur d'écran** : c'est la plus grande taille à laquelle
+ * ce fichier est affiché — image de tête de l'article, pleine largeur, et bannière de la vue
+ * magazine (largeur d'écran × 180 dp, recadrée). Toute image plus large que haute est donc
+ * enregistrée à la largeur exacte de l'écran, sans agrandissement à l'affichage ; une image
+ * plus haute que large (rare dans les flux) est réduite au carré. Les vues carte (72 dp) et
+ * liste (56 dp) se contentent de réduire ce même fichier à l'affichage.
  *
  * Un fichier par URL (`SHA-1(url) + ".jpg"`) : plusieurs articles partageant la même image
- * ne la téléchargent qu'une fois. La colonne [ArticleEntity.imageCached] dit si le fichier
- * est présent ; elle est remise à zéro quand le cache est vidé, pour que la synchronisation
- * suivante récupère tout.
+ * ne la téléchargent qu'une fois. La colonne [ArticleEntity.imageCached] dit si les images de
+ * l'article sont présentes ; elle est remise à zéro quand le cache est vidé, pour que la
+ * synchronisation suivante récupère tout.
  */
 object ThumbStore {
     const val DIR = "thumbs"
-    private const val BANNER_DP_HEIGHT = 180
     private const val JPEG_QUALITY = 85
     /** Plafond d'un original : au-delà, on saute (une vignette pèse ~100 Ko). */
     const val MAX_SOURCE_BYTES = 10 * 1024 * 1024
@@ -64,10 +66,14 @@ object ThumbStore {
         return maxOf(1, (srcW * scale).toInt()) to maxOf(1, (srcH * scale).toInt())
     }
 
-    /** Gabarit maximal : largeur d'écran × hauteur de bannière magazine, en pixels. */
+    /**
+     * Gabarit maximal : le plus grand affichage de ce fichier, en pixels — un carré de la
+     * largeur d'écran (image de tête d'un article, pleine largeur ; la bannière magazine de
+     * 180 dp est un recadrage de ce même fichier).
+     */
     fun maxThumbSize(ctx: Context): Pair<Int, Int> {
-        val dm = ctx.resources.displayMetrics
-        return dm.widthPixels to (BANNER_DP_HEIGHT * dm.density).toInt().coerceAtLeast(1)
+        val w = ctx.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+        return w to w
     }
 
     fun dir(ctx: Context): File = File(ctx.filesDir, DIR)

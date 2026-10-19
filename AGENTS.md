@@ -149,32 +149,45 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
 
 ## Images / miniatures (non intuitif, tout est là)
 
-- Stockage : `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans
-  `filesDir/thumbs`. Gabarit = **plus grande miniature affichée** (bannière magazine :
-  largeur écran × 180 dp), jamais l'original full-size. Une URL partagée ne se télécharge qu'une fois.
-- Suivi : `ArticleEntity.imageCached`. `syncThumbs()` (`PressRepository`) télécharge tout ce qui
-  manque (lus + non lus, 6 en parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi
-  uniquement » hors Wi-Fi). Appelé en fin de `syncDown` (`withThumbs = true`) et de `backfill` :
-  **toute** sync (bouton, lancement, worker, connexion de compte) récupère les images.
-- `syncThumbs` est sous `thumbsMutex`, et **ne jamais** relancer une passe depuis `syncReadLater` :
-  le pipeline en lance déjà une en parallèle (`supervisorScope`), et deux passes simultanées
-  lisaient la même liste d'URLs et téléchargeaient deux fois les mêmes images (constaté : 26
-  images sur 32 demandées deux fois).
+- Miniature **déclarée** par le flux (`imageUrl`, bannière de liste et image de tête) :
+  `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans `filesDir/thumbs`.
+  Gabarit = **carré de la largeur d'écran** : c'est la plus grande taille à laquelle ce fichier est
+  affiché (image de tête d'article, pleine largeur ; la bannière magazine de 180 dp en est un
+  recadrage), donc toute image plus large que haute est enregistrée à la largeur exacte de l'écran
+  (vérifié : 2400×1600 → 1080×720, contre 742×495 avec l'ancien gabarit « largeur × 180 dp »),
+  jamais l'original full-size et jamais d'agrandissement à l'affichage. Une URL partagée ne se
+  télécharge qu'une fois.
+- Images **du corps** : le cache disque de Coil, par préchargement — même mécanisme que les
+  favicons (`ImageRequest` + `execute`, `memoryCachePolicy(DISABLED)` et `size(1,1)` : c'est le
+  cache disque qui compte, pas le décodage). Trop nombreuses pour un fichier dédié au gabarit.
+  `Coil.setImageLoader` pose `respectCacheHeaders(false)`, donc elles sont rangées sous leur URL et
+  l'affichage les sert sans réseau (`thumbModel()`, URL → cache Coil). Corollaire : `refreshFavicons()`
+  ne vide **plus** tout le cache disque (il retire les seules entrées de favicons, `purgeImages`) —
+  « Actualiser favicons » jetait sinon les images préchargées, définitivement (`imageCached` reste à 1).
+- Suivi : `ArticleEntity.imageCached` = « toutes les images de cet article sont là ». `syncImages()`
+  (`PressRepository`, sous `imagesMutex`) prend les articles à `imageCached = 0` (lus + non lus, 6 en
+  parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi uniquement » hors Wi-Fi), liste leurs
+  images (`articleImageUrls` : miniature déclarée puis `<img>` de `content`/`summary`, dédoublonnées),
+  met la miniature dans `ThumbStore` et les autres via Coil, puis marque l'article — une image
+  manquante le laisse en attente (elle sera reprise ; marquage par article, pas par URL). Appelé en
+  fin de `syncDown` (`withThumbs = true`) et de `backfill` : **toute** sync (bouton, lancement,
+  worker, connexion de compte) récupère les images.
+- **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
+  parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
+  téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 :
   la prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits
   via Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec
   leur extrait RSS, la prochaine ouverture complète ré-extrait.
-- Listes : les 3 `AsyncImage` d'`ArticleRow` passent par `thumbModel()` (fichier local si
-  présent, sinon URL paresseuse au scroll — aucun préchargement de liste). **L'écran article aussi**
-  (bannière et images du corps) : quand l'URL a déjà été récupérée en miniature à la synchro, le
-  fichier local est affiché au lieu d'être retéléchargé. C'est le cas de `imageUrl`, et de la
-  première image du corps pour tout flux sans `enclosure`/`media:*` — `LocalRssFetcher` prend alors
-  la première `<img>` de la description, donc la miniature **est** la première image de l'article
-  (vérifié : 1 requête par image à la synchro, puis 0 à l'ouverture contre 1 avant). Compromis
-  assumé : la copie locale est au gabarit des bannières (largeur d'écran × 180 dp), une image
-  carrée ou haute est donc agrandie à l'affichage ; la visionneuse (appui) garde l'URL d'origine,
-  c'est là qu'on récupère la pleine qualité, et une image du corps non pré-téléchargée se charge
-  normalement (une requête, à l'affichage).
+- Listes : les 3 `AsyncImage` d'`ArticleRow` passent par `thumbModel()` (fichier local si présent,
+  sinon URL paresseuse au scroll — aucun préchargement de liste). **L'écran article aussi**
+  (bannière et images du corps), par le même `thumbModel()`. Une URL déjà téléchargée à la synchro
+  ne repart donc pas sur le réseau : fichier `ThumbStore` pour `imageUrl` — et pour la première
+  image du corps de tout flux sans `enclosure`/`media:*`, puisque `LocalRssFetcher` prend alors la
+  première `<img>` de la description (la miniature **est** la première image de l'article) —, cache
+  disque Coil pour les autres. Vérifié en direct : une requête par image à la synchro, **zéro** à
+  l'ouverture (contre une pour la 2e image du corps avant). Reste : la visionneuse (appui) garde
+  l'URL d'origine, c'est là qu'on récupère la pleine qualité.
 
 ## Pièges connus
 

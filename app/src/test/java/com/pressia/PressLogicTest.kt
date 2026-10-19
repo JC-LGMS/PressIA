@@ -1113,4 +1113,36 @@ class PressLogicTest {
         assertEquals(emptyList<String>(), com.pressia.data.htmlImageUrls(null, "https://ex.com"))
         assertEquals(emptyList<String>(), com.pressia.data.htmlImageUrls("   ", "https://ex.com"))
     }
+
+    @Test fun `toutes les images d un article, miniature declaree puis corps`() {
+        // La miniature déclarée par le flux vient en tête (c'est elle qui sert de bannière), puis
+        // les images du corps : c'est cette liste qui est téléchargée à la synchronisation.
+        assertEquals(
+            listOf(
+                "https://ex.com/miniature.jpg",
+                "https://ex.com/corps-1.jpg",
+                "https://ex.com/corps-2.jpg",
+                "https://ex.com/corps-3.jpg"
+            ),
+            com.pressia.data.articleImageUrls(
+                "https://ex.com/miniature.jpg",
+                """<p>texte</p><img src="/corps-1.jpg"><img src="https://ex.com/corps-2.jpg">""",
+                """<img src="/corps-3.jpg">""",
+                "https://ex.com/a"
+            )
+        )
+        // Une même URL (miniature reprise dans le corps) ne compte qu'une fois ; une miniature
+        // relative ou absente est ignorée : elle ne se met pas en cache sous une clé d'URL.
+        assertEquals(
+            listOf("https://ex.com/thumb.jpg", "https://ex.com/corps-1.jpg"),
+            com.pressia.data.articleImageUrls(
+                "https://ex.com/thumb.jpg",
+                """<img src="https://ex.com/thumb.jpg"><img src="https://ex.com/corps-1.jpg">""",
+                null,
+                "https://ex.com/a"
+            )
+        )
+        assertEquals(listOf("https://ex.com/corps-1.jpg"), com.pressia.data.articleImageUrls("/miniature.jpg", """<img src="https://ex.com/corps-1.jpg">""", null, "https://ex.com/a"))
+        assertEquals(emptyList<String>(), com.pressia.data.articleImageUrls(null, null, "  ", "https://ex.com/a"))
+    }
 }

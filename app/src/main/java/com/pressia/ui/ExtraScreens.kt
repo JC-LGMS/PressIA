@@ -1408,7 +1408,8 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Synchronisation : bouton, lancement, geste",
         "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
-            "récupèrent la même chose : nouveaux articles, tableau « Read later », miniatures et favicons. " +
+            "récupèrent la même chose : nouveaux articles, tableau « Read later », images des articles (miniature " +
+            "déclarée et images du corps, une seule requête par image même partagée) et favicons. " +
             "Sans compte ni flux, la synchro manuelle le dit au lieu de tourner à vide ; hors-ligne, rien ne part."
     ),
     AboutTopic(
@@ -1468,9 +1469,10 @@ private val ABOUT_TOPICS = listOf(
     ),
     AboutTopic(
         "Cache, favicons, déconnexion",
-        "« Vider le cache » supprime images et articles complets extraits mais garde les articles (ré-extraits à " +
-            "l'ouverture) ; « Actualiser favicons » ne touche pas aux miniatures (source : agrégateur ou sites en " +
-            "direct). Le détail du cache (« articles », « images affichées », « miniatures ») est dans Réglages. " +
+        "« Vider le cache » supprime les images téléchargées et les articles complets extraits, mais garde les " +
+            "articles (ré-extraits à l'ouverture) ; la synchronisation suivante reprend les images. « Actualiser " +
+            "favicons » ne touche qu'aux favicons (source : agrégateur ou sites en direct). Le détail du cache " +
+            "(« articles », « images », « miniatures ») est dans Réglages. " +
             "Se déconnecter supprime articles, miniatures, cache d'images et file d'attente du compte, et rend " +
             "l'espace libéré ; les statistiques de lecture, elles, sont conservées (remise à zéro depuis Stats)."
     ),

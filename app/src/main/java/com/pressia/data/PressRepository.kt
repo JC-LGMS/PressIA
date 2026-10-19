@@ -248,13 +248,13 @@ class PressRepository(
     /** Sérialise la mise à jour des empreintes (lecture-modification-écriture d'une map JSON). */
     private val hashMutex = Mutex()
     /**
-     * Verrou de la passe miniatures. Deux passes se chevauchaient à chaque synchro — le
-     * pipeline en lance une et le tableau « Read later », exécuté en parallèle, en relançait une
-     * de son côté : les deux lisaient la même liste d'URLs et téléchargeaient deux fois les mêmes
-     * images. La seconde ne trouve plus rien à faire une fois la première finie (la requête des
-     * URLs manquantes est déjà à jour), elle rend donc 0 aussitôt.
+     * Verrou de la passe images. Deux passes se chevauchaient à chaque synchro — le pipeline en
+     * lance une et le tableau « Read later », exécuté en parallèle, en relançait une de son côté :
+     * les deux lisaient la même liste d'articles et téléchargeaient deux fois les mêmes images.
+     * La seconde ne trouve plus rien à faire une fois la première finie (les articles marqués
+     * sont déjà sortis de la file), elle rend donc 0 aussitôt.
      */
-    private val thumbsMutex = Mutex()
+    private val imagesMutex = Mutex()
     /**
      * Verrou de la file montante. `pushQueue` part de sept endroits (lecture d'un article,
      * étoile, « tout marquer lu », marquages à l'unité et leurs annulations, pipeline, synchro
@@ -1003,11 +1003,11 @@ class PressRepository(
      * Le verrou partagé, l'indicateur et le message final restent à l'appelant
      * (verrou déjà acquis ici).
      *
-     * Miniatures et « Read later » partent ensemble : le Read later est bref (1 appel
-     * par compte) et silencieux — le bandeau garde le compteur des miniatures. Le
+     * Images et « Read later » partent ensemble : le Read later est bref (1 appel
+     * par compte) et silencieux — le bandeau garde le compteur des images. Le
      * [supervisorScope] préserve la sémantique d'échec séquentielle : chaque branche
      * va au bout, la première exception remonte et annule le succès (pas de
-     * [Prefs.LAST_SYNC_AT]) — sans qu'un échec des miniatures n'interrompe le tableau,
+     * [Prefs.LAST_SYNC_AT]) — sans qu'un échec des images n'interrompe le tableau,
      * ni l'inverse. La taille ayant déjà eu lieu dans [syncDown], aucun article que le
      * Read later marque ne peut être supprimé entre-temps.
      */
@@ -1025,10 +1025,10 @@ class PressRepository(
         val n = syncDown(withThumbs = false, onSource = { src -> syncStep.value = "Réception des articles… ($src)" })
         val tImg = System.currentTimeMillis()
         val withThumbs = imagesAllowed()
-        if (withThumbs) syncStep.value = "Téléchargement des miniatures…"
+        if (withThumbs) syncStep.value = "Téléchargement des images…"
         supervisorScope {
             val thumbs = async {
-                if (withThumbs) syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+                if (withThumbs) syncImages { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
             }
             val later = async { syncReadLater() }
             thumbs.await()
@@ -1063,7 +1063,7 @@ class PressRepository(
      *
      * [onSource] annonce chaque source contactée (« flux locaux », « Feedly »…) : le bandeau
      * précise ainsi d'où viennent les articles. Appelé depuis des fils IO (comme [onProgress]
-     * de [syncThumbs]) ; les comptes cloud partent en parallèle, l'ordre varie.
+     * de [syncImages]) ; les comptes cloud partent en parallèle, l'ordre varie.
      */
     suspend fun syncDown(feedId: String? = null, categoryId: String? = null, withThumbs: Boolean = true, onSource: ((String) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         val max = maxItems()
@@ -1116,9 +1116,9 @@ class PressRepository(
         // Listes et compteurs à jour avant la (longue) passe miniatures : l'accueil n'attend
         // pas la fin de la synchronisation. Les listes d'articles, elles, sont réactives.
         pokeLists()
-        // Les miniatures peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
+        // Les images peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
         // par défaut elles suivent les articles, comme avant.
-        if (withThumbs) syncThumbs()
+        if (withThumbs) syncImages()
         android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
         added
     }
@@ -1146,10 +1146,19 @@ class PressRepository(
     }
 
     /**
-     * Récupère les miniatures manquantes, les plus récentes d'abord, sans borne : la première
+     * Récupère les images manquantes des articles — la miniature déclarée par le flux **et** les
+     * images du corps —, les articles les plus récents d'abord, sans borne : la première
      * synchronisation télécharge tout le stock (c'est normal qu'elle soit lente), les suivantes
      * ne récupèrent que les nouveautés. Y compris tout le stock après un vidage du cache, le
      * suivi [ArticleEntity.imageCached] ayant alors été réinitialisé.
+     *
+     * La miniature déclarée va dans [ThumbStore] : un fichier au gabarit, jamais évincé, que
+     * l'écran article affiche en priorité (voir `thumbModel`) — le retélécharger n'aurait aucun
+     * sens. Les images du corps vont dans le cache disque de Coil, comme les favicons
+     * ([prefetchImage]) : ce sont des images pleine taille, en trop grand nombre pour un fichier
+     * dédié, et Coil les sert ensuite sans requête à l'affichage. Une URL déjà servie par un
+     * fichier local est donc sautée, et une URL partagée par plusieurs articles n'est demandée
+     * qu'une fois (l'attente du réseau reste bornée à six requêtes à la fois).
      *
      * Inactif si « Images hors-ligne » est coupé, ou si « Wi-Fi uniquement » est actif hors
      * Wi-Fi/Ethernet : une passe manuelle sur données mobiles ne doit pas vider le forfait.
@@ -1163,29 +1172,46 @@ class PressRepository(
      * Seules les réussites incrémentent : des URL en échec ou lentes retardent les paliers,
      * mais le total s'affiche sans attendre.
      */
-    suspend fun syncThumbs(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int =
-        thumbsMutex.withLock { syncThumbsLocked(onProgress) }
+    suspend fun syncImages(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int =
+        imagesMutex.withLock { syncImagesLocked(onProgress) }
 
     /**
-     * Corps de [syncThumbs], sous son verrou (voir [thumbsMutex]) : jamais deux passes en
-     * parallèle sur la même liste d'URLs.
+     * Corps de [syncImages], sous son verrou (voir [imagesMutex]) : jamais deux passes en
+     * parallèle sur les mêmes articles.
      */
-    private suspend fun syncThumbsLocked(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
+    private suspend fun syncImagesLocked(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         if (!imagesAllowed()) return@withContext 0
-        val urls = dao.pendingThumbUrls()
-        if (urls.isEmpty()) return@withContext 0
-        val total = urls.size
+        val rows = dao.articlesPendingImages()
+        if (rows.isEmpty()) return@withContext 0
+        // URLs attendues, article par article (miniature déclarée puis corps) : relevées une
+        // seule fois, elles servent au téléchargement comme au marquage final.
+        val perArticle = rows.map { r -> r.id to articleImageUrls(r.imageUrl, r.content, r.summary, r.url) }
+        val thumbs = rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } }.distinct()
+        val bodies = perArticle.flatMap { (_, urls) -> urls }.distinct().filterNot { it in thumbs }
+        val work: List<Pair<String, Boolean>> = thumbs.map { it to true } + bodies.map { it to false }
+        if (work.isEmpty()) {
+            // Articles sans image : marqués tout de suite, sinon leur HTML serait relu à chaque
+            // synchronisation sans rien à faire.
+            rows.map { it.id }.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+            return@withContext 0
+        }
+        val total = work.size
         onProgress?.invoke(0, total)
-        // Dernier affichage publié (horloge monotone) : les 6 téléchargements parallèles
-        // partagent ce garde-fou via compareAndSet, sans verrou.
-        val lastPublish = AtomicLong(0L)
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
         val doneCount = AtomicInteger(0)
+        // Dernier affichage publié (horloge monotone) : les 6 téléchargements parallèles
+        // partagent ce garde-fou via compareAndSet, sans verrou.
+        val lastPublish = AtomicLong(0L)
         val done = coroutineScope {
-            urls.map { url ->
+            work.map { (url, isThumb) ->
                 async {
-                    val ok = permits.withPermit { ThumbStore.fetch(ctx, url, maxW, maxH) }
+                    val ok = permits.withPermit {
+                        if (isThumb) ThumbStore.fetch(ctx, url, maxW, maxH)
+                        // Image du corps déjà présente en local (miniature d'un autre article,
+                        // image partagée) : rien à demander.
+                        else ThumbStore.cachedFile(ctx, url) != null || prefetchImage(url)
+                    }
                     if (ok && onProgress != null) {
                         val n = doneCount.incrementAndGet()
                         if (n == total) {
@@ -1203,10 +1229,31 @@ class PressRepository(
             }.awaitAll()
         }
         onProgress?.invoke(doneCount.get().coerceAtMost(total), total)
-        // Marquage groupé : une requête par paquet plutôt qu'une par URL.
-        urls.filterIndexed { i, _ -> done[i] }.chunked(500).forEach { dao.markThumbsCached(it) }
+        // Marquage groupé, article par article : un article dont une seule image manque reste
+        // en attente (elle serait sinon jamais reprise). Une requête par paquet.
+        val okUrls = work.filterIndexed { i, _ -> done[i] }.mapTo(HashSet()) { it.first }
+        perArticle.filter { (_, urls) ->
+            urls.all { it in okUrls || ThumbStore.cachedFile(ctx, it) != null }
+        }.map { (id, _) -> id }.chunked(500).forEach { dao.markArticlesImagesCached(it) }
         done.count { it }
     }
+
+    /**
+     * Précharge une image dans le cache disque de Coil, sans l'afficher (même mécanisme que les
+     * favicons). La taille demandée est minuscule à dessein : c'est le cache **disque** qui
+     * évite la requête à l'affichage, et il garde les octets d'origine quelle que soit la taille
+     * demandée ; le décodage n'a donc pas à porter l'image entière, et le cache mémoire (borné)
+     * n'a rien à retenir d'une image que personne n'a encore regardée.
+     */
+    private suspend fun prefetchImage(url: String): Boolean = runCatching {
+        coil.Coil.imageLoader(ctx).execute(
+            coil.request.ImageRequest.Builder(ctx)
+                .data(url)
+                .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+                .size(coil.size.Size(1, 1))
+                .build()
+        )
+    }.getOrNull() is coil.request.SuccessResult
 
     /**
      * Première synchronisation d'un compte nouvellement connecté, en un seul passage.
@@ -1260,10 +1307,10 @@ class PressRepository(
             trimToMax()
             pokeLists()
             val withThumbs = imagesAllowed()
-            if (withThumbs) syncStep.value = "Téléchargement des miniatures…"
+            if (withThumbs) syncStep.value = "Téléchargement des images…"
             supervisorScope {
                 val thumbs = async {
-                    if (withThumbs) syncThumbs { done, total -> syncStep.value = "Téléchargement des miniatures… $done/$total" }
+                    if (withThumbs) syncImages { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
                 }
                 val later = async { syncReadLater() }
                 thumbs.await()
@@ -2318,25 +2365,26 @@ class PressRepository(
     /** Détail du cache formaté (« articles 17,3 Mo · images 68,0 Ko · miniatures 284,0 Ko »). */
     suspend fun cacheDetail(): String {
         val (db, coil, thumbs) = cacheBreakdown()
-        // « images » = cache disque de Coil : images pleine taille affichées dans un article
-        // (bannière, corps) et favicons, par opposition aux « miniatures » (filesDir/thumbs,
-        // téléchargées en amont par syncThumbs). Le libellé le dit, la question revenait.
-        return "articles ${formatCacheBytes(db)} · images affichées ${formatCacheBytes(coil)} · " +
+        // « images » = cache disque de Coil : les images d'articles (bannière en pleine taille,
+        // corps) et les favicons — les images du corps y sont préchargées par syncImages, les
+        // miniatures (filesDir/thumbs, un fichier par article au gabarit de l'écran) en sont donc
+        // distinctes. Le libellé le dit, la question revenait.
+        return "articles ${formatCacheBytes(db)} · images ${formatCacheBytes(coil)} · " +
             "miniatures ${formatCacheBytes(thumbs)}"
     }
 
     /**
      * Vide le cache : images (miniatures + cache Coil) et HTML extraits via Readability.
-     * Les articles sont conservés avec leur extrait RSS : seul le suivi des miniatures est
+     * Les articles sont conservés avec leur extrait RSS : seul le suivi des images est
      * réinitialisé (la prochaine synchronisation récupère les images des articles
      * conservés), et la prochaine ouverture en mode complet ré-extrait l'article.
      */
     suspend fun clearCache() = clearImages()
 
     /**
-     * Ne vide que les images et les extractions (force le re-téléchargement). Les miniatures
+     * Ne vide que les images et les extractions (force le re-téléchargement). Les images
      * d'articles sont récupérées à la prochaine synchronisation, les favicons au prochain
-     * affichage — voir [refreshFavicons] pour un re-téléchargement immédiat des deux.
+     * affichage — voir [refreshFavicons] pour un re-téléchargement immédiat des favicons.
      * Les contenus extraits repartent de l'extrait RSS au prochain double-tap.
      */
     suspend fun clearImages() = withContext(Dispatchers.IO) {
@@ -2434,18 +2482,27 @@ class PressRepository(
     }
 
     /**
-     * Rafraîchit les favicons maintenant : vide le cache Coil (dont favicons) puis
-     * re-télécharge aussitôt les favicons de tous les abonnements. Ne touche ni aux
-     * articles ni aux miniatures. Renvoie le nombre de favicons récupérés, ou -1 si les
-     * réglages l'interdisent (images hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi) :
-     * rien n'est alors effacé. Étapes dans [syncStep], comme les pipelines (remis à null
-     * en fin, voir `syncPipeline`).
+     * Rafraîchit les favicons maintenant : les entrées de favicons sont retirées du cache disque
+     * (et seulement elles — les images d'articles que [syncImages] y a préchargées restent en
+     * place), puis toutes les icônes sont re-téléchargées. Ne touche ni aux articles ni aux
+     * miniatures. Renvoie le nombre de favicons récupérés, ou -1 si les réglages l'interdisent
+     * (images hors-ligne coupées, ou Wi-Fi uniquement hors Wi-Fi) : rien n'est alors effacé.
+     * Étapes dans [syncStep], comme les pipelines (remis à null en fin, voir `syncPipeline`).
      */
     suspend fun refreshFavicons(): Int = withSyncLock {
         withContext(Dispatchers.IO) {
             try {
                 if (!imagesAllowed()) return@withContext -1
-                runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
+                // Les URLs d'icônes **telles qu'elles étaient en cache** : la même résolution
+                // que `syncFavicons`/l'affichage, avec les icônes résolues encore en préférences.
+                val prefsHead = prefs.data.first()
+                val direct = prefsHead[Prefs.FAVICON_SOURCE] == FAVICON_SOURCE_DIRECT
+                val resolved = parseResolved(prefsHead[Prefs.FAVICON_RESOLVED])
+                purgeImages(
+                    dao.subscriptions().mapNotNull { sub ->
+                        faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct, resolved[sub.id])
+                    }
+                )
                 // Les icônes résolues aussi : une refonte du site change son icône, l'ancienne
                 // résolue serait périmée — tout est redécouvert (voir `syncFavicons`).
                 prefs.set(Prefs.FAVICON_RESOLVED, "")
@@ -2571,13 +2628,12 @@ class PressRepository(
     suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext
         if (!isLocalProvider(sub.provider)) return@withContext
-        // URLs d'images relevées avant la suppression des lignes : vignette déclarée et images
+        // URLs d'images relevées avant la suppression des lignes : miniature déclarée et images
         // du corps (HTML complet ou extrait). Les images des autres flux partageant une URL
         // restent en cache — le filtre est appliqué plus bas, une fois les articles partis.
-        val images = dao.articleMediaOfFeed(feedId).flatMap { m ->
-            listOfNotNull(m.imageUrl?.takeIf { it.isNotBlank() }) +
-                htmlImageUrls(m.content, m.url) + htmlImageUrls(m.summary, m.url)
-        }.distinct()
+        val images = dao.articleMediaOfFeed(feedId)
+            .flatMap { m -> articleImageUrls(m.imageUrl, m.content, m.summary, m.url) }
+            .distinct()
         dao.deleteSubscription(feedId)
         dao.deleteArticlesOfFeed(feedId)
         // Ses traces de lecture et d'extraction restent : elles ne servent qu'aux statistiques,
@@ -2590,16 +2646,17 @@ class PressRepository(
     }
 
     /**
-     * Retire du cache disque Coil les images d'un flux supprimé. `gcThumbs` ne couvre que les
-     * fichiers de miniatures de [ThumbStore] ; les images pleine taille affichées dans un article
-     * (bannière, images du corps) sont, elles, rangées par Coil sous leur URL — sans cette passe
-     * elles resteraient sur l'appareil, invisibles mais bien présentes.
+     * Retire du cache disque Coil les URLs données : images d'un flux supprimé (bannière en
+     * pleine taille, images du corps) ou entrées de favicons d'une actualisation. `gcThumbs` ne
+     * couvre que les fichiers de miniatures de [ThumbStore] ; tout ce que Coil range sous une URL
+     * y échappe — sans cette passe ces entrées resteraient sur l'appareil, invisibles mais bien
+     * présentes.
      */
     private suspend fun purgeImages(urls: List<String>) {
         if (urls.isEmpty()) return
         val cache = coil.Coil.imageLoader(appCtx).diskCache ?: return
         val n = urls.count { url -> runCatching { cache.remove(url) }.getOrDefault(false) }
-        android.util.Log.i("PressIA", "images purgées : $n/${urls.size} (cache Coil)")
+        android.util.Log.i("PressIA", "cache Coil : $n/${urls.size} entrées retirées")
     }
 
     /**
@@ -2628,6 +2685,24 @@ fun htmlImageUrls(html: String?, baseUrl: String): List<String> {
         emptyList()
     }
 }
+
+/**
+ * Toutes les images d'un article, dans l'ordre d'affichage : la miniature déclarée par le flux
+ * (`imageUrl`, bandeau de liste et image de tête) puis les images du corps — extrait RSS et HTML
+ * complet extrait. Même repérage que l'affichage ([articleBlocks]) et que le nettoyage d'un flux
+ * supprimé. Les URLs non `http` (data:, relatives) sont écartées : elles ne se mettent pas en
+ * cache sous une clé d'URL.
+ */
+fun articleImageUrls(
+    imageUrl: String?,
+    content: String?,
+    summary: String?,
+    baseUrl: String
+): List<String> = buildList {
+    imageUrl?.trim()?.takeIf { it.startsWith("http") }?.let(::add)
+    addAll(htmlImageUrls(content, baseUrl))
+    addAll(htmlImageUrls(summary, baseUrl))
+}.distinct()
 
 /**
  * Reporte sur un article resynchronisé les drapeaux que seul l'appareil connaît : étoile

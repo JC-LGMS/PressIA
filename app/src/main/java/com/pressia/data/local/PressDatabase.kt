@@ -43,9 +43,9 @@ data class SubscriptionEntity(
 @Entity(
     tableName = "articles",
     indices = [Index("feedId"), Index("published"), Index("unread"), Index("starred"), Index("laterSaved"),
-        // Requête des miniatures en attente : filtre sur imageCached + tri par published, en
-        // couvrant (imageUrl incluse) pour ne jamais toucher la table — dont les colonnes
-        // summary/content sont lourdes — même avec des milliers d'articles.
+        // Requête des images en attente : filtre sur imageCached + tri par published, servis
+        // par l'index — les colonnes lourdes (summary/content) sont ensuite lues dans la table,
+        // pour les seuls articles en attente (images du corps).
         Index(value = ["imageCached", "published", "imageUrl"])]
 )
 data class ArticleEntity(
@@ -334,30 +334,32 @@ interface PressDao {
     @Query("DELETE FROM reading_events WHERE feedId IN (:feedIds)")
     suspend fun deleteReadingEventsOfFeeds(feedIds: List<String>): Int
     /**
-     * URLs des miniatures restant à stocker : les plus récentes d'abord (ordre d'affichage),
-     * sans borne — la première synchronisation télécharge tout le stock, les suivantes ne
-     * récupèrent que les nouveautés. Dédupliquées : une même image partagée par plusieurs
-     * articles ne se télécharge qu'une fois.
+     * Articles dont les images restent à récupérer — miniature déclarée **et** images du corps :
+     * les plus récents d'abord (ordre d'affichage), sans borne, la première synchronisation
+     * télécharge tout le stock et les suivantes ne récupèrent que les nouveautés. Les colonnes
+     * lourdes (`summary`, `content`) sont lues ici exprès : c'est de là que sortent les images
+     * du corps, que l'index couvrant ne contient pas.
      */
-    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != '' AND imageCached = 0 ORDER BY published DESC")
-    suspend fun pendingThumbUrls(): List<String>
-    /** Toutes les URLs d'images encore référencées : sert au nettoyage des fichiers orphelins. */
+    @Query("SELECT id, imageUrl, url, summary, content FROM articles WHERE imageCached = 0 ORDER BY published DESC")
+    suspend fun articlesPendingImages(): List<PendingArticleImages>
+    /** Toutes les miniatures déclarées : sert au nettoyage des fichiers locaux orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
     /**
-     * Images d'un flux juste avant sa suppression : vignette déclarée et HTML du corps, d'où
-     * sont tirées les images affichées dans les articles. Le balayage des miniatures
-     * ([ThumbStore.gc]) ne couvre que les fichiers locaux ; le cache d'images Coil (images
+     * Images d'un flux juste avant sa suppression : miniature déclarée et HTML du corps, d'où
+     * sont tirées les images affichées dans les articles. Le balayage des fichiers locaux
+     * ([ThumbStore.gc]) ne couvre que les miniatures déclarées ; le cache d'images Coil (images
      * pleine taille) a besoin des URLs, article par article.
      */
     @Query("SELECT imageUrl, url, summary, content FROM articles WHERE feedId = :feedId")
     suspend fun articleMediaOfFeed(feedId: String): List<ArticleMedia>
-    /** Marque tous les articles partageant cette URL : le fichier local est unique par URL. */
-    @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl = :url")
-    suspend fun markThumbCached(url: String)
-    /** Variante groupée : une requête par paquet plutôt qu'une par URL. */
-    @Query("UPDATE articles SET imageCached = 1 WHERE imageUrl IN (:urls)")
-    suspend fun markThumbsCached(urls: List<String>)
+    /**
+     * Marque les articles dont **toutes** les images sont là. Le marquage suit l'article et non
+     * l'URL : un article dont une seule image du corps manque doit rester en attente, sinon elle
+     * ne serait jamais reprise.
+     */
+    @Query("UPDATE articles SET imageCached = 1 WHERE id IN (:ids)")
+    suspend fun markArticlesImagesCached(ids: List<String>)
     /** Cache vidé : tout est à récupérer à la prochaine synchronisation. */
     @Query("UPDATE articles SET imageCached = 0")
     suspend fun resetThumbsCached()
@@ -520,6 +522,14 @@ data class FeedCount(val feedId: String, val c: Int)
 data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
 /** Images d'un article d'un flux supprimé (voir [PressDao.articleMediaOfFeed]). */
 data class ArticleMedia(val imageUrl: String?, val url: String, val summary: String?, val content: String?)
+/** Article dont les images restent à récupérer (voir [PressDao.articlesPendingImages]). */
+data class PendingArticleImages(
+    val id: String,
+    val imageUrl: String?,
+    val url: String,
+    val summary: String?,
+    val content: String?
+)
 /** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */
 data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
