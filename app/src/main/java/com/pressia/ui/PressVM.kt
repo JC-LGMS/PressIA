@@ -228,7 +228,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * l'envoi ou à l'annulation.
      */
     var instapaperPickerFor by mutableStateOf<ArticleEntity?>(null)
-    val homeScreen: StateFlow<String> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, "subs")
+    /**
+     * Page d'accueil de démarrage (« subs » = Accueil, « stream » = Tous les articles).
+     * Initialement **null** : DataStore répond de façon asynchrone, et l'ancien défaut « subs »
+     * exposé dès la première composition faisait démarrer sur « Accueil » même quand le réglage
+     * disait « Tous les articles » (valeur par défaut figée par `remember`, bug signalé).
+     */
+    val homeScreen: StateFlow<String?> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val justify: StateFlow<Boolean> = prefs.flow(Prefs.JUSTIFY, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")

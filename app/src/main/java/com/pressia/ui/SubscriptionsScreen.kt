@@ -15,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,7 +47,15 @@ fun allFeedsRead(subs: List<SubscriptionEntity>, unreads: Map<String, Int>): Boo
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Unit) {
+fun SubscriptionsScreen(
+    vm: PressVM,
+    onOpenStream: () -> Unit,
+    onMenu: () -> Unit,
+    // Balayage vers la droite : remonte d'un niveau. Renseigné quand « Tous les articles » est
+    // la page d'accueil — l'Accueil est alors une étape entre la racine et les dossiers/flux
+    // (voir MainActivity.goHome).
+    onSwipeBack: (() -> Unit)? = null
+) {
     LaunchedEffect(Unit) { vm.refresh() }
     val ctx = LocalContext.current
     val totalUnread = vm.unreads.values.sum()
@@ -106,7 +115,11 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
         // Même tirage que les vues articles : le rond ne reflète que le geste puis s'efface
         // au relâchement, la synchro gardant barre et bouton.
         var gestureRefresh by remember { mutableStateOf(false) }
-        Box(Modifier.padding(pad).fillMaxSize()) {
+        // Même balayage de retour que les listes de dossier/flux : pastille « Accueil » puis
+        // remontée d'un niveau au relâchement (ici, vers « Tous les articles »).
+        val swipe = rememberBackSwipeState()
+        val backSwipe = if (onSwipeBack == null) Modifier else Modifier.backSwipe(swipe, onSwipeBack)
+        Box(Modifier.padding(pad).fillMaxSize().then(backSwipe)) {
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = gestureRefresh,
                 onRefresh = {
@@ -119,7 +132,7 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
                         gestureRefresh = false
                     }
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().graphicsLayer { translationX = swipe.drag }
             ) {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     if (vm.subs.isEmpty() && vm.loaded && !vm.syncing) {
@@ -233,6 +246,12 @@ fun SubscriptionsScreen(vm: PressVM, onOpenStream: () -> Unit, onMenu: () -> Uni
             listState,
             Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
         )
+        if (onSwipeBack != null && swipe.drag > 0f) {
+            SwipeBackHint(
+                swipe.progress, Icons.Filled.Home, "retour à Tous les articles",
+                Modifier.align(Alignment.CenterStart)
+            )
+        }
         }
     }
 

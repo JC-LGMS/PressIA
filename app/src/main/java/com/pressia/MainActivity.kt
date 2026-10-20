@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -69,12 +70,25 @@ class MainActivity : ComponentActivity() {
                 val drawer = rememberDrawerState(DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 val backStack by nav.currentBackStackEntryAsState()
-                val current = backStack?.destination?.route?.substringBefore("/") ?: startOf(home)
-                val startRoute = startOf(home)
-                // « Page d'accueil » = l'écran de démarrage. En mode « Tous les articles » comme accueil,
-                // il faut aussi que le flux courant soit bien « Tous les articles ».
-                val atHome = if (startRoute == "home") current == "home"
-                else current == "stream" && vm.scope.feedId == null && vm.scope.categoryId == null
+                // Page d'accueil de la session, figée dès la première lecture de DataStore
+                // (null = pas encore lu, voir PressVM.homeScreen). Deux pièges évités :
+                //  - figer la valeur par défaut « subs » avant lecture faisait démarrer sur
+                //    « Accueil » même quand le réglage disait « Tous les articles » (bug signalé) ;
+                //  - suivre le réglage en direct recrée le NavHost, ce qui éjectait l'utilisateur
+                //    de l'écran Réglages au moment même du choix. Il s'applique au lancement suivant.
+                val sessionHome = remember { mutableStateOf<String?>(null) }
+                if (sessionHome.value == null && home != null) sessionHome.value = home
+                val startRoute = startOf(sessionHome.value ?: "subs")
+                val current = backStack?.destination?.route?.substringBefore("/") ?: startRoute
+                // Accueil « Tous les articles » : hiérarchie racine → Accueil → dossier/flux.
+                // Le geste vers la droite et le retour remontent donc d'un niveau au lieu de
+                // quitter le périmètre courant, et le tiroir s'ouvre depuis la racine.
+                val hierarchical = startRoute == "stream"
+                // Racine : « Tous les articles » (aucun dossier, aucun flux sélectionné).
+                val atRoot = current == "stream" && vm.scope.feedId == null && vm.scope.categoryId == null
+                // « Page d'accueil » = l'écran de démarrage. En mode hiérarchique, c'est la
+                // racine (« Tous les articles »), pas la page Accueil qui n'en est qu'une étape.
+                val atHome = if (hierarchical) atRoot else current == "home"
 
                 // Dernière destination de contenu réellement visitée (accueil, dossier ou article).
                 // Les écrans utilitaires — Favoris, Recherche, Doublons, Stats, Réglages, Comptes,
@@ -132,8 +146,29 @@ class MainActivity : ComponentActivity() {
                     nav.navigate("article")
                 }
 
-                /** Retour à l'accueil, quelle que soit la route de départ. */
+                /**
+                 * Remonte d'un niveau.
+                 *
+                 * Accueil = « Tous les articles » : hiérarchie racine (« Tous les articles »)
+                 * → Accueil → dossier/flux. Depuis un dossier ou un flux, on revient donc à la
+                 * page Accueil ; depuis l'Accueil, à la racine. Un second retour à la racine
+                 * ferme l'application.
+                 *
+                 * Accueil = « Accueil » (non hiérarchique) : dossier/flux → accueil.
+                 */
                 fun goHome() {
+                    if (hierarchical) {
+                        if (current == "home") {
+                            // Accueil → racine : dernier niveau, le flux courant redevient
+                            // « Tous les articles ».
+                            vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
+                            openContent("stream")
+                        } else {
+                            // Dossier/flux → Accueil.
+                            openContent("home")
+                        }
+                        return
+                    }
                     if (startRoute == "home") {
                         openContent("home")
                     } else {
@@ -167,7 +202,8 @@ class MainActivity : ComponentActivity() {
                  * Comportement du bouton retour, identique sur toutes les destinations :
                  *  - drawer ouvert          → il se referme ;
                  *  - écran utilitaire       → retour à la dernière page d'accueil / catégorie / article ;
-                 *  - flux (dossier ou flux) → retour à l'accueil ;
+                 *  - Accueil (mode hiérarchique) → la racine « Tous les articles » ;
+                 *  - flux (dossier ou flux) → l'Accueil en mode hiérarchique, la racine sinon ;
                  *  - sur la page d'accueil  → l'application se ferme ;
                  *  - article                 → retour à l'écran précédent (liste, dossier, article précédent).
                  *
@@ -181,6 +217,10 @@ class MainActivity : ComponentActivity() {
                             drawer.currentValue != DrawerValue.Closed -> closeDrawer()
                             current in UTILITY_ROUTES -> backToLastContent()
                             current == "article" -> nav.popBackStack()
+                            // Accueil intermédiaire (mode hiérarchique) : un cran au-dessus,
+                            // c'est-à-dire la racine. En mode « Accueil » classique, l'accueil
+                            // est le point d'entrée : retour = fermeture.
+                            current == "home" -> if (hierarchical) goHome() else finish()
                             current == "stream" && !atHome -> goHome()
                             atHome -> finish()
                             else -> nav.popBackStack()
@@ -294,13 +334,18 @@ class MainActivity : ComponentActivity() {
                         drawerState = drawer,
                         // Balayage de bord : actif partout, sauf là où le geste vers la droite a
                         // déjà un sens — écran article (article précédent, partagé avec le
-                        // détecteur de l'article) et liste d'un dossier ou d'un flux (retour, voir
-                        // StreamScaffold). Le bouton menu y reste l'accès au tiroir.
+                        // détecteur de l'article), Accueil et listes de dossier/flux en mode
+                        // hiérarchique (montée d'un niveau, voir StreamScaffold/SubscriptionsScreen).
                         // Tiroir ouvert, le balayage est toujours actif : c'est lui qui permet de
                         // le refermer (geste ou clic hors du panneau — le clic de fermeture du
                         // Material ne suit pas `gesturesEnabled` à lui seul).
-                        gesturesEnabled = drawer.isOpen ||
-                            (current != "article" && !(current == "stream" && !atHome)),
+                        gesturesEnabled = drawer.isOpen || when {
+                            current == "article" -> false
+                            // Accueil « Tous les articles » : le geste remonte la hiérarchie
+                            // (il ouvre le tiroir à la racine, via StreamScaffold).
+                            hierarchical -> current != "home"
+                            else -> !(current == "stream" && !atHome)
+                        },
                         drawerContent = {
                             PressDrawer(vm, currentRoute = current,
                                 onNavigate = { r ->
@@ -313,7 +358,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     ) {
-                        key(home) {
+                        key(startRoute) {
                             // Fondu de navigation réduit (150 ms au lieu des 700 ms par défaut) :
                             // la transition reste douce mais ne donne plus l'impression de coller.
                             NavHost(nav, startDestination = startRoute,
@@ -337,20 +382,32 @@ class MainActivity : ComponentActivity() {
                                     }
                                     SubscriptionsScreen(vm,
                                         onOpenStream = { openContent("stream") },
-                                        onMenu = { openDrawer() })
+                                        onMenu = { openDrawer() },
+                                        // Hiérarchie « Tous les articles » : l'Accueil est une
+                                        // étape, un balayage vers la droite remonte à la racine.
+                                        onSwipeBack = if (hierarchical) ({ goHome() }) else null)
                                 }
                                 composable("stream") {
                                     BackRule()
                                     StreamScaffold(vm, vm.scope.label,
                                         onOpen = { openArticle(it.id) },
                                         onMenu = { openDrawer() },
-                                        // Balayage droit sur une liste de dossier ou de flux :
-                                        // même action que le bouton retour, plutôt que l'ouverture
-                                        // du tiroir (réservée aux écrans d'accueil). Tiroir ouvert,
-                                        // c'est lui qui est visible : le geste ne fait rien de plus.
+                                        // Balayage droit : même action que le bouton retour. À la
+                                        // racine « Tous les articles » il ouvre le tiroir (comme sur
+                                        // les autres écrans d'accueil) ; dans un dossier ou un flux
+                                        // il remonte d'un niveau. Tiroir ouvert, c'est lui qui est
+                                        // visible : le geste ne fait rien de plus.
                                         onSwipeBack = {
-                                            if (drawer.currentValue == DrawerValue.Closed) goHome()
-                                        })
+                                            if (drawer.currentValue == DrawerValue.Closed) {
+                                                if (hierarchical && atRoot) openDrawer() else goHome()
+                                            }
+                                        },
+                                        // Le repère suit l'action : tiroir à la racine, montée
+                                        // d'un niveau ailleurs.
+                                        swipeIcon = if (hierarchical && atRoot) Icons.Filled.Menu
+                                        else Icons.Filled.Home,
+                                        swipeLabel = if (hierarchical && atRoot) "ouvrir le menu"
+                                        else "retour à l'accueil")
                                 }
                                 composable("article") {
                                     BackRule()

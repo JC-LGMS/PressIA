@@ -28,7 +28,9 @@ fun StreamScaffold(
     title: String,
     onOpen: (com.pressia.data.local.ArticleEntity) -> Unit,
     onMenu: () -> Unit,
-    onSwipeBack: (() -> Unit)? = null
+    onSwipeBack: (() -> Unit)? = null,
+    swipeIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Filled.Home,
+    swipeLabel: String = "retour à l'accueil"
 ) {
     // Filtre mémorisé par périmètre (voir PressVM.unreadOnly) : suit le flux courant.
     val viewMode by vm.viewMode.collectAsState()
@@ -40,23 +42,9 @@ fun StreamScaffold(
     // glissement avant ce détecteur ; « en dessous de la liste » (zone vide, ou lignes sans geste
     // configuré) c'est donc bien ici que le geste arrive. Seuil de 120 px, comme l'écran article :
     // un frôlement ne ramène pas à l'accueil.
-    val backThreshold = with(LocalDensity.current) { 120.dp.toPx() }
-    var backDrag by remember { mutableStateOf(0f) }
-    val backSwipe = if (onSwipeBack == null) Modifier else Modifier.pointerInput(onSwipeBack) {
-        detectHorizontalDragGestures(
-            onDragStart = { backDrag = 0f },
-            onHorizontalDrag = { change, amount ->
-                change.consume()
-                backDrag = (backDrag + amount).coerceIn(0f, 600f)
-            },
-            onDragEnd = {
-                val go = backDrag >= backThreshold
-                backDrag = 0f
-                if (go) onSwipeBack()
-            },
-            onDragCancel = { backDrag = 0f }
-        )
-    }
+    val swipe = rememberBackSwipeState()
+    val backDrag = swipe.drag
+    val backSwipe = if (onSwipeBack == null) Modifier else Modifier.backSwipe(swipe, onSwipeBack)
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
     // L'initial est null (« rien émis pour ce périmètre ») et non l'ancien snapshot `vm.articles` :
@@ -69,9 +57,10 @@ fun StreamScaffold(
     // Non-lus du périmètre, affichés entre parenthèses à côté du titre (« Tous les articles (12) »,
     // « Dossier (3) », « Flux (7) ») — même convention que « Accueil (n) », rien quand c'est à zéro.
     val unreadCount = vm.unreadCountFor()
-    // Avancement du balayage de retour, pour l'icône Accueil affichée dès le début du geste.
-    val backProgress = (backDrag / backThreshold).coerceIn(0f, 1f)
+    // Avancement du balayage, pour le repère (icône) affiché dès le début du geste.
+    val backProgress = swipe.progress
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             // Column explicite : sans elle, SyncProgress et TopAppBar se superposent dans le
             // slot topBar et le titre opaque couvre la barre.
@@ -183,21 +172,72 @@ fun StreamScaffold(
             if (onSwipeBack != null && backDrag > 0f) {
                 // Même habillage que la bande de balayage des articles (fond teinté + icône
                 // primaire), ici en pastille : le repère doit rester lisible par-dessus la liste.
-                val p = backProgress
-                Box(
-                    Modifier.align(Alignment.CenterStart).padding(start = 12.dp).size(48.dp)
-                        .graphicsLayer { alpha = 0.35f + 0.65f * p }
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.Home, "retour à l'accueil",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size((22f + 8f * p).dp)
-                    )
-                }
+                SwipeBackHint(backProgress, swipeIcon, swipeLabel, Modifier.align(Alignment.CenterStart))
             }
         }
+    }
+}
+
+/**
+ * État du balayage horizontal de retour : glissement cumulé et seuil (px) au-delà duquel le
+ * relâchement déclenche l'action. Partagé par les listes (`StreamScaffold`, accueil) pour que le
+ * geste et son repère visuel se comportent partout de la même façon.
+ */
+class BackSwipeState(private val thresholdPx: Float) {
+    var drag by mutableStateOf(0f)
+    val threshold get() = thresholdPx
+    val progress get() = (drag / thresholdPx).coerceIn(0f, 1f)
+}
+
+@Composable
+fun rememberBackSwipeState(): BackSwipeState {
+    // 120 px, comme l'écran article : un frôlement ne change pas de page.
+    val px = with(LocalDensity.current) { 120.dp.toPx() }
+    return remember { BackSwipeState(px) }
+}
+
+/**
+ * Détecteur du balayage vers la droite (retour d'un niveau, ou ouverture du tiroir à la racine).
+ * Posé sur la boîte qui enveloppe la liste : les lignes qui ont leur propre geste horizontal
+ * (articles) le consomment et gardent leur comportement ; ailleurs — interligne de date, espace
+ * sous la liste — le geste arrive ici.
+ */
+fun Modifier.backSwipe(state: BackSwipeState, onSwipe: () -> Unit): Modifier =
+    pointerInput(onSwipe) {
+        detectHorizontalDragGestures(
+            onDragStart = { state.drag = 0f },
+            onHorizontalDrag = { change, amount ->
+                change.consume()
+                state.drag = (state.drag + amount).coerceIn(0f, 600f)
+            },
+            onDragEnd = {
+                val go = state.drag >= state.threshold
+                state.drag = 0f
+                if (go) onSwipe()
+            },
+            onDragCancel = { state.drag = 0f }
+        )
+    }
+
+/** Repère du balayage de retour : pastille qui s'intensifie jusqu'au seuil. */
+@Composable
+fun SwipeBackHint(
+    progress: Float,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier.padding(start = 12.dp).size(48.dp)
+            .graphicsLayer { alpha = 0.35f + 0.65f * progress }
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon, label,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size((22f + 8f * progress).dp)
+        )
     }
 }
