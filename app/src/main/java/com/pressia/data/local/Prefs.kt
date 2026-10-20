@@ -103,13 +103,17 @@ class Prefs(private val ctx: Context) {
          * Instant (ms) de la dernière synchronisation complète réussie. Sert de garde-fou au
          * réglage précédent : sans lui, chaque ouverture de l'application relançait une
          * synchronisation, y compris quand on ne fait qu'y jeter un œil.
+         *
+         * État **propre à cet appareil** : hors [ENTRIES] et dans `NON_EXPORTED_PREFS`
+         * (voir `Backup.kt`). Une sauvegarde restaurée ailleurs ne doit pas y importer la date de
+         * l'appareil d'origine, qui ferait sauter ou relancer une synchro sans rapport.
          */
         val LAST_SYNC_AT = longPreferencesKey("last_sync_at")
         /**
          * Instant (ms) de la dernière sauvegarde exportée dans un fichier. Affiché sur l'écran
          * « Sauvegarde/Restauration », 0 = aucune. Posé à chaque export réussi, jamais à
-         * l'import (restaurer n'est pas sauvegarder) — sauf restauration d'une sauvegarde qui
-         * le contenait, comme [LAST_SYNC_AT].
+         * l'import (restaurer n'est pas sauvegarder) — sauf restauration d'une sauvegarde qui le
+         * contenait.
          */
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
         val LAST_BACKUP_META = stringPreferencesKey("last_backup_meta")
@@ -255,7 +259,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("favicon_source", FAVICON_SOURCE),
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
             PrefEntry.Str("unread_only_by_feed", UNREAD_ONLY_BY_FEED),
-            PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH), PrefEntry.LongPref("last_sync_at", LAST_SYNC_AT),
+            PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
             PrefEntry.Str("last_backup_meta", LAST_BACKUP_META),
             PrefEntry.LongPref("stats_since", STATS_SINCE),

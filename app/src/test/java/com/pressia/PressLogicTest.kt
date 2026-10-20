@@ -515,6 +515,11 @@ class PressLogicTest {
             assertTrue("$it ne doit pas sortir", it in com.pressia.data.NON_EXPORTED_PREFS)
             assertFalse("$it ne doit pas être réimportable", it in entryNames())
         }
+        // Date de la dernière synchro réussie : garde-fou de fraîcheur propre à l'appareil. Elle
+        // ne doit ni sortir (une sauvegarde partagée emportait la date de l'autre appareil) ni
+        // rentrer (la restauration sautait ou relançait une synchro sans rapport).
+        assertTrue("last_sync_at ne doit pas sortir", "last_sync_at" in com.pressia.data.NON_EXPORTED_PREFS)
+        assertFalse("last_sync_at ne doit pas être réimportable", "last_sync_at" in entryNames())
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
     }
@@ -605,10 +610,9 @@ class PressLogicTest {
     @Test fun `entrees de preferences sans doublon et sans trou connu`() {
         val names = entryNames()
         assertEquals("un nom de préférence ne doit être déclaré qu'une fois", names.size, names.toSet().size)
-        // last_sync_at est un Long : sans LongPref il partait dans la sauvegarde mais en sortait
-        // toujours, et la restauration déclenchait une synchronisation inutile.
-        assertTrue("last_sync_at" in names)
-        assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "last_sync_at" })
+        // last_sync_at est un état de l'appareil, pas un réglage : il est volontairement absent
+        // d'ENTRIES et exclu de l'export (voir `etat local jamais exporte`).
+        assertFalse("last_sync_at ne doit pas être réimportable", "last_sync_at" in names)
         // Les trois OAuth / comptes que l'écran de connexion renseigne doivent rester exportables
         // (leur secret est filtré séparément, leur identifiant public est destiné à être partagé).
         listOf("inoreader_app_id", "feedly_client_id", "accounts", "active_account").forEach {

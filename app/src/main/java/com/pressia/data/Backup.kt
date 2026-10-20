@@ -43,13 +43,14 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
 /**
  * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file
  * d'attente des favoris restaurés n'a de sens que sur l'appareil qui a déclenché la restauration,
- * et les totaux de non-lus, empreintes Read later et icônes résolues sont des caches dérivés
- * qu'une restauration recalcule ou re-résout.
+ * les totaux de non-lus, empreintes Read later et icônes résolues sont des caches dérivés qu'une
+ * restauration recalcule ou re-résout, et [Prefs.LAST_SYNC_AT] est le garde-fou de fraîcheur
+ * **de cet appareil** (restaurer une date ancienne relançait ou sautait une synchro au hasard).
  */
 val NON_EXPORTED_PREFS = setOf(
     Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name,
     Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name,
-    Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name
+    Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name
 )
 
 /** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
