@@ -250,14 +250,20 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
   (`StreamScaffold` / `SubscriptionsScreen`, `onSwipeBack`) — mais **rétabli tiroir ouvert** : c'est
   ce qui permet de le refermer, le `onClose` du scrim Material étant conditionné par `gesturesEnabled`
   (sinon le clic hors du panneau ne fait rien).
-- Navigation hiérarchique quand « Tous les articles » est la page d'accueil (`startRoute == "stream"`,
+- Navigation hiérarchique quand « Tous les articles » est la page d'accueil (`homeRoute == "stream"`,
   `hierarchical` dans `MainActivity`) : racine (« Tous les articles », `stream` sans périmètre)
   → Accueil (`home`) → dossier/flux (`stream` avec périmètre). Le bouton retour et le balayage vers
-  la droite remontent **d'un niveau** (`goHome()` : dossier/flux → Accueil, Accueil → racine, racine
-  → fermeture) ; un article revient sur la liste du flux, comme avant. À la racine, le balayage
-  ouvre le tiroir (comme sur les autres écrans d'accueil) : c'est `StreamScaffold.onSwipeBack` qui
-  décide, selon `hierarchical && atRoot`. En mode « Accueil » classique, rien de tout cela : le
-  retour depuis un dossier/flux va directement à l'accueil.
+  la droite remontent **d'un niveau** (`goHome()` : dossier/flux → Accueil, Accueil → racine) ; un
+  article revient sur la liste du flux, comme avant. À la racine, le balayage ouvre le tiroir (comme
+  sur les autres écrans d'accueil) : c'est `StreamScaffold.onSwipeBack` qui décide, selon
+  `hierarchical && atRoot`. En mode « Accueil » classique, `goHome()` ramène tout à la page Accueil,
+  qui est alors le dernier niveau.
+- Règle générale du retour : **on remonte vers l'accueil configuré, on ne ferme qu'une fois dessus**
+  (`atHome` = racine si `hierarchical`, sinon la page `home`). C'est ce qui rend le réglage « Page de
+  démarrage » effectif immédiatement : changer l'accueil depuis Réglages ne déplace personne, mais
+  le retour suivant depuis Réglages ramène à la dernière page de contenu (`backToLastContent`), puis
+  la page courante n'étant plus l'accueil configuré, le retour suivant mène à la **nouvelle** page
+  d'accueil, et c'est seulement là qu'un autre retour ferme l'application.
 - Balayage de retour : `rememberBackSwipeState()` + `Modifier.backSwipe(state, onSwipe)` et le repère
   `SwipeBackHint` (`StreamScreen.kt`) sont partagés par `StreamScaffold` et `SubscriptionsScreen`.
   Le détecteur est posé sur la boîte qui **enveloppe** la liste : les lignes d'articles, qui ont leur
@@ -265,13 +271,14 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
   un **interligne de date** (« Hier », « vendredi 16 octobre 2026 », à ~y=347) ou sur l'espace libre,
   jamais sur une ligne d'article. Seuil 120 px, sinon un frôlement change de page.
 - Réglage « Page de démarrage » (`Prefs.HOME_SCREEN`) : `PressVM.homeScreen` démarre à **null**
-  (DataStore répond de façon asynchrone) et `MainActivity` fige la route de la **session**
-  (`sessionHome`) dès la première valeur lue. Deux erreurs à ne pas refaire : figer
-  `remember { startOf(home) }` avec l'ancien défaut `"subs"` imposait l'accueil « Accueil » même
-  quand le réglage disait « Tous les articles » (bug signalé), et suivre le réglage en direct
-  (`key(home)` autour du `NavHost`) recréait la navigation et **éjectait l'utilisateur de l'écran
-  Réglages** au moment du choix. Conséquence voulue : le changement s'applique au lancement suivant,
-  on reste dans Réglages pendant qu'on choisit.
+  (DataStore répond de façon asynchrone) et le contenu de `MainActivity` n'est composé qu'une fois la
+  valeur lue (`if (home == null) { Box; return@PressIATheme }`). Sans cette attente, la navigation
+  démarrait sur le défaut « Accueil » et le `NavController` **gardait** cette entrée quand le réglage
+  arrivait (démarrage erroné, constaté). La route de départ du `NavHost` est ensuite figée
+  (`startRoute`, lue une fois) : recréer le graphe / `key(home)` éjectait l'utilisateur de l'écran
+  Réglages au moment du choix. La valeur courante, elle, est suivie en direct (`homeRoute`) et pilote
+  `hierarchical`, `atHome` et `goHome()` — c'est elle qui rend le changement immédiat (voir la note
+  « retour » ci-dessus).
 - Readability « persistant » coupé : le mode complet épinglé retombe dès qu'on **quitte la vue
   article** (`LaunchedEffect(current)` dans `MainActivity` → `vm.onLeftArticle()`), pas seulement au
   retour à l'accueil ; le balayage d'un article à l'autre ne change pas de destination et le

@@ -66,28 +66,45 @@ class MainActivity : ComponentActivity() {
                 vm.refresh()
             }
             PressIATheme(theme, accent, bg) {
+                // Réglage « page d'accueil » pas encore lu (DataStore répond de façon
+                // asynchrone, voir PressVM.homeScreen) : ne pas composer la navigation. Elle
+                // démarrerait sur le défaut « Accueil », et le NavController garderait cette
+                // entrée quand le réglage arrive — l'app s'ouvrait alors sur Accueil alors que
+                // le réglage dit « Tous les articles » (constaté). Le blanc dure une image, le
+                // thème est déjà posé.
+                if (home == null) {
+                    Box(Modifier.fillMaxSize())
+                    return@PressIATheme
+                }
                 val nav = rememberNavController()
                 val drawer = rememberDrawerState(DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 val backStack by nav.currentBackStackEntryAsState()
-                // Page d'accueil de la session, figée dès la première lecture de DataStore
-                // (null = pas encore lu, voir PressVM.homeScreen). Deux pièges évités :
-                //  - figer la valeur par défaut « subs » avant lecture faisait démarrer sur
-                //    « Accueil » même quand le réglage disait « Tous les articles » (bug signalé) ;
-                //  - suivre le réglage en direct recrée le NavHost, ce qui éjectait l'utilisateur
-                //    de l'écran Réglages au moment même du choix. Il s'applique au lancement suivant.
-                val sessionHome = remember { mutableStateOf<String?>(null) }
+                // Page d'accueil : `home` suit le réglage en direct (null tant que DataStore n'a
+                // pas répondu, voir PressVM.homeScreen). Seule la route de départ du NavHost est
+                // figée (`startRoute`, lue une fois) : la recréer éjectait l'utilisateur de
+                // l'écran Réglages au moment même du choix.
+                //
+                // Le réglage est malgré tout pris en compte immédiatement : `homeRoute` suit la
+                // valeur courante, et la règle de retour est « on remonte vers l'accueil
+                // configuré, on ne ferme qu'une fois dessus ». Changer la page d'accueil depuis
+                // Réglages ne déplace donc personne ; c'est le retour suivant (depuis Réglages,
+                // puis depuis la page courante) qui mène vers la nouvelle page d'accueil.
+                val sessionHome = rememberSaveable { mutableStateOf<String?>(null) }
                 if (sessionHome.value == null && home != null) sessionHome.value = home
+                // Départ du NavHost (figé) et accueil configuré (suit le réglage).
                 val startRoute = startOf(sessionHome.value ?: "subs")
+                val homeRoute = startOf(home ?: sessionHome.value ?: "subs")
                 val current = backStack?.destination?.route?.substringBefore("/") ?: startRoute
                 // Accueil « Tous les articles » : hiérarchie racine → Accueil → dossier/flux.
                 // Le geste vers la droite et le retour remontent donc d'un niveau au lieu de
                 // quitter le périmètre courant, et le tiroir s'ouvre depuis la racine.
-                val hierarchical = startRoute == "stream"
+                val hierarchical = homeRoute == "stream"
                 // Racine : « Tous les articles » (aucun dossier, aucun flux sélectionné).
                 val atRoot = current == "stream" && vm.scope.feedId == null && vm.scope.categoryId == null
-                // « Page d'accueil » = l'écran de démarrage. En mode hiérarchique, c'est la
-                // racine (« Tous les articles »), pas la page Accueil qui n'en est qu'une étape.
+                // Sur la page d'accueil configurée. En mode hiérarchique, c'est la racine
+                // (« Tous les articles »), pas la page Accueil qui n'en est qu'une étape.
+                // Seul cet endroit-là ferme l'application au retour.
                 val atHome = if (hierarchical) atRoot else current == "home"
 
                 // Dernière destination de contenu réellement visitée (accueil, dossier ou article).
@@ -147,36 +164,26 @@ class MainActivity : ComponentActivity() {
                 }
 
                 /**
-                 * Remonte d'un niveau.
+                 * Remonte vers la page d'accueil configurée (réglage lu en direct).
                  *
-                 * Accueil = « Tous les articles » : hiérarchie racine (« Tous les articles »)
-                 * → Accueil → dossier/flux. Depuis un dossier ou un flux, on revient donc à la
-                 * page Accueil ; depuis l'Accueil, à la racine. Un second retour à la racine
-                 * ferme l'application.
+                 * Accueil = « Tous les articles » : racine (« Tous les articles ») → Accueil
+                 * → dossier/flux. Depuis un dossier ou un flux, on revient à la page Accueil ;
+                 * depuis l'Accueil, à la racine. Un retour à la racine ferme l'application.
                  *
-                 * Accueil = « Accueil » (non hiérarchique) : dossier/flux → accueil.
+                 * Accueil = « Accueil » : tout (dossier, flux, ou « Tous les articles ») ramène
+                 * à la page Accueil, qui est alors le dernier niveau.
                  */
                 fun goHome() {
-                    if (hierarchical) {
-                        if (current == "home") {
-                            // Accueil → racine : dernier niveau, le flux courant redevient
-                            // « Tous les articles ».
-                            vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
-                            openContent("stream")
-                        } else {
-                            // Dossier/flux → Accueil.
-                            openContent("home")
-                        }
+                    if (hierarchical && current == "home") {
+                        // Accueil → racine : dernier niveau, le flux courant redevient
+                        // « Tous les articles ».
+                        vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
+                        openContent("stream")
                         return
                     }
-                    if (startRoute == "home") {
-                        openContent("home")
-                    } else {
-                        // Accueil = « Tous les articles » : on change de flux, on ne quitte pas l'écran.
-                        // Comme openContent("home") ci-dessus : le retour désépingle Readability.
-                        scope.launch { vm.onLeftArticle() }
-                        vm.switchScope(Scope(label = "Tous les articles")); vm.refresh()
-                    }
+                    // Dossier/flux → Accueil (mode hiérarchique), ou n'importe quelle page de
+                    // contenu → Accueil (mode classique).
+                    openContent("home")
                 }
 
                 fun openDrawer() = scope.launch { drawer.open() }
@@ -201,11 +208,14 @@ class MainActivity : ComponentActivity() {
                 /**
                  * Comportement du bouton retour, identique sur toutes les destinations :
                  *  - drawer ouvert          → il se referme ;
-                 *  - écran utilitaire       → retour à la dernière page d'accueil / catégorie / article ;
+                 *  - écran utilitaire       → dernière page de contenu (l'article ou la liste d'où
+                 *                             l'on vient, pas la pile des écrans déjà quittés) ;
                  *  - Accueil (mode hiérarchique) → la racine « Tous les articles » ;
-                 *  - flux (dossier ou flux) → l'Accueil en mode hiérarchique, la racine sinon ;
-                 *  - sur la page d'accueil  → l'application se ferme ;
-                 *  - article                 → retour à l'écran précédent (liste, dossier, article précédent).
+                 *  - « Tous les articles », dossier, flux → la page d'accueil configurée
+                 *                             (lue en direct : un réglage changé depuis Réglages
+                 *                             est donc pris en compte tout de suite) ;
+                 *  - sur la page d'accueil configurée → l'application se ferme ;
+                 *  - article                → retour à l'écran précédent (liste, dossier, article précédent).
                  *
                  * Doit être déclarée DANS la destination : la NavHost enregistre son propre
                  * gestionnaire de retour, et seul le dernier gestionnaire activé l'emporte.
@@ -221,6 +231,8 @@ class MainActivity : ComponentActivity() {
                             // c'est-à-dire la racine. En mode « Accueil » classique, l'accueil
                             // est le point d'entrée : retour = fermeture.
                             current == "home" -> if (hierarchical) goHome() else finish()
+                            // « Tous les articles », dossier ou flux : on va vers l'accueil
+                            // configuré (la racine si c'est elle, l'Accueil classique sinon).
                             current == "stream" && !atHome -> goHome()
                             atHome -> finish()
                             else -> nav.popBackStack()
@@ -252,7 +264,7 @@ class MainActivity : ComponentActivity() {
                         // périmètre et la destination de retour, l'utilisateur reste où il est.
                         vm.switchScope(Scope(label = "Tous les articles"))
                         vm.refresh()
-                        lastContent = startRoute
+                        lastContent = homeRoute
                     }
                 }
 
