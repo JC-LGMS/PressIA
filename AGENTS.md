@@ -197,11 +197,22 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
 - La position du rond lu/non-lu (`dotAtStart`) pilote aussi celle de l'étoile de swipe : les deux
   doivent rester du même côté, sinon l'information saute d'un bout à l'autre de la ligne au geste.
 - Les champs de config OAuth (`FEEDLY_CLIENT_ID`, `INOREADER_APP_ID`, …) sont lus dans
-  `local.properties` ou l'environnement ; ils sont vides par défaut et ne servent qu'au flux
-  OAuth générique (`OAuthWebViewScreen`, utilisé par Inoreader). **Feedly n'en a pas besoin** :
-  sa connexion passe par la page officielle intégrée (`FeedlySignInScreen`, identifiants
-  saisis sur feedly.com, jeton de session récupéré automatiquement) — ne pas conclure
-  qu'un compte distant ne peut pas s'authentifier sous prétexte que ces champs sont vides.
+  `local.properties` ou l'environnement. **Feedly n'en a pas besoin** : sa connexion passe par
+  la page officielle intégrée (`FeedlySignInScreen`, identifiants saisis sur feedly.com,
+  jeton de session récupéré automatiquement) — ne pas conclure qu'un compte distant ne peut
+  pas s'authentifier sous prétexte que ces champs sont vides.
+- **Identifiants d'application Inoreader (`AppId` / `AppKey`) : ce n'est pas un OAuth, c'est
+  l'« authentification applicative »**, exigée par l'API sur *chaque* appel, à côté de
+  l'authentification utilisateur (403 sinon). Par défaut ce sont ceux de l'extension
+  officielle du navigateur (`build.gradle.kts`) : `1000001524` / `uxILTlPQilTphfcf4xwBEspL_0EDaUZL`
+  — publics par construction, identiques dans tous les bundles de l'extension, et suffisants
+  pour l'API. `local.properties` ou l'environnement les remplacent (application déclarée par
+  le développeur). Ils sont publiés dans `InoreaderAppAuth` et injectés en en-tête par
+  l'intercepteur du client Retrofit ; **omis quand ils manquent** (le refus serait le même).
+  - Conséquence : le flux **OAuth** Inoreader exige, lui, une application *à soi* (URL de
+    redirection `pressia://oauth/inoreader` déclarée) — l'identifiant par défaut n'a pas
+    notre redirection, Inoreader refuserait le retour. D'où les champs de l'écran Comptes
+    qui démarrent **vides** : c'est à l'utilisateur de saisir les siens.
 - **Inoreader : connexion « par session »** (`InoreaderSignInScreen`, comme Feedly) : la page
   `www.inoreader.com` s'ouvre dans une WebView, l'utilisateur s'y connecte, et le **cookie de
   session** est récupéré du bac natif (`CookieManager`) — c'est le mécanisme de l'extension

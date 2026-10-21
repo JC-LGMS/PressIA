@@ -139,7 +139,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         if (session == null) {
             busy = false
             status = if (!hasAppAuth) {
-                "Session Inoreader refusée : identifiants d'application manquants " +
+                "Session Inoreader refusée : identifiants d'application Inoreader manquants " +
                     "(INOREADER_APP_ID / INOREADER_APP_KEY dans local.properties)."
             } else {
                 "Session Inoreader non valide. Terminez la connexion sur la page puis « Réessayer »."

@@ -23,17 +23,28 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        // OAuth placeholders — surchargeables via local.properties ou variables d'env.
+        // OAuth placeholders - surchargeables via local.properties ou variables d'env.
         // Utiles seulement au flux OAuth générique (Inoreader via OAuthWebViewScreen).
-        // Feedly : https://feedly.com/v3/auth/dev — renseignez FEEDLY_CLIENT_ID / FEEDLY_CLIENT_SECRET
+        // Feedly : https://feedly.com/v3/auth/dev - renseignez FEEDLY_CLIENT_ID / FEEDLY_CLIENT_SECRET
         // uniquement si vous passez par ce flux ; la connexion Feedly normale (FeedlySignInScreen :
         // page officielle intégrée, jeton de session récupéré) utilise le client_id=feedly public.
         // Inoreader : https://www.inoreader.com/developers/register-app
+        //
+        // Identifiants Inoreader par défaut : ceux de l'extension officielle du navigateur
+        // (Inoreader Browser Extension, « Innologica »), identiques dans tous ses bundles :
+        //   APP_ID  = 1000001524
+        //   APP_KEY = uxILTlPQilTphfcf4xwBEspL_0EDaUZL
+        // Ils sont publics par construction (l'extension est du JavaScript côté client) et
+        // servent d'« authentification applicative » : l'API les exige sur CHAQUE appel,
+        // à côté de l'authentification utilisateur. Sans eux, Inoreader répond 403.
+        // Un compte de l'application (identifiants déclarés par le développeur) reste
+        // prioritaire : renseignez INOREADER_APP_ID / INOREADER_APP_KEY dans
+        // local.properties ou l'environnement pour le remplacer.
         buildConfigField("String", "FEEDLY_CLIENT_ID", "\"${project.findProperty("FEEDLY_CLIENT_ID") ?: System.getenv("FEEDLY_CLIENT_ID") ?: ""}\"")
         buildConfigField("String", "FEEDLY_CLIENT_SECRET", "\"${project.findProperty("FEEDLY_CLIENT_SECRET") ?: System.getenv("FEEDLY_CLIENT_SECRET") ?: ""}\"")
         buildConfigField("String", "FEEDLY_REDIRECT_URI", "\"pressia://oauth/feedly\"")
-        buildConfigField("String", "INOREADER_APP_ID", "\"${project.findProperty("INOREADER_APP_ID") ?: System.getenv("INOREADER_APP_ID") ?: ""}\"")
-        buildConfigField("String", "INOREADER_APP_KEY", "\"${project.findProperty("INOREADER_APP_KEY") ?: System.getenv("INOREADER_APP_KEY") ?: ""}\"")
+        buildConfigField("String", "INOREADER_APP_ID", "\"${project.findProperty("INOREADER_APP_ID") ?: System.getenv("INOREADER_APP_ID") ?: "1000001524"}\"")
+        buildConfigField("String", "INOREADER_APP_KEY", "\"${project.findProperty("INOREADER_APP_KEY") ?: System.getenv("INOREADER_APP_KEY") ?: "uxILTlPQilTphfcf4xwBEspL_0EDaUZL"}\"")
         buildConfigField("String", "INOREADER_REDIRECT_URI", "\"pressia://oauth/inoreader\"")
         val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")

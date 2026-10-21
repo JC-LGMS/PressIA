@@ -45,8 +45,8 @@ fun LoginScreen(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var service by remember { mutableStateOf<String?>(null) }   // service en cours de connexion
-    var inoreaderId by remember { mutableStateOf(BuildConfig.INOREADER_APP_ID) }
-    var inoreaderKey by remember { mutableStateOf(BuildConfig.INOREADER_APP_KEY) }
+    var inoreaderId by remember { mutableStateOf("") }
+    var inoreaderKey by remember { mutableStateOf("") }
     var rssUrl by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
     var instaUser by remember { mutableStateOf("") }
@@ -68,8 +68,12 @@ fun LoginScreen(
 
     LaunchedEffect(Unit) {
         val d = vm.repo.prefs.data.first()
-        inoreaderId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
-        inoreaderKey = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
+        // Identifiants de l'application Inoreader de l'utilisateur (s'il en a enregistré une).
+        // Vide par défaut : l'identifiant par défaut, celui de l'extension officielle, sert à
+        // l'« authentification applicative » mais n'a pas notre URL de redirection déclarée —
+        // le flux OAuth exigerait une application à lui.
+        inoreaderId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() }.orEmpty()
+        inoreaderKey = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() }.orEmpty()
         localFeeds = vm.repo.localFeeds()
         vm.loadAccount()
     }
@@ -124,40 +128,45 @@ fun LoginScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        // Connexion OAuth : conservée pour qui a enregistré une application Inoreader
-        // (identifiants dans local.properties ou dans les Réglages). Le chemin par session
-        // ci-dessus reste le plus simple — les deux coexistent.
-        if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
-            OutlinedButton(
-                { service = if (service == "inoreader") null else "inoreader"; msg = "" },
-                Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (service == "inoreader") "Annuler la connexion OAuth Inoreader" else "Connexion OAuth Inoreader (application enregistrée)")
-            }
-            if (service == "inoreader") {
-                OutlinedTextField(
-                    inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                OutlinedTextField(
-                    inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
-                    modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                Button({
-                    scope.launch {
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
-                        vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
-                        onOAuth("inoreader")
-                    }
-                }, Modifier.fillMaxWidth()) { Text("Valider et connecter") }
-                Text(
-                    "La page Inoreader s'ouvre ensuite dans l'application.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        // Connexion OAuth : chemin « avancé », qui exige une application Inoreader
+        // enregistrée par le développeur, avec `pressia://oauth/inoreader` comme URL de
+        // redirection. Les champs démarrent **vides** : l'identifiant par défaut (celui de
+        // l'extension officielle, qui sert à l'authentification applicative) n'a pas notre
+        // URL de redirection déclarée — Inoreader refuserait le retour.
+        OutlinedButton(
+            { service = if (service == "inoreader") null else "inoreader"; msg = "" },
+            Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (service == "inoreader") "Annuler la connexion OAuth Inoreader" else "Connexion OAuth Inoreader (application enregistrée)")
+        }
+        if (service == "inoreader") {
+            OutlinedTextField(
+                inoreaderId, { inoreaderId = it }, label = { Text("Inoreader App ID") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            OutlinedTextField(
+                inoreaderKey, { inoreaderKey = it }, label = { Text("Inoreader App Key") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            Button({
+                scope.launch {
+                    vm.repo.prefs.set(Prefs.INOREADER_APP_ID, inoreaderId)
+                    vm.repo.prefs.set(Prefs.INOREADER_APP_KEY, inoreaderKey)
+                    // Les identifiants saisis sont publiés aussitôt : l'API Inoreader les
+                    // exige en en-tête sur chaque appel.
+                    vm.repo.refreshInoreaderAppAuth()
+                    onOAuth("inoreader")
+                }
+            }, Modifier.fillMaxWidth(), enabled = inoreaderId.isNotBlank()) { Text("Valider et connecter") }
+            Text(
+                "Nécessite une application créée sur inoreader.com/developers, avec l'URL de " +
+                    "redirection « pressia://oauth/inoreader ». La page Inoreader s'ouvre ensuite " +
+                    "dans l'application.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // ---- comptes connectés : regroupés avec l'agrégateur ---------------------------------
