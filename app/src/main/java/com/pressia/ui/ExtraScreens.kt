@@ -163,7 +163,7 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
             Button(
                 {
                     scope.launch {
-                        vm.loadDups()
+                        vm.loadDupsNow()
                         toast(ctx, "Recherche de doublons terminée")
                     }
                 },
@@ -516,10 +516,9 @@ fun SettingsScreen(vm: PressVM) {
     var swipeRight by remember { mutableStateOf("read") }
     var articleActions by remember { mutableStateOf(parseArticleActions(ARTICLE_ACTIONS_DEFAULT)) }
     var fontSize by remember { mutableStateOf(16) }
-    var articleTitle by remember { mutableStateOf(20) }
+    var articleTitle by remember { mutableStateOf(19) }
     var titleFont by remember { mutableStateOf(16) }
     var dateFont by remember { mutableStateOf(12) }
-    var justify by remember { mutableStateOf(false) }
     var wifiOnly by remember { mutableStateOf(true) }
     var maxItems by remember { mutableStateOf(1000) }
     var historyMonths by remember { mutableStateOf(Prefs.HISTORY_MONTHS_DEFAULT) }
@@ -557,9 +556,9 @@ fun SettingsScreen(vm: PressVM) {
         swipe = get(Prefs.SWIPE_ACTION, "star")
         swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
         articleActions = parseArticleActions(get(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT))
-        fontSize = get(Prefs.FONT_SIZE, 16); articleTitle = get(Prefs.ARTICLE_TITLE_SIZE, 20)
+        fontSize = get(Prefs.FONT_SIZE, 16); articleTitle = get(Prefs.ARTICLE_TITLE_SIZE, 19)
         titleFont = get(Prefs.TITLE_FONT_SIZE, 16)
-        dateFont = get(Prefs.DATE_FONT_SIZE, 12); justify = get(Prefs.JUSTIFY, false)
+        dateFont = get(Prefs.DATE_FONT_SIZE, 12)
         wifiOnly = get(Prefs.WIFI_ONLY, true); maxItems = get(Prefs.MAX_ITEMS, 1000)
         historyMonths = get(Prefs.HISTORY_MONTHS, Prefs.HISTORY_MONTHS_DEFAULT)
         faviconSource = get(Prefs.FAVICON_SOURCE, com.pressia.data.FAVICON_SOURCE_AGGREGATOR)
@@ -579,7 +578,7 @@ fun SettingsScreen(vm: PressVM) {
     LaunchedEffect(vm.refreshingFavicons) {
         if (!vm.refreshingFavicons) refreshCacheInfo()
     }
-    fun clearCache() = scope.launch {
+    suspend fun clearCache() {
         vm.repo.clearCache()
         coil.Coil.imageLoader(ctx).diskCache?.clear()
         refreshCacheInfo()
@@ -605,7 +604,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.ARTICLE_ACTIONS, articleActions.joinToString(","))
         vm.repo.prefs.set(Prefs.FONT_SIZE, fontSize); vm.repo.prefs.set(Prefs.ARTICLE_TITLE_SIZE, articleTitle)
         vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
-        vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont); vm.repo.prefs.set(Prefs.JUSTIFY, justify)
+        vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont)
         vm.repo.prefs.set(Prefs.WIFI_ONLY, wifiOnly); vm.repo.prefs.set(Prefs.MAX_ITEMS, maxItems)
         vm.repo.prefs.set(Prefs.HISTORY_MONTHS, historyMonths)
         vm.repo.prefs.set(Prefs.FAVICON_SOURCE, faviconSource)

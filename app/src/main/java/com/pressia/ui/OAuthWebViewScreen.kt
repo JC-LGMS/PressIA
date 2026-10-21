@@ -38,11 +38,14 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    // `state` anti-CSRF, fixé une fois pour l'écran : le régénérer à chaque appel d'`authUrl()`
+    // (composition, update) ferait diverger l'URL chargée de celle qu'on vérifie au retour.
+    val oauthState = remember(provider) { OAuth.beginState() }
 
     fun authUrl(): String? {
         if (clientId.isBlank() || redirect.isBlank()) return null
-        return if (provider == "feedly") OAuth.feedlyAuthUrl(clientId, redirect)
-        else OAuth.inoreaderAuthUrl(clientId, redirect)
+        return if (provider == "feedly") OAuth.feedlyAuthUrl(clientId, redirect, oauthState)
+        else OAuth.inoreaderAuthUrl(clientId, redirect, oauthState)
     }
 
     LaunchedEffect(provider) {
@@ -79,12 +82,9 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
                 vm.repo.prefs.set(
                     if (provider == "feedly") Prefs.FEEDLY_CLIENT_SECRET else Prefs.INOREADER_APP_KEY, clientSecret
                 )
-                vm.repo.prefs.set(
-                    if (provider == "feedly") Prefs.FEEDLY_CLIENT_ID else Prefs.INOREADER_APP_ID, clientId
-                )
-                vm.repo.prefs.set(
-                    if (provider == "feedly") Prefs.FEEDLY_CLIENT_SECRET else Prefs.INOREADER_APP_KEY, clientSecret
-                )
+                // Identifiants d'application publiés aussitôt : l'API Inoreader les exige en
+                // en-tête sur chaque appel, y compris sur les appels qui suivent l'échange.
+                if (provider != "feedly") vm.repo.refreshInoreaderAppAuth()
                 val tok = if (provider == "feedly") OAuth.feedlyToken(code, clientId, clientSecret, redirect)
                 else OAuth.inoreaderToken(code, clientId, clientSecret, redirect)
                 if (!tok.isNullOrBlank()) {
@@ -110,6 +110,11 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
 
     fun handleUrl(url: String): Boolean {
         val res = OAuth.parseRedirect(url, redirect.ifBlank { "pressia://oauth" }) ?: return false
+        // Retour d'une autre page / d'un autre onglet : on l'ignore sans rien afficher.
+        if (!OAuth.checkState(res.state)) {
+            error = "Retour OAuth refusé : état de sécurité absent ou différent de celui émis."
+            return true
+        }
         if (!res.code.isNullOrBlank()) onCode(res.code)
         else {
             error = when (res.error) {
@@ -188,6 +193,13 @@ private fun WebLoginView(url: String, redirectBase: String, onRedirect: (String)
                 }
                 onView(this)
             }
+        },
+        onRelease = { wv ->
+            // Une WebView non détruite garde un contexte, un moteur de rendu et des cookies :
+            // une par connexion s'accumulait. `about:blank` d'abord, pour couper le chargement
+            // en cours avant `destroy()`.
+            wv.loadUrl("about:blank")
+            wv.destroy()
         },
         update = { wv ->
             if (firstLoad) {

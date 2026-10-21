@@ -202,6 +202,24 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
   sa connexion passe par la page officielle intégrée (`FeedlySignInScreen`, identifiants
   saisis sur feedly.com, jeton de session récupéré automatiquement) — ne pas conclure
   qu'un compte distant ne peut pas s'authentifier sous prétexte que ces champs sont vides.
+- **Inoreader : connexion « par session »** (`InoreaderSignInScreen`, comme Feedly) : la page
+  `www.inoreader.com` s'ouvre dans une WebView, l'utilisateur s'y connecte, et le **cookie de
+  session** est récupéré du bac natif (`CookieManager`) — c'est le mécanisme de l'extension
+  officielle Inoreader pour navigateur, transposé en application native. Le cookie porte
+  l'identifiant de session (`SID`, protocole `ClientLogin`), que l'API Reader accepte dans
+  l'en-tête `Authorization: GoogleLogin auth=…` — le même schéma que le jeton OAuth, donc
+  rien à distinguer côté provider. La validation se fait par un **vrai appel API**
+  (`user-info`), jamais sur une simple ressemblance : c'est elle qui dit si la session est
+  exploitable. Le flux OAuth reste disponible (Comptes → « Connexion OAuth Inoreader »).
+  - `AppId` / `AppKey` sont **exigés par l'API sur chaque appel** (403 sinon) : ils sont
+    publiés dans `InoreaderAppAuth` et injectés en en-tête par l'intercepteur du client
+    Retrofit (`CloudApis`). Les en-têtes sont **ometts quand les identifiants manquent** :
+    inutile d'envoyer un en-tête vide, le refus est le même.
+  - Candidat de session : `inoreaderSessionCandidates` (pur, testé) tire les valeurs de
+    l'en-tête `Cookie`, `SID`/`LSID` d'abord — Inoreader compte les requêtes au quota, on
+    n'insiste pas. Le « connexion bloquée ? » ne se déclenche que si le **formulaire de
+    connexion a disparu** (`input[type=password]`) sans cookie lisible : sinon il
+    s'agirait d'un simple utilisateur en train de saisir ses identifiants.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
   `exportSchema = false`, version DB actuelle : 5.
 - Réglage ajouté, modifié ou supprimé = cycle complet obligatoire : clé dans `Prefs`,

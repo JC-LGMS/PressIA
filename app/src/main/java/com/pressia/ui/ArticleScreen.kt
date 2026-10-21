@@ -63,7 +63,6 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     var loadingFull by remember { mutableStateOf(false) }
     var blockedNotice by remember { mutableStateOf(false) }
     val fontSize by vm.fontSize.collectAsState()
-    val justify by vm.justify.collectAsState()
     val titleSp by vm.articleTitle.collectAsState()
     // Icônes configurées en Réglages, dans l'ordre choisi (le menu reste toujours en dernier).
     val topActions by vm.articleActions.collectAsState()
@@ -140,8 +139,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
         // Mode épinglé par l'icône Readability : chaque article ouvert passe en complet.
         if (vm.readabilityOn) loadFull(quiet = true)
     }
-    val start = remember { System.currentTimeMillis() }
     DisposableEffect(articleId) {
+        // Chronomètre par article : il repart à chaque balayage vers un autre article.
+        // (Un `remember` non clé gardait l'heure du premier article et cumulait les durées.)
+        val start = System.currentTimeMillis()
         onDispose {
             val secs = ((System.currentTimeMillis() - start) / 1000).toInt()
             val cur = article
@@ -395,7 +396,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         text = b.text,
                         fontSize = fontSize.sp,
                         lineHeight = (fontSize + 6).sp,
-                        style = if (justify) MaterialTheme.typography.bodyLarge.copy() else MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     is ABlock.I -> coil.compose.AsyncImage(thumbModel(ctx, b.url), null,

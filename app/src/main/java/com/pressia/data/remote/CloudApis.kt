@@ -1,5 +1,6 @@
 package com.pressia.data.remote
 
+import com.pressia.BuildConfig
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
@@ -160,13 +161,47 @@ interface InoreaderService {
     companion object {
         fun create(): InoreaderService {
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
-            val client = OkHttpClient.Builder().build()
+            val client = OkHttpClient.Builder()
+                // Authentification applicative Inoreader : exigée sur *chaque* appel, à côté
+                // de l'authentification utilisateur (en-tête `Authorization`). Sans elle,
+                // l'API répond 403 (« You are not sending the correct AppID and/or
+                // AppSecret ») — c'est aussi ce que fait l'extension officielle du
+                // navigateur, qui passe les mêmes valeurs en paramètre d'URL parce
+                // qu'elle ne maîtrise pas les en-têtes.
+                .addInterceptor { chain ->
+                    val builder = chain.request().newBuilder()
+                    val id = InoreaderAppAuth.appId.trim()
+                    val key = InoreaderAppAuth.appKey.trim()
+                    // En-têtes omis quand les identifiants manquent : une application sans
+                    // identifiant enregistré ne peut de toute façon pas passer
+                    // l'authentification applicative, et Inoreader répond 403 dans les
+                    // deux cas — autant ne pas envoyer un en-tête vide.
+                    if (id.isNotEmpty() && key.isNotEmpty()) {
+                        builder.header("AppId", id)
+                        builder.header("AppKey", key)
+                    }
+                    chain.proceed(builder.build())
+                }
+                .build()
             return Retrofit.Builder().baseUrl("https://www.inoreader.com/")
                 .client(client)
                 .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                 .build().create(InoreaderService::class.java)
         }
     }
+}
+
+/**
+ * Identifiants d'application Inoreader (`AppId` / `AppKey`), injectés en en-tête sur
+ * chaque appel d'API.
+ *
+ * Ils viennent de `local.properties` (donc de `BuildConfig`) et peuvent être
+ * redéfinis par l'utilisateur dans les Réglages : d'où un détenteur mis à jour à chaud
+ * plutôt qu'un en-tête figé à la construction du client Retrofit.
+ */
+object InoreaderAppAuth {
+    @Volatile var appId: String = BuildConfig.INOREADER_APP_ID
+    @Volatile var appKey: String = BuildConfig.INOREADER_APP_KEY
 }
 
 @Serializable data class InoreaderSub(val id: String, val title: String, val url: String? = null, val htmlUrl: String? = null, val categories: List<InoreaderCat> = emptyList(), val iconUrl: String? = null)

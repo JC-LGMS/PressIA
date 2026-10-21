@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import androidx.room.Room
+import com.pressia.BuildConfig
 import com.pressia.data.local.*
 import com.pressia.data.readability.Readability
 import com.pressia.data.remote.*
@@ -2769,6 +2770,35 @@ class PressRepository(
      */
     suspend fun verifyFeedlySession(token: String): String? = withContext(Dispatchers.IO) {
         runCatching { feedly.profile(token)?.takeIf { it.isNotBlank() } }.getOrNull()
+    }
+
+    /**
+     * Session web Inoreader (cookie de session capturé dans une WebView) acceptée ?
+     *
+     * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. La
+     * validation se fait par un **vrai appel API** (`user-info`) : c'est elle qui dit
+     * si la session est exploitable, pas l'allure du jeton. Renvoie la session
+     * validée (jeton + libellé du profil) ou null.
+     */
+    suspend fun verifyInoreaderWebSession(tokens: List<String>): WebSession? =
+        withContext(Dispatchers.IO) { inoreader.verifyWebSession(tokens) }
+
+    /**
+     * Identifiants d'application Inoreader (`AppId` / `AppKey`), exigés par l'API sur
+     * chaque appel.
+     *
+     * Ils sont lus des préférences (l'utilisateur peut les redéfinir dans les Réglages)
+     * et/publiés dans [InoreaderAppAuth], lu par l'intercepteur du client Retrofit.
+     * Sans identifiant enregistré, l'API répond 403 : on le signale plutôt que de
+     * laisser une synchro échouer sans explication.
+     */
+    suspend fun refreshInoreaderAppAuth(): Boolean = withContext(Dispatchers.IO) {
+        val d = prefs.data.first()
+        val id = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
+        val key = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
+        InoreaderAppAuth.appId = id.trim()
+        InoreaderAppAuth.appKey = key.trim()
+        InoreaderAppAuth.appId.isNotEmpty() && InoreaderAppAuth.appKey.isNotEmpty()
     }
 }
 

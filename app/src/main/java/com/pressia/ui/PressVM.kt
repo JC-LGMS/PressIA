@@ -235,7 +235,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * disait « Tous les articles » (valeur par défaut figée par `remember`, bug signalé).
      */
     val homeScreen: StateFlow<String?> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    val justify: StateFlow<Boolean> = prefs.flow(Prefs.JUSTIFY, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")
     val hasCloudAccounts: Boolean get() = accounts.isNotEmpty()
@@ -259,6 +258,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     init {
         viewModelScope.launch { migrateAppearance() }
+        // Identifiants d'application Inoreader (`AppId` / `AppKey`) : l'API les exige sur
+        // chaque appel, en plus de l'authentification utilisateur. Ils sont publiés au
+        // démarrage (l'utilisateur peut les redéfinir dans les Réglages) — sans eux,
+        // toute lecture de compte Inoreader se heurte à un 403.
+        viewModelScope.launch { repo.refreshInoreaderAppAuth() }
         // Étapes publiées par le pipeline partagé (manuel, lancement) : le bandeau
         // les suit quel que soit le déclencheur. Les nulls (fin de passe, voir les
         // `finally` du dépôt) sont ignorés : sans cela l'écran rouvert plus tard dans le
@@ -348,9 +352,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     /**
      * Filtre « non-lus seuls » du périmètre courant : chaque flux rouvre avec son dernier
-     * choix d'œil ([Prefs.UNREAD_ONLY_BY_FEED]), les périmètres jamais réglés suivent le
-     * défaut global ([Prefs.SHOW_UNREAD_ONLY]). L'écran Favoris garde son propre filtre
-     * local, hors persistance.
+     * choix d'œil ([Prefs.UNREAD_ONLY_BY_FEED]) ; un périmètre jamais réglé repart sur
+     * « non-lus seuls ». L'écran Favoris garde son propre filtre local, hors persistance.
      */
     var unreadOnly by mutableStateOf(true)
 
@@ -368,7 +371,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             val o = org.json.JSONObject(data[Prefs.UNREAD_ONLY_BY_FEED].orEmpty())
             if (o.has(key)) o.optBoolean(key) else null
         }.getOrNull()
-        unreadOnly = per ?: data[Prefs.SHOW_UNREAD_ONLY] ?: true
+        unreadOnly = per ?: true
     }
 
     /** Pose le filtre du périmètre courant (œil), sans toucher aux autres flux. */
@@ -785,7 +788,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
     /** Aucune analyse au démarrage de l'écran : le scan ne part que sur demande explicite. */
     var dupScanned by mutableStateOf(false)
-    fun loadDups() = viewModelScope.launch { dups = repo.duplicateGroups(); dupScanned = true }
+    /** Version attendable : l'écran n'annonce « terminé » qu'une fois la liste posée. */
+    suspend fun loadDupsNow() {
+        dups = repo.duplicateGroups()
+        dupScanned = true
+    }
+    fun loadDups() = viewModelScope.launch { loadDupsNow() }
     fun loadAccount() = viewModelScope.launch {
         repo.migrateLegacyAccount()
         account = repo.accountInfo()

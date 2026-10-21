@@ -115,12 +115,14 @@ fun ArticleRow(
     // Titres déjà en base avec des entités HTML (« &nbsp; », …) : nettoyés à l'affichage.
     val title = remember(a.title) { cleanTitle(a.title).ifBlank { "(sans titre)" } }
     /**
-     * Où vit le rond lu/non-lu : à gauche dans la vue magazine, et dans la vue liste seulement
-     * quand l'article n'a pas d'image (la place de l'image). Partout ailleurs il est à droite.
+     * Où vit le rond lu/non-lu : à gauche dans la vue magazine (sur la ligne de méta) et dans la
+     * vue liste seulement quand l'article n'a pas d'image (la place de l'image). Partout
+     * ailleurs il est à droite.
      *
      * Cette position commande aussi celle de l'étoile du swipe : elle doit apparaître exactement
      * là où le rond se trouvait, sinon le geste déplaçait l'information d'un bout à l'autre de la
-     * ligne. Elle évite au passage le double rond de la vue liste sur un article sans image.
+     * ligne. Elle évite au passage le double rond de la vue liste sur un article sans image :
+     * seule l'action « lu/non-lu » est alors retirée du bout de ligne, les autres restent.
      */
     val dotAtStart = when (mode) {
         "magazine" -> true
@@ -143,6 +145,10 @@ fun ArticleRow(
     val trail: @Composable (Boolean) -> Unit = { swiping ->
         if (swiping) Unit else when (trailing) {
             "none" -> Unit
+            // « read » est la seule action supprimée quand le rond est déjà à gauche : deux
+            // boutons pour le même état n'auraient pas de sens. Les autres actions gardent leur
+            // place — les masquer retirait étoile, partage et Instapaper de la vue magazine et
+            // des articles sans image.
             "read" -> if (dotAtStart) Unit else Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
                 IconButton(onToggleRead, Modifier.size(30.dp)) {
                     Icon(
@@ -154,9 +160,9 @@ fun ArticleRow(
                     )
                 }
             }
-            "share" -> if (dotAtStart) Unit else IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager", tint = trailTint) }
-            "instapaper" -> if (dotAtStart) Unit else IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper", tint = trailTint) }
-            "star" -> if (dotAtStart) Unit else IconButton(onToggleStar) {
+            "share" -> IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager", tint = trailTint) }
+            "instapaper" -> IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper", tint = trailTint) }
+            "star" -> IconButton(onToggleStar) {
                 Icon(
                     if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
                     if (a.starred) "Retirer des favoris" else "Ajouter aux favoris",
@@ -240,8 +246,19 @@ fun ArticleRow(
                 Text(title, Modifier.padding(12.dp), fontSize = titleSp.sp,
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    trail(swiping); Spacer(Modifier.width(8.dp))
-                    MetaLine(src, a.published, dateSp, metaStar, showSource = showSource)
+                    // Le rond lu/non-lu vit à gauche dans la vue magazine (aucune vignette en
+                    // tête de ligne pour le porter), et l'action de fin reste au bord droit :
+                    // la méta occupe la place restante, sans quoi `fillMaxWidth` laisserait
+                    // zéro largeur au bouton.
+                    Icon(
+                        if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked,
+                        if (a.unread) "marquer lu" else "marquer non lu",
+                        tint = readDotTint(),
+                        modifier = Modifier.size(14.dp).clickable(onClick = onToggleRead)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.weight(1f)) { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) }
+                    trail(swiping)
                 }
             }
         }

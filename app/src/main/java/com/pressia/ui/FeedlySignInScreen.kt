@@ -387,6 +387,12 @@ private fun FeedlySignInView(
                 loadUrl(url)
                 onView(this)
             }
+        },
+        onRelease = { wv ->
+            // Libère le moteur de rendu natif : sans cela chaque passage par l'écran de
+            // connexion laissait une WebView vivante derrière lui.
+            wv.loadUrl("about:blank")
+            wv.destroy()
         }
     )
 }

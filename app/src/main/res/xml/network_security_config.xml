@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Politique réseau de PressIA.
+
+  Le trafic en clair reste autorisé **pour les flux RSS locaux** : un flux saisi directement
+  (hors compte cloud) peut être servi en HTTP — serveur de test de l'émulateur (10.0.2.2:8899),
+  FreshRSS/Miniflux auto-hébergé, blog encore en http. Android ne sait pas restreindre cette
+  permission aux seules adresses privées (le format n'accepte ni plage d'IP ni joker) : une
+  liste d'hôtes casserait silencieusement le flux de tout autre serveur local.
+
+  Les API distantes de l'application (Feedly, Inoreader, Instapaper) sont toutes en HTTPS.
+  Ce fichier remplace le drapeau `usesCleartextTraffic` du manifeste : la raison du choix est
+  écrite ici plutôt que dans un attribut qu'on croit oublié.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

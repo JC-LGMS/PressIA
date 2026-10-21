@@ -6,21 +6,52 @@ import kotlinx.coroutines.withContext
 
 /** OAuth Feedly (code flow) + Inoreader (OAuth2). Les secrets restent configurables en Réglages. */
 object OAuth {
-    /** Encodage URL compatible JVM pure (testable sans framework Android). */
+    /**
+     * Encodage URL compatible JVM pure (testable sans framework Android).
+     *
+     * Surcharge `(String, Charset)` volontairement écartée : elle exige l'API 33 alors que
+     * l'application démarre à l'API 26 (`NoSuchMethodError` sur Android 8 → 12L).
+     */
     fun enc(s: String): String =
-        java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20")
+        java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
-    fun feedlyAuthUrl(clientId: String, redirect: String = BuildConfig.FEEDLY_REDIRECT_URI): String {
+    /**
+     * Jeton anti-CSRF du flux OAuth (`state`) : généré au départ, vérifié au retour.
+     * En mémoire seulement : un retour arrivant après la mort du processus ne peut de toute
+     * façon pas aboutir, et un état inconnu est refusé.
+     */
+    @Volatile private var pendingState: String? = null
+
+    fun newState(): String = java.util.UUID.randomUUID().toString().replace("-", "")
+
+    /** Mémorise un nouvel état pour l'URL d'authentification qui suit. */
+    fun beginState(): String = newState().also { pendingState = it }
+
+    /** L'état renvoyé par le fournisseur est-il celui qu'on a émis ? */
+    fun checkState(state: String?): Boolean {
+        val expected = pendingState ?: return false
+        return state != null && state == expected
+    }
+
+    fun feedlyAuthUrl(
+        clientId: String,
+        redirect: String = BuildConfig.FEEDLY_REDIRECT_URI,
+        state: String = beginState()
+    ): String {
         val scope = enc("https://cloud.feedly.com/subscriptions")
         return "https://feedly.com/v3/auth/auth?response_type=code&client_id=${enc(clientId)}" +
-            "&redirect_uri=${enc(redirect)}&scope=$scope&state=feedly"
+            "&redirect_uri=${enc(redirect)}&scope=$scope&state=${enc(state)}"
     }
-    fun inoreaderAuthUrl(appId: String, redirect: String = BuildConfig.INOREADER_REDIRECT_URI): String =
+    fun inoreaderAuthUrl(
+        appId: String,
+        redirect: String = BuildConfig.INOREADER_REDIRECT_URI,
+        state: String = beginState()
+    ): String =
         "https://www.inoreader.com/oauth2/auth?client_id=${enc(appId)}" +
-            "&redirect_uri=${enc(redirect)}&response_type=code&scope=read+write&state=inoreader"
+            "&redirect_uri=${enc(redirect)}&response_type=code&scope=read+write&state=${enc(state)}"
 
-    /** Résultat d'un retour OAuth : code d'autorisation ou erreur (refus utilisateur…). */
-    data class RedirectResult(val code: String?, val error: String?)
+    /** Résultat d'un retour OAuth : code d'autorisation, erreur (refus utilisateur…) et `state`. */
+    data class RedirectResult(val code: String?, val error: String?, val state: String? = null)
 
     /** Parse `pressia://oauth/xxx?code=…` ou `…?error=access_denied`. Retourne null si ce n'est pas un retour OAuth. */
     fun parseRedirect(url: String, redirectBase: String): RedirectResult? {
@@ -34,7 +65,8 @@ object OAuth {
             }.toMap()
             RedirectResult(
                 code = params["code"],
-                error = params["error"] ?: params["error_description"]
+                error = params["error"] ?: params["error_description"],
+                state = params["state"]
             )
         } catch (_: Exception) { RedirectResult(null, "URL de retour illisible") }
     }

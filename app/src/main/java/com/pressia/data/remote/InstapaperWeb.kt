@@ -102,8 +102,9 @@ object InstapaperWeb {
     fun saveBody(url: String, title: String): String =
         "gr=1&u=${enc(url)}&t=${enc(title.take(250))}&can_url=&s=&tzd=&i=&b="
 
+    /** `(String, Charset)` exige l'API 33 : la variante `(String, String)` vaut dès l'API 1. */
     private fun enc(s: String): String =
-        java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8)
+        java.net.URLEncoder.encode(s, "UTF-8")
 
     /** Parse `GET /data/user_session` → dossiers + tags + clé, ou null si déconnecté / illisible. */
     fun parseSession(body: String): Session? {

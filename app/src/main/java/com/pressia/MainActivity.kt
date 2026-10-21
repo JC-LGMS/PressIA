@@ -37,8 +37,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    /**
+     * Dernier retour OAuth reçu, en création comme par [onNewIntent] : la composition le
+     * consomme. Sans cet état, un `pressia://oauth` reçu par une activité déjà vivante
+     * (relance, `singleTop`) n'était jamais traité.
+     */
+    private val oauthLink = mutableStateOf<android.net.Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        intent?.data?.takeIf { it.host == "oauth" }?.let { oauthLink.value = it }
         // Barre de navigation Android noire, icônes claires.
         @Suppress("DEPRECATION") window.navigationBarColor = android.graphics.Color.BLACK
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
@@ -56,12 +64,15 @@ class MainActivity : ComponentActivity() {
             val home by vm.homeScreen.collectAsState()
             val ctx = androidx.compose.ui.platform.LocalContext.current
             // deep link OAuth pressia://oauth?code=..&state=..
+            val link by oauthLink
+            LaunchedEffect(link) {
+                val uri = link ?: return@LaunchedEffect
+                oauthLink.value = null
+                // Le message était jeté : un échange refusé restait totalement silencieux.
+                vm.authMsg = handleOAuthDeepLink(vm, uri)
+                vm.refresh()
+            }
             LaunchedEffect(Unit) {
-                intent?.data?.let { uri ->
-                    if (uri.host == "oauth") {
-                        launch { handleOAuthDeepLink(vm, uri); vm.refresh() }
-                    }
-                }
                 vm.syncOnLaunch()
                 vm.refresh()
             }
@@ -466,7 +477,8 @@ class MainActivity : ComponentActivity() {
                                      BackRule()
                                      ScaffoldWithMenu("Comptes", { openDrawer() }, drawerIconFor("login"), vm) {
                                          LoginScreen(vm, onOAuth = { p -> nav.navigate("oauth/$p") },
-                                             onFeedlySignIn = { nav.navigate("feedly-signin") })
+                                             onFeedlySignIn = { nav.navigate("feedly-signin") },
+                                             onInoreaderSignIn = { nav.navigate("inoreader-signin") })
                                      }
                                  }
                                  composable("backup") {
@@ -484,6 +496,16 @@ class MainActivity : ComponentActivity() {
                                 composable("feedly-signin") {
                                     BackRule()
                                     FeedlySignInScreen(vm, onBack = { nav.popBackStack() },
+                                        onDone = { msg ->
+                                            vm.authMsg = msg
+                                            // Retour à l'accueil avant la première synchro (lancée
+                                            // par l'écran après ce retour), pas à la page des comptes.
+                                            goHome()
+                                        })
+                                }
+                                composable("inoreader-signin") {
+                                    BackRule()
+                                    InoreaderSignInScreen(vm, onBack = { nav.popBackStack() },
                                         onDone = { msg ->
                                             vm.authMsg = msg
                                             // Retour à l'accueil avant la première synchro (lancée
@@ -608,7 +630,7 @@ private val CONTENT_ROUTES = setOf("home", "stream", "article")
  * sans avoir à remonter l'empilement des écrans précédents.
  */
 private val UTILITY_ROUTES = setOf(
-    "starred", "search", "dedup", "stats", "settings", "login", "backup", "feedly-signin", "oauth", "about"
+    "starred", "search", "dedup", "stats", "settings", "login", "backup", "feedly-signin", "inoreader-signin", "oauth", "about"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

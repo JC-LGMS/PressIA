@@ -53,7 +53,6 @@ class Prefs(private val ctx: Context) {
         /** Glissement d'un article vers la droite : mêmes options, défaut "read". */
         val SWIPE_RIGHT_ACTION = stringPreferencesKey("swipe_right_action")
         val HOME_SCREEN = stringPreferencesKey("home_screen") // "stream"|"subs"
-        val JUSTIFY = booleanPreferencesKey("justify")
         /** Ouverture d'un article : "internal" (vue dans PressIA) | "external" (navigateur). */
         val OPEN_MODE = stringPreferencesKey("open_mode")
         /**
@@ -87,12 +86,10 @@ class Prefs(private val ctx: Context) {
          * dans les deux cas.
          */
         val FAVICON_SOURCE = stringPreferencesKey("favicon_source")
-        /** « Non-lus seuls » : défaut pour les périmètres jamais réglés (voir [UNREAD_ONLY_BY_FEED]). */
-        val SHOW_UNREAD_ONLY = booleanPreferencesKey("show_unread_only")
         /**
          * Choix d'œil posés par périmètre (JSON `{clé: bool}`) : chaque flux rouvre avec son
          * dernier choix, flux (`feed:<id>`), dossier (`cat:<id>`) ou global (`all`). Absent =
-         * [SHOW_UNREAD_ONLY]. Une entrée par périmètre visité, chaînes minuscules : pas de
+         * non-lus seuls. Une entrée par périmètre visité, chaînes minuscules : pas de
          * migration à écrire, un JSON abîmé repart simplement du défaut.
          */
         val UNREAD_ONLY_BY_FEED = stringPreferencesKey("unread_only_by_feed")
@@ -252,12 +249,12 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("article_actions", ARTICLE_ACTIONS), PrefEntry.Str("swipe_action", SWIPE_ACTION),
             PrefEntry.Str("swipe_right_action", SWIPE_RIGHT_ACTION),
             PrefEntry.Str("home_screen", HOME_SCREEN),
-            PrefEntry.Bool("justify", JUSTIFY), PrefEntry.Bool("wifi_only", WIFI_ONLY),
+            PrefEntry.Bool("wifi_only", WIFI_ONLY),
             PrefEntry.Str("open_mode", OPEN_MODE), PrefEntry.Bool("merge_folders", MERGE_FOLDERS),
             PrefEntry.IntPref("max_items", MAX_ITEMS), PrefEntry.Bool("images_offline", IMAGES_OFFLINE),
             PrefEntry.IntPref("history_months", HISTORY_MONTHS),
             PrefEntry.Str("favicon_source", FAVICON_SOURCE),
-            PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN), PrefEntry.Bool("show_unread_only", SHOW_UNREAD_ONLY),
+            PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN),
             PrefEntry.Str("unread_only_by_feed", UNREAD_ONLY_BY_FEED),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),

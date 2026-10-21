@@ -36,7 +36,12 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Unit = {}) {
+fun LoginScreen(
+    vm: PressVM,
+    onOAuth: (String) -> Unit,
+    onFeedlySignIn: () -> Unit = {},
+    onInoreaderSignIn: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var service by remember { mutableStateOf<String?>(null) }   // service en cours de connexion
@@ -100,6 +105,28 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
         )
 
         // ---- Inoreader ---------------------------------------------------------------------
+        // Connexion « par session » : la page Inoreader s'ouvre dans l'application et le
+        // cookie de session est récupéré automatiquement (même principe que Feedly).
+        // C'est le chemin le plus simple : ni mot de passe saisi dans PressIA, ni
+        // application Inoreader à enregistrer au préalable.
+        OutlinedButton(
+            { msg = ""; onInoreaderSignIn() },
+            Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Se connecter avec Inoreader")
+        }
+        Text(
+            "La page Inoreader s'ouvre dans l'application : connectez-vous avec vos identifiants " +
+                "habituels. Dès que vous êtes connecté, PressIA récupère votre session, synchronise " +
+                "vos flux et revient automatiquement. Aucun mot de passe n'est conservé par l'application.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // Connexion OAuth : conservée pour qui a enregistré une application Inoreader
+        // (identifiants dans local.properties ou dans les Réglages). Le chemin par session
+        // ci-dessus reste le plus simple — les deux coexistent.
         if (service == "inoreader" || BuildConfig.INOREADER_APP_ID.isNotBlank()) {
             OutlinedButton(
                 { service = if (service == "inoreader") null else "inoreader"; msg = "" },
@@ -107,7 +134,7 @@ fun LoginScreen(vm: PressVM, onOAuth: (String) -> Unit, onFeedlySignIn: () -> Un
             ) {
                 Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (service == "inoreader") "Annuler la connexion Inoreader" else "Se connecter avec Inoreader")
+                Text(if (service == "inoreader") "Annuler la connexion OAuth Inoreader" else "Connexion OAuth Inoreader (application enregistrée)")
             }
             if (service == "inoreader") {
                 OutlinedTextField(
@@ -439,6 +466,9 @@ suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
     val redirect = if (service == "feedly") BuildConfig.FEEDLY_REDIRECT_URI else BuildConfig.INOREADER_REDIRECT_URI
     val res = OAuth.parseRedirect(uri.toString(), "pressia://oauth")
     if (res == null) return "Retour OAuth illisible"
+    // Le `state` émis au départ doit revenir à l'identique : sans ce contrôle, un lien
+    // `pressia://oauth` forgé par une autre application pouvait connecter un compte tiers.
+    if (!OAuth.checkState(res.state)) return "Retour OAuth refusé : état de sécurité absent ou différent"
     res.error?.let { return "Connexion refusée : $it" }
     val code = res.code?.takeIf { it.isNotBlank() } ?: return "Retour OAuth sans code d'autorisation"
 

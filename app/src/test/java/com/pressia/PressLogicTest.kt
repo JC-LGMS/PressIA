@@ -12,6 +12,9 @@ import com.pressia.data.remote.feedlyMarkAllMarkers
 import com.pressia.data.remote.reconcileUnchanged
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
+import com.pressia.data.remote.inoreaderAuthHeader
+import com.pressia.data.remote.inoreaderSessionCandidates
+import com.pressia.data.remote.plausibleInoreaderToken
 import com.pressia.data.readability.Readability
 import com.pressia.ui.theme.toHex
 import androidx.compose.ui.graphics.luminance
@@ -142,6 +145,38 @@ class PressLogicTest {
         assertNull(OAuth.parseRedirect("https://feedly.com/", "pressia://oauth/feedly"))
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
+    }
+
+    // ---- Session Inoreader capturée dans une WebView ------------------------------------
+    @Test fun `jeton de session plausible ecarte les drapeaux`() {
+        assertNull(plausibleInoreaderToken(null))
+        assertNull(plausibleInoreaderToken(""))
+        assertNull(plausibleInoreaderToken("1"))
+        assertNull(plausibleInoreaderToken("remember"))
+        // Un en-tête collé ne doit jamais produire un jeton : il casserait l'en-tête Authorization.
+        assertNull(plausibleInoreaderToken("abc; def"))
+        assertNull(plausibleInoreaderToken("abc def"))
+        assertEquals("abcdefghijkl", plausibleInoreaderToken("\"abcdefghijkl\""))
+    }
+    @Test fun `candidats de session - SID et LSID d'abord`() {
+        val header = "pl=1; SID=aaaaaaaaaaaaaaaaaaaa; LSID=bbbbbbbbbbbbbbbbbbbb; csrf=cccccccccccccccc"
+        val cands = inoreaderSessionCandidates(header)
+        // Les cookies nommés passent devant : Inoreader compte les requêtes au quota.
+        assertEquals("aaaaaaaaaaaaaaaaaaaa", cands[0])
+        assertEquals("bbbbbbbbbbbbbbbbbbbb", cands[1])
+        // Les drapeaux sont écartés, les autres valeurs opaques restent candidates.
+        assertFalse(cands.contains("1"))
+        assertTrue(cands.contains("cccccccccccccccc"))
+    }
+    @Test fun `candidats de session - en-tete vide ou mal forme`() {
+        assertTrue(inoreaderSessionCandidates(null).isEmpty())
+        assertTrue(inoreaderSessionCandidates("").isEmpty())
+        assertTrue(inoreaderSessionCandidates("SID").isEmpty())
+        // Un seul cookie, pas de doublon.
+        assertEquals(listOf("abcdefghijkl"), inoreaderSessionCandidates("SID=abcdefghijkl; SID=abcdefghijkl"))
+    }
+    @Test fun `en-tete auth inoreader au schema Reader`() {
+        assertEquals("GoogleLogin auth=abc123", inoreaderAuthHeader("abc123"))
     }
     private fun httpError(code: Int): retrofit2.HttpException {
         val body = okhttp3.ResponseBody.create(null, "")

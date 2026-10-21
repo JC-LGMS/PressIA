@@ -89,7 +89,29 @@ interface FeedProvider {
      * est redescendu en entier, comme avant.
      */
     suspend fun readLaterIds(token: String?, max: Int = 500): IdSet? = null
+    /**
+     * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
+     *
+     * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. Le
+     * fournisseur essaie les schémas d'authentification qu'il connaît et renvoie la
+     * première combinaison acceptée — la **vérification se fait par un vrai appel
+     * API**, jamais sur une simple ressemblance : c'est elle qui dit si la session
+     * est réellement exploitable.
+     *
+     * Défaut : non supporté (Feedly, RSS local : leur session web ne se transporte pas
+     * ainsi).
+     */
+    suspend fun verifyWebSession(tokens: List<String>): WebSession? = null
 }
+
+/**
+ * Session web acceptée par un fournisseur.
+ *
+ * [token] est la valeur à stocker dans le compte : elle suffit à reproduire
+ * l'authentification validée. [label] est le libellé du profil (« nom · e-mail »),
+ * affiché dans l'écran Comptes.
+ */
+data class WebSession(val token: String, val label: String)
 
 data class StreamPage(
     val articles: List<ArticleEntity>,

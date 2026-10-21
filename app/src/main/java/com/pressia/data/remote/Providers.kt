@@ -3,6 +3,7 @@ package com.pressia.data.remote
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.CategoryEntity
 import com.pressia.data.local.SubscriptionEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -326,7 +327,42 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
             .joinToString(" · ").takeIf { it.isNotBlank() }
     }
-    /** Identifiant distant stable (voir l'interface) : `userId` du profil Inoreader. */
+    /**
+     * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
+     *
+     * Le cookie porte l'identifiant de session d'Inoreader — le `SID` historique du
+     * protocole `ClientLogin` — que l'API Reader attend dans l'en-tête
+     * `Authorization: GoogleLogin auth=…`, exactement comme le jeton OAuth déjà
+     * utilisé par l'application : même schéma pour les deux sources, donc rien à
+     * distinguer côté appels.
+     *
+     * Chaque valeur candidate est essayée à son tour ; la **vérification est un vrai
+     * appel API** (`user-info`), jamais une simple ressemblance : c'est elle qui dit
+     * si la session est exploitable. On s'arrête au premier profil qui répond — Inoreader
+     * compte les requêtes au quota, inutile d'insister.
+     */
+    override suspend fun verifyWebSession(tokens: List<String>): WebSession? {
+        for (t in tokens) {
+            if (t.isBlank()) continue
+            val label = try {
+                api.userInfo(inoreaderAuthHeader(t)).let { u ->
+                    listOfNotNull(
+                        u.userName?.takeIf { it.isNotBlank() },
+                        u.userEmail?.takeIf { it.isNotBlank() }
+                    ).joinToString(" · ")
+                }
+            } catch (e: CancellationException) {
+                throw e   // une annulation ne doit jamais passer pour un refus de session
+            } catch (_: Exception) {
+                ""       // 401/403 ou réseau : cet essai est simply raté
+            }
+            if (label.isNotBlank()) return WebSession(token = t, label = label)
+        }
+        return null
+    }
+
+    /**
+     * Identifiant distant stable (voir l'interface) : `userId` du profil Inoreader. */
     override suspend fun userId(token: String?): String =
         runCatching { api.userInfo(auth(token)).userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
@@ -404,7 +440,9 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val tt = cleanTitle(title).ifBlank { "(sans titre)" }
         return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = tt,
             author = author, url = link, summary = summary?.content, content = html, imageUrl = img,
-            published = published, unread = !categories.contains(READ_STATE),
+            // Inoreader (API Reader) date en secondes, Feedly en millisecondes : même
+            // normalisation que la réconciliation et la fenêtre d'historique.
+            published = publishedMs(published), unread = !categories.contains(READ_STATE),
             starred = false,
             titleHash = dedupHash(tt, link))
     }
