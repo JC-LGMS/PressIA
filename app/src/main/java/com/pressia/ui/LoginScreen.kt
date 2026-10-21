@@ -57,8 +57,20 @@ fun LoginScreen(
     var localFeeds by remember { mutableStateOf<List<SubscriptionEntity>>(emptyList()) }
     var removing by remember { mutableStateOf<CloudAccount?>(null) }
     var removingFeed by remember { mutableStateOf<SubscriptionEntity?>(null) }
+    /** Dialogue « Identifiants Inoreader » ouvert ? */
+    var showInoreaderIds by remember { mutableStateOf(false) }
+    /**
+     * Identifiants d'application **effectivement employés** : préférences de l'utilisateur,
+     * sinon valeurs par défaut (celles de l'extension officielle). Distincts des champs
+     * `inoreaderId`/`inoreaderKey` ci-dessus, qui ne portent que ce que l'utilisateur a
+     * saisi pour le flux OAuth.
+     */
+    var inoAppId by remember { mutableStateOf("") }
+    var inoAppKey by remember { mutableStateOf("") }
 
     val accounts = vm.accounts
+    /** Compte Inoreader connecté : c'est lui qui porte l'en-tête d'authentification (AUTH). */
+    val inoAccount = accounts.firstOrNull { it.service == "inoreader" }
     val activeId by vm.activeAccountId.collectAsState()
     // Comptes à la session expirée : avertis avec réinvite (boutons de connexion existants).
     val expired by vm.expiredAccounts.collectAsState()
@@ -74,6 +86,9 @@ fun LoginScreen(
         // le flux OAuth exigerait une application à lui.
         inoreaderId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() }.orEmpty()
         inoreaderKey = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() }.orEmpty()
+        // Valeurs employées pour les appels d'API : préférences, sinon valeurs par défaut.
+        inoAppId = inoreaderId.ifBlank { BuildConfig.INOREADER_APP_ID }
+        inoAppKey = inoreaderKey.ifBlank { BuildConfig.INOREADER_APP_KEY }
         localFeeds = vm.repo.localFeeds()
         vm.loadAccount()
     }
@@ -125,6 +140,23 @@ fun LoginScreen(
             "La page Inoreader s'ouvre dans l'application : connectez-vous avec vos identifiants " +
                 "habituels. Dès que vous êtes connecté, PressIA récupère votre session, synchronise " +
                 "vos flux et revient automatiquement. Aucun mot de passe n'est conservé par l'application.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // Identifiants employés : App ID, App Key et en-tête d'authentification. Affichables
+        // et remplaçables — un compte Inoreader déclaré par l'utilisateur, ou les valeurs
+        // de l'extension officielle du navigateur (valeurs par défaut).
+        OutlinedButton(
+            { showInoreaderIds = true },
+            Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.VpnKey, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Identifiants Inoreader")
+        }
+        Text(
+            "App ID, App Key et jeton de session employés par l'application : affichables et " +
+                "remplaçables ici.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -233,9 +265,9 @@ fun LoginScreen(
             {
                 val url = rssUrl.trim()
                 scope.launch {
-                    vm.addLocalFeed(url) { ok ->
-                        msg = if (ok) "Flux ajouté et synchronisé." else "Flux non ajouté"
-                        if (ok) rssUrl = ""
+                    vm.addLocalFeed(url) { res ->
+                        msg = res.message
+                        if (res.added) rssUrl = ""
                     }
                 }
             },
@@ -398,6 +430,51 @@ fun LoginScreen(
                 }) { Text("Déconnecter", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton({ removing = null }) { Text("Annuler") } }
+        )
+    }
+    if (showInoreaderIds) {
+        InoreaderIdsDialog(
+            appId = inoAppId,
+            appKey = inoAppKey,
+            auth = inoAccount?.token.orEmpty(),
+            hasAccount = inoAccount != null,
+            onDismiss = { showInoreaderIds = false },
+            onSave = { appId, appKey, auth ->
+                scope.launch {
+                    // Un identifiant égal à la valeur par défaut est stocké **vide** : la
+                    // valeur par défaut reste ainsi vivante (elle peut être mise à jour) et
+                    // l'écran montre toujours la même chose.
+                    vm.repo.prefs.set(
+                        Prefs.INOREADER_APP_ID,
+                        if (appId == BuildConfig.INOREADER_APP_ID) "" else appId
+                    )
+                    vm.repo.prefs.set(
+                        Prefs.INOREADER_APP_KEY,
+                        if (appKey == BuildConfig.INOREADER_APP_KEY) "" else appKey
+                    )
+                    // Publication immédiate : l'API Inoreader exige ces en-têtes sur chaque
+                    // appel, y compris la synchronisation qui suit.
+                    vm.repo.refreshInoreaderAppAuth()
+                    inoAppId = if (appId == BuildConfig.INOREADER_APP_ID) "" else appId
+                        .ifBlank { BuildConfig.INOREADER_APP_ID }
+                    inoAppKey = if (appKey == BuildConfig.INOREADER_APP_KEY) "" else appKey
+                        .ifBlank { BuildConfig.INOREADER_APP_KEY }
+                    // L'AUTH (jeton de session) n'est remplacé que s'il a changé **et** que
+                    // le service l'accepte pour ce compte — sinon l'ancien est conservé.
+                    val acc = inoAccount
+                    if (acc != null && auth.isNotBlank() && auth != acc.token) {
+                        val label = vm.repo.replaceAccountToken(acc.id, auth)
+                        if (label == null) {
+                            toast(ctx, "Jeton refusé par Inoreader : l'ancien est conservé")
+                        } else {
+                            vm.loadAccount()
+                            toast(ctx, "Jeton de session mis à jour")
+                        }
+                    } else {
+                        toast(ctx, "Identifiants Inoreader mis à jour")
+                    }
+                }
+            }
         )
     }
 }

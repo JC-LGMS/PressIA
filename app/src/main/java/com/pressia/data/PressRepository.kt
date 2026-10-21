@@ -329,6 +329,36 @@ class PressRepository(
     // ----- Comptes -----
 
     /**
+     * Remplace le jeton d'un compte connecté, **en place**.
+     *
+     * Le compte garde son identité — son `id`, donc ses dossiers, ses abonnements et ses
+     * articles (ils sont rattachés à cet identifiant) : seul le jeton change, comme lors
+     * d'une reconnexion.
+     *
+     * Le nouveau jeton est vérifié auprès du service avant d'être écrit : refusé s'il
+     * n'est pas accepté, et refusé aussi s'il appartient à un **autre** utilisateur — un
+     * jeton valide mais étranger ne doit pas s'emparer des données du compte.
+     *
+     * Renvoie le libellé du profil vérifié, ou null si le jeton a été refusé.
+     */
+    suspend fun replaceAccountToken(accountId: String, token: String): String? =
+        withContext(Dispatchers.IO) {
+            val account = cloudAccounts().firstOrNull { it.id == accountId } ?: return@withContext null
+            val p = providerFor(account.service)
+            val newUserId = runCatching { p.userId(token) }.getOrNull().orEmpty()
+            if (newUserId.isBlank()) return@withContext null          // jeton refusé
+            if (account.userId.isNotBlank() && newUserId != account.userId) return@withContext null
+            val accounts = cloudAccounts().toMutableList()
+            val idx = accounts.indexOfFirst { it.id == accountId }
+            if (idx < 0) return@withContext null
+            accounts[idx] = accounts[idx].copy(token = token, userId = newUserId)
+            prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
+            // Le miroir historique (TOKEN/PROVIDER) suit le compte actif.
+            if (prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == accountId) setActiveAccount(accountId)
+            runCatching { p.profile(token) }.getOrNull()?.takeIf { it.isNotBlank() }
+        }
+
+    /**
      * Tous les comptes externes connectés. L'ancien couple [Prefs.PROVIDER] / [Prefs.TOKEN] est
      * repris tel quel au premier lancement : un utilisateur déjà connecté ne perd donc rien et se
      * retrouve avec un registre contenant son compte.

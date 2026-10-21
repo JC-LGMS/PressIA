@@ -231,6 +231,14 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
     n'insiste pas. Le « connexion bloquée ? » ne se déclenche que si le **formulaire de
     connexion a disparu** (`input[type=password]`) sans cookie lisible : sinon il
     s'agirait d'un simple utilisateur en train de saisir ses identifiants.
+  - **Identifiants employés, affichables et remplaçables** (Comptes → « Identifiants
+    Inoreader » → `InoreaderIdsDialog`) : App ID, App Key et l'en-tête
+    `Authorization: GoogleLogin auth=…` du compte connecté. Les valeurs secrètes sont
+    **masquées par défaut** (bouton œil). Un identifiant égal à la valeur par défaut est
+    stocké **vide** : la valeur par défaut reste ainsi vivante.
+    `PressRepository.replaceAccountToken` remplace le jeton **en place** — le compte garde
+    son `id`, donc ses dossiers, ses abonnements et ses articles — et **refuse** un jeton
+    que le service n'accepte pas ou qui appartient à un autre utilisateur.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
   `exportSchema = false`, version DB actuelle : 5.
 - Réglage ajouté, modifié ou supprimé = cycle complet obligatoire : clé dans `Prefs`,
