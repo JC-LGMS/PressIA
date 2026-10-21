@@ -1,5 +1,6 @@
 package com.pressia.data.remote
 
+import com.pressia.data.isAuthFailure
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.CategoryEntity
 import com.pressia.data.local.SubscriptionEntity
@@ -296,13 +297,45 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     override val id = "inoreader"
     private fun auth(t: String?) = "GoogleLogin auth=${t.orEmpty()}"
 
+    /**
+     * Renouvellement du jeton d'accès expiré.
+     *
+     * Appelé quand le serveur refuse le jeton (401) : renvoie un jeton neuf, ou null si le
+     * renouvellement est impossible (pas de jeton de renouvellement enregistré, ou
+     * renouvellement refusé). Câblé par le dépôt — c'est lui qui sait où lire et réécrire le
+     * jeton de renouvellement, dans le registre des comptes.
+     */
+    @Volatile
+    var renewToken: (suspend (String) -> String?)? = null
+
+    /**
+     * Appel API avec renouvellement si le jeton est refusé.
+     *
+     * Le jeton d'accès OAuth expire vite (de l'ordre de l'heure chez Inoreader) : sans
+     * ce repli, chaque lecture de compte se heurterait à un 401 et le compte serait
+     * déclaré « session expirée » alors qu'un simple renouvellement le ranime. Un seul
+     * essai de renouvellement : au-delà, c'est que le compte est vraiment mort.
+     */
+    private suspend fun <T> call(token: String?, block: suspend (String) -> T): T {
+        val header = auth(token)
+        return try {
+            block(header)
+        } catch (e: CancellationException) {
+            throw e   // une annulation ne doit jamais passer pour un jeton à renouveler
+        } catch (e: Exception) {
+            if (!isAuthFailure(e)) throw e
+            val fresh = renewToken?.invoke(token.orEmpty()) ?: throw e
+            block(auth(fresh))
+        }
+    }
+
     override suspend fun categories(token: String?): List<CategoryEntity> {
-        val tags = api.tags(auth(token))
+        val tags = call(token) { h -> api.tags(h) }
         return tags.tags.filter { it.id.contains("label/") || it.id.contains("folder/") }
             .map { CategoryEntity(id = it.id, label = it.label ?: it.id.substringAfterLast("/"), provider = id) }
     }
     override suspend fun subscriptions(token: String?): List<SubscriptionEntity> {
-        val l = api.subs(auth(token))
+        val l = call(token) { h -> api.subs(h) }
         return l.subscriptions.map {
             SubscriptionEntity(id = it.id, title = it.title, url = it.url.orEmpty(), siteUrl = it.htmlUrl.orEmpty(),
                 categoryId = it.categories.firstOrNull()?.id, iconUrl = it.iconUrl, provider = id)
@@ -312,18 +345,22 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val stream = feedId ?: categoryId ?: "user/-/state/com.google/reading-list"
         // `newerThanMs` ignoré : l'équivalent Reader API (`nt`) n'est pas vérifié en live
         // (unité/sémantique incertaines) — le filtre par date reste client, comme avant.
-        val s = api.stream(auth(token), stream, n = max.coerceIn(1, 200), cont = continuation)
+        val s = call(token) { h -> api.stream(h, stream, n = max.coerceIn(1, 200), cont = continuation) }
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
     private suspend fun tag(token: String?, itemId: String, add: String?, remove: String?) {
-        val t = try { api.token(auth(token)) } catch (_: Exception) { "" }
-        api.editTag(auth(token), itemId, add, remove, t)
+        call(token) { h ->
+            // Le jeton CSRF de l'endpoint est cherché avec le même en-tête : il va de pair
+            // avec le jeton d'accès, pas avec lui.
+            val t = try { api.token(h) } catch (_: Exception) { "" }
+            api.editTag(h, itemId, add, remove, t)
+        }
     }
     override suspend fun markRead(t: String?, ids: List<String>) = ids.forEach { tag(t, it, "user/-/state/com.google/read", null) }
     override suspend fun markUnread(t: String?, ids: List<String>) = ids.forEach { tag(t, it, null, "user/-/state/com.google/read") }
     override suspend fun markAllRead(t: String?, feedIds: List<String>) { /* via mark-all-as-read endpoint côté repo */ }
     override suspend fun profile(token: String?): String? {
-        val u = api.userInfo(auth(token))
+        val u = call(token) { h -> api.userInfo(h) }
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
             .joinToString(" · ").takeIf { it.isNotBlank() }
     }
@@ -364,21 +401,21 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     /**
      * Identifiant distant stable (voir l'interface) : `userId` du profil Inoreader. */
     override suspend fun userId(token: String?): String =
-        runCatching { api.userInfo(auth(token)).userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
+        runCatching { call(token) { h -> api.userInfo(h) }.userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
-        api.unreadCount(auth(token)).unreadcounts.sumOf { it.count }
+        call(token) { h -> api.unreadCount(h) }.unreadcounts.sumOf { it.count }
     }.getOrNull()
     /** Non-lus par flux (`unread-count` donne aussi le détail par flux). */
     override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
-        api.unreadCount(auth(token)).unreadcounts.associate { it.id to it.count }
+        call(token) { h -> api.unreadCount(h) }.unreadcounts.associate { it.id to it.count }
     }.getOrNull()
     /** Étoiles du compte (« Starred items » chez Inoreader), paginées jusqu'à épuisement. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
         while (true) {
-            val s = api.stream(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont)
+            val s = call(token) { h -> api.stream(h, "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont) }
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
@@ -396,7 +433,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val ids = HashSet<String>()
         var cont: String? = null
         while (true) {
-            val page = api.itemsIds(auth(token), "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont)
+            val page = call(token) { h -> api.itemsIds(h, "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont) }
             if (page.itemRefs.isEmpty()) break
             page.itemRefs.mapTo(ids) { it.id }
             val next = page.continuation
@@ -416,7 +453,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
-            val s = api.stream(auth(token), "user/-/state/com.google/reading-list", n = 1000, cont = cont, xt = READ_STATE)
+            val s = call(token) { h -> api.stream(h, "user/-/state/com.google/reading-list", n = 1000, cont = cont, xt = READ_STATE) }
             if (s.items.isEmpty()) { complete = true; break }
             s.items
                 .filter { !it.categories.contains(READ_STATE) && publishedMs(it.published) >= cutoff }

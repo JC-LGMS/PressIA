@@ -754,6 +754,40 @@ class PressLogicTest {
         ).size)
     }
 
+    @Test fun `jeton de renouvellement conserve et remplace`() {
+        // Le jeton de renouvellement accompagne le compte : il doit survivre à l'aller-retour.
+        val acc = com.pressia.data.CloudAccount("inoreader#bb", "inoreader", "t1", "moi@ex.com", "uid-1", "refresh-1")
+        val back = com.pressia.data.AccountStore.parse(com.pressia.data.AccountStore.encode(listOf(acc)))
+        assertEquals("refresh-1", back[0].refreshToken)
+        assertEquals(acc, back[0])
+        // Un refresh vide conserve celui déjà enregistré (une reconnexion par cookie n'en
+        // apporte pas) ; un refresh fourni le remplace.
+        val kept = com.pressia.data.AccountStore.refreshToken(
+            listOf(acc), "inoreader", "t2", "moi@ex.com", "uid-1")
+        assertEquals("refresh-1", kept[0].refreshToken)
+        assertEquals("t2", kept[0].token)
+        // L'identité du compte est conservée : ses dossiers et ses articles suivent.
+        assertEquals(acc.id, kept[0].id)
+        val replaced = com.pressia.data.AccountStore.refreshToken(
+            listOf(acc), "inoreader", "t3", "moi@ex.com", "uid-1", "refresh-2")
+        assertEquals("refresh-2", replaced[0].refreshToken)
+    }
+
+    @Test fun `jetons oauth parses`() {
+        val both = com.pressia.data.remote.OAuth.parseTokens(
+            """{"access_token":"AAA","refresh_token":"RRR","expires_in":3600}""")
+        assertEquals("AAA", both?.access)
+        assertEquals("RRR", both?.refresh)
+        // Inoreader peut ne pas renvoyer de refresh_token : il reste vide, l'ancien est
+        // conservé par l'appelant.
+        val noRefresh = com.pressia.data.remote.OAuth.parseTokens("""{"access_token":"AAA"}""")
+        assertEquals("AAA", noRefresh?.access)
+        assertEquals("", noRefresh?.refresh)
+        // Sans jeton d'accès, la réponse est inutilisable.
+        assertNull(com.pressia.data.remote.OAuth.parseTokens("""{"error":"invalid_grant"}"""))
+        assertNull(com.pressia.data.remote.OAuth.parseTokens(""))
+    }
+
     @Test fun `ajout et rafraichissement de jeton`() {
         val one = listOf(com.pressia.data.CloudAccount("feedly#aa", "feedly", "t1", "moi@ex.com"))
         // Même jeton : on ne duplique pas, on met juste à jour le nom.

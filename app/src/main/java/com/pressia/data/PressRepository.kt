@@ -280,12 +280,24 @@ class PressRepository(
     val db: PressDatabase,
     val prefs: Prefs,
     private val feedly: FeedProvider = FeedlyProvider(),
-    private val inoreader: FeedProvider = InoreaderProvider(),
+    private val inoreader: InoreaderProvider = InoreaderProvider(),
     private val local: LocalProvider = LocalProvider()
 ) {
     /** Contexte applicatif. */
     val appCtx: Context get() = ctx.applicationContext
     private val dao get() = db.dao()
+
+    /**
+     * Branchement du renouvellement du jeton Inoreader.
+     *
+     * Le provider sait qu'il doit renouveler (il voit le 401), mais c'est le dépôt qui
+     * détient le jeton de renouvellement — il est dans le registre des comptes, avec le
+     * compte. D'où ce raccord : le dépôt est le seul à savoir où le lire et où le
+     * réécrire.
+     */
+    init {
+        inoreader.renewToken = { expired -> renewInoreaderToken(expired) }
+    }
 
     /**
      * Verrou partagé de synchronisation (bouton, lancement : même processus,
@@ -394,8 +406,17 @@ class PressRepository(
      * Enregistre (ou met à jour) un compte et en fait le compte actif. Une reconnexion du
      * même utilisateur (nouveau jeton) remplace le jeton sur place au lieu d'ajouter une
      * seconde ligne : deux fois le même compte est interdit (dossiers et flux dupliqués).
+     *
+     * [refreshToken] est le jeton de renouvellement OAuth : il accompagne le compte dans le
+     * registre. C'est lui qui permet de renouveler un jeton d'accès expiré sans refaire la
+     * connexion — sans lui, le compte meurt à l'expiration.
      */
-    suspend fun addAccount(service: String, token: String, name: String = ""): CloudAccount = withContext(Dispatchers.IO) {
+    suspend fun addAccount(
+        service: String,
+        token: String,
+        name: String = "",
+        refreshToken: String = ""
+    ): CloudAccount = withContext(Dispatchers.IO) {
         val svc = service.lowercase()
         val p = providerFor(svc)
         val userId = runCatching { p.userId(token) }.getOrDefault("")
@@ -416,6 +437,42 @@ class PressRepository(
         // déjà agi, inutile de continuer à lui demander.
         clearExpiredOfService(service)
         account
+    }
+
+    /**
+     * Renouvelle le jeton d'accès d'un compte Inoreader expiré.
+     *
+     * Le jeton d'accès OAuth expire vite (de l'ordre de l'heure chez Inoreader) : sans le
+     * jeton de renouvellement, chaque lecture de compte se heurterait à un 401 et le compte
+     * serait déclaré « session expirée » alors qu'un simple renouvellement le ranime. Le
+     * jeton de renouvellement accompagne le compte dans le registre — d'où sa lecture ici.
+     *
+     * Renvoie le jeton neuf, ou null si le renouvellement est impossible (aucun jeton de
+     * renouvellement enregistré, ou renouvellement refusé par Inoreader).
+     */
+    suspend fun renewInoreaderToken(expiredToken: String): String? = withContext(Dispatchers.IO) {
+        if (expiredToken.isBlank()) return@withContext null
+        val account = cloudAccounts().firstOrNull {
+            it.service == "inoreader" && it.token == expiredToken && it.refreshToken.isNotBlank()
+        } ?: return@withContext null
+        val d = prefs.data.first()
+        val appId = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
+        val appKey = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
+        if (appId.isBlank() || appKey.isBlank()) return@withContext null
+        val tokens = OAuth.inoreaderRefresh(account.refreshToken, appId, appKey) ?: return@withContext null
+        // Le compte garde son identité : seul le jeton change, ses dossiers et ses articles
+        // suivent. Le miroir historique (TOKEN) est remis à jour si le compte est actif.
+        val accounts = cloudAccounts().toMutableList()
+        val idx = accounts.indexOfFirst { it.id == account.id }
+        if (idx < 0) return@withContext null
+        accounts[idx] = accounts[idx].copy(
+            token = tokens.access,
+            refreshToken = tokens.refresh.ifBlank { account.refreshToken }
+        )
+        prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
+        if (prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == account.id) setActiveAccount(account.id)
+        android.util.Log.i("PressIA", "Inoreader : jeton d'accès renouvelé pour ${account.id}")
+        tokens.access
     }
 
     /**

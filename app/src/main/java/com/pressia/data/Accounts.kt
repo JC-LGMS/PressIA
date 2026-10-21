@@ -27,7 +27,16 @@ data class CloudAccount(
     /** Nom affiché (e-mail, identifiant) renseigné à la connexion ; purement informatif. */
     val name: String = "",
     /** Identifiant distant stable (profil) ; vide si inconnu (anciennes versions). */
-    val userId: String = ""
+    val userId: String = "",
+    /**
+     * Jeton de renouvellement (OAuth).
+     *
+     * Le jeton d'accès expire vite (Inoreader : de l'ordre de l'heure) ; ce second
+     * jeton, seul, permet d'en obtenir un neuf sans refaire la connexion. Vide pour une
+     * session web (le cookie de session ne se renouvelle pas) et pour les comptes
+     * Feedly, dont le jeton ne périme pas.
+     */
+    val refreshToken: String = ""
 ) {
     /** Service de base, sans l'empreinte du compte (« feedly#ab12… » → « feedly »). */
     val service: String get() = providerBase(id)
@@ -151,7 +160,12 @@ object AccountStore {
                     val token = o.optString("token").trim()
                     if (provider.isBlank() || token.isBlank()) return@mapNotNull null
                     val id = o.optString("id").trim().ifBlank { accountIdOf(provider, token) }
-                    CloudAccount(id, provider, token, o.optString("name").trim(), o.optString("userId").trim())
+                    CloudAccount(
+                        id, provider, token,
+                        o.optString("name").trim(),
+                        o.optString("userId").trim(),
+                        o.optString("refreshToken").trim()
+                    )
                 }
             }.distinctBy { it.id }
         } catch (_: Exception) {
@@ -169,6 +183,7 @@ object AccountStore {
                     .put("token", a.token)
                     .put("name", a.name)
                     .put("userId", a.userId)
+                    .put("refreshToken", a.refreshToken)
             )
         }
         return arr.toString()
@@ -188,8 +203,19 @@ object AccountStore {
      * L'identité est conservée ([id] inchangé) : abonnements et articles suivent sans migration.
      * Sans [userId] (inconnu), seul un jeton identique est reconnu : deux utilisateurs
      * distincts ne fusionnent jamais, même sans identifiant.
+     *
+     * [refresh] est le jeton de renouvellement (OAuth) : il accompagne le compte, c'est lui
+     * qui permet de renouveler le jeton d'accès sans refaire la connexion. Un refresh vide
+     * **conserve** celui déjà enregistré (une reconnexion par cookie n'en apporte pas).
      */
-    fun refreshToken(accounts: List<CloudAccount>, service: String, token: String, name: String = "", userId: String = ""): List<CloudAccount> {
+    fun refreshToken(
+        accounts: List<CloudAccount>,
+        service: String,
+        token: String,
+        name: String = "",
+        userId: String = "",
+        refresh: String = ""
+    ): List<CloudAccount> {
         val svc = service.lowercase()
         val byToken = accounts.firstOrNull { it.service == svc && it.token == token }
         if (byToken != null) {
@@ -197,7 +223,8 @@ object AccountStore {
                 if (it.id != byToken.id) it
                 else it.copy(
                     name = name.ifBlank { it.name },
-                    userId = it.userId.ifBlank { userId.trim() }
+                    userId = it.userId.ifBlank { userId.trim() },
+                    refreshToken = refresh.ifBlank { it.refreshToken }
                 )
             }
         }
@@ -206,10 +233,14 @@ object AccountStore {
         if (sameUser != null) {
             return accounts.map {
                 if (it.id != sameUser.id) it
-                else it.copy(token = token, name = name.ifBlank { it.name })
+                else it.copy(
+                    token = token,
+                    name = name.ifBlank { it.name },
+                    refreshToken = refresh.ifBlank { it.refreshToken }
+                )
             }
         }
-        val account = CloudAccount(accountIdOf(service, token), svc, token, name, uid)
+        val account = CloudAccount(accountIdOf(service, token), svc, token, name, uid, refresh)
         return upsert(accounts, account)
     }
 }

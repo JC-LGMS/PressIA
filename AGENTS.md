@@ -239,6 +239,17 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
     `PressRepository.replaceAccountToken` remplace le jeton **en place** — le compte garde
     son `id`, donc ses dossiers, ses abonnements et ses articles — et **refuse** un jeton
     que le service n'accepte pas ou qui appartient à un autre utilisateur.
+  - **Renouvellement du jeton OAuth** : le jeton d'accès expire vite (de l'ordre de l'heure
+    chez Inoreader). `OAuth.inoreaderTokens` récupère les **deux** jetons (accès +
+    renouvellement) ; le second accompagne le compte dans le registre (`CloudAccount.
+    refreshToken`, sérialisé avec le compte — donc couvert par `SECRET_PREFS`).
+    `InoreaderProvider.call` enveloppe chaque appel API : sur 401, il renouvelle **une
+    seule fois** et rejoue l'appel ; sans cela le compte serait déclaré « session expirée »
+    alors qu'un simple renouvellement le ranime. `PressRepository.renewInoreaderToken` fait
+    le renouvellement (il est le seul à savoir où lire et réécrire le jeton de
+    renouvellement) et **conserve l'identité du compte** : ses dossiers et ses articles
+    suivent. Un `CancellationException` n'est **jamais** confondu avec un jeton à
+    renouveler.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
   `exportSchema = false`, version DB actuelle : 5.
 - Réglage ajouté, modifié ou supprimé = cycle complet obligatoire : clé dans `Prefs`,

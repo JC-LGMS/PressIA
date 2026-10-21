@@ -1080,10 +1080,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Un seul approvisionnement à la fois : une reconnexion rapide annule le précédent.
      */
     private var backfillJob: Job? = null
-    fun connectAccount(service: String, token: String, name: String = "") {
+    /**
+     * Enregistre un compte connecté et lance sa première synchronisation.
+     *
+     * [refreshToken] est le jeton de renouvellement OAuth : il accompagne le compte dans le
+     * registre et lui permet de renouveler son jeton d'accès expiré sans refaire la
+     * connexion.
+     */
+    fun connectAccount(service: String, token: String, name: String = "", refreshToken: String = "") {
         backfillJob?.cancel()
         backfillJob = viewModelScope.launch {
-            val connected = repo.addAccount(service, token, name)
+            val connected = repo.addAccount(service, token, name, refreshToken)
             refreshNow()
             account = repo.accountInfo()
             lockSync()

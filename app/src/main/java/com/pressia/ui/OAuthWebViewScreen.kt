@@ -85,12 +85,17 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
                 // Identifiants d'application publiés aussitôt : l'API Inoreader les exige en
                 // en-tête sur chaque appel, y compris sur les appels qui suivent l'échange.
                 if (provider != "feedly") vm.repo.refreshInoreaderAppAuth()
+                // Les deux jetons sont récupérés pour Inoreader : le jeton de renouvellement
+                // accompagne le compte, c'est lui qui permet de renouveler un jeton d'accès
+                // expiré sans refaire la connexion.
+                val tokens = if (provider == "feedly") null
+                else OAuth.inoreaderTokens(code, clientId, clientSecret, redirect)
                 val tok = if (provider == "feedly") OAuth.feedlyToken(code, clientId, clientSecret, redirect)
-                else OAuth.inoreaderToken(code, clientId, clientSecret, redirect)
+                else tokens?.access
                 if (!tok.isNullOrBlank()) {
                     // Passage par le registre de comptes : écrire seulement TOKEN/PROVIDER
                     // ferait perdre le compte dès que Prefs.ACCOUNTS existe.
-                    vm.connectAccount(provider, tok, "")
+                    vm.connectAccount(provider, tok, "", tokens?.refresh.orEmpty())
                     // Retour immédiat à la page des comptes dès le jeton récupéré : la
                     // première synchro part ensuite dans le scope du modèle (qui survit à la
                     // navigation), pas dans celui de cet écran (annulé dès sa sortie, ce qui

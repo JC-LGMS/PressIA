@@ -85,19 +85,69 @@ object OAuth {
             } catch (_: Exception) { null }
         }
 
+    /**
+     * Jeton OAuth d'un service : le jeton d'accès (cour) et le jeton de renouvellement
+     * (long, seule voie pour obtenir un jeton neuf sans refaire la connexion).
+     */
+    data class Tokens(val access: String, val refresh: String = "")
+
     /** Échange code→token Inoreader (réseau sur IO : jamais sur le thread d'appel). */
     suspend fun inoreaderToken(code: String, appId: String, appKey: String, redirect: String = BuildConfig.INOREADER_REDIRECT_URI): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val body = okhttp3.FormBody.Builder()
-                    .add("code", code).add("client_id", appId).add("client_secret", appKey)
-                    .add("redirect_uri", redirect).add("grant_type", "authorization_code").build()
-                val req = okhttp3.Request.Builder().url("https://www.inoreader.com/oauth2/token").post(body).build()
-                val resp = okhttp3.OkHttpClient().newCall(req).execute()
-                val txt = resp.body?.string().orEmpty()
-                Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
-            } catch (_: Exception) { null }
-        }
+        inoreaderTokens(code, appId, appKey, redirect)?.access
+
+    /**
+     * Échange code→jetons Inoreader : les **deux** jetons sont récupérés.
+     *
+     * Ne garder que le jeton d'accès condamnerait le compte à l'expiration (de l'ordre de
+     * l'heure chez Inoreader) : sans le jeton de renouvellement, il faudrait refaire toute
+     * la procédure de connexion.
+     */
+    suspend fun inoreaderTokens(
+        code: String,
+        appId: String,
+        appKey: String,
+        redirect: String = BuildConfig.INOREADER_REDIRECT_URI
+    ): Tokens? = withContext(Dispatchers.IO) {
+        try {
+            val body = okhttp3.FormBody.Builder()
+                .add("code", code).add("client_id", appId).add("client_secret", appKey)
+                .add("redirect_uri", redirect).add("grant_type", "authorization_code").build()
+            val req = okhttp3.Request.Builder().url("https://www.inoreader.com/oauth2/token").post(body).build()
+            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+            val txt = resp.body?.string().orEmpty()
+            parseTokens(txt)
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * Renouvellement du jeton d'accès Inoreader (`grant_type=refresh_token`).
+     *
+     * Inoreader peut ne pas renvoyer de jeton de renouvellement : l'ancien est alors
+     * conservé (il reste valable).
+     */
+    suspend fun inoreaderRefresh(
+        refreshToken: String,
+        appId: String,
+        appKey: String
+    ): Tokens? = withContext(Dispatchers.IO) {
+        try {
+            val body = okhttp3.FormBody.Builder()
+                .add("grant_type", "refresh_token").add("refresh_token", refreshToken)
+                .add("client_id", appId).add("client_secret", appKey).build()
+            val req = okhttp3.Request.Builder().url("https://www.inoreader.com/oauth2/token").post(body).build()
+            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+            val txt = resp.body?.string().orEmpty()
+            parseTokens(txt)?.let { if (it.refresh.isBlank()) it.copy(refresh = refreshToken) else it }
+        } catch (_: Exception) { null }
+    }
+
+    /** Parse une réponse JSON de jetons OAuth (`access_token`, `refresh_token`). */
+    internal fun parseTokens(txt: String): Tokens? {
+        val access = Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
+        if (access.isNullOrBlank()) return null
+        val refresh = Regex("\"refresh_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1).orEmpty()
+        return Tokens(access, refresh)
+    }
 
     /**
      * Génère un vérificateur PKCE (RFC 7636) : 32 octets aléatoires en base64url (43 caractères).

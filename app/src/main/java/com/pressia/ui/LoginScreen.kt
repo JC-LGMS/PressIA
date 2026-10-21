@@ -567,6 +567,9 @@ suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
     val code = res.code?.takeIf { it.isNotBlank() } ?: return "Retour OAuth sans code d'autorisation"
 
     val d = vm.repo.prefs.data.first()
+    // Inoreader : les deux jetons (accès + renouvellement) sont récupérés — le second
+    // accompagne le compte et permet de renouveler le premier sans refaire la connexion.
+    var refreshToken = ""
     val token = if (service == "feedly") {
         val id = d[Prefs.FEEDLY_CLIENT_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_ID
         val secret = d[Prefs.FEEDLY_CLIENT_SECRET]?.takeIf { it.isNotBlank() } ?: BuildConfig.FEEDLY_CLIENT_SECRET
@@ -574,9 +577,9 @@ suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
     } else {
         val id = d[Prefs.INOREADER_APP_ID]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_ID
         val key = d[Prefs.INOREADER_APP_KEY]?.takeIf { it.isNotBlank() } ?: BuildConfig.INOREADER_APP_KEY
-        OAuth.inoreaderToken(code, id, key, redirect)
+        OAuth.inoreaderTokens(code, id, key, redirect)?.also { refreshToken = it.refresh }?.access
     }
     if (token.isNullOrBlank()) return "Échange code→jeton refusé : vérifiez l'identifiant et l'URL de redirection"
-    vm.connectAccount(service, token, "")
+    vm.connectAccount(service, token, "", refreshToken)
     return "Compte ${if (service == "feedly") "Feedly" else "Inoreader"} connecté"
 }
