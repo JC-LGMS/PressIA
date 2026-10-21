@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pressia.BuildConfig
@@ -146,20 +147,27 @@ fun LoginScreen(
         // Identifiants employés : App ID, App Key et en-tête d'authentification. Affichables
         // et remplaçables — un compte Inoreader déclaré par l'utilisateur, ou les valeurs
         // de l'extension officielle du navigateur (valeurs par défaut).
-        OutlinedButton(
+        // Volontairement **discret** : ce n'est pas une action de connexion, c'est une
+        // consultation technique. Un `TextButton` (et non un `OutlinedButton`, comme les
+        // connexions aux agrégateurs) le distingue d'un coup d'œil.
+        TextButton(
             { showInoreaderIds = true },
-            Modifier.fillMaxWidth()
+            Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 4.dp)
         ) {
-            Icon(Icons.Filled.VpnKey, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Identifiants Inoreader")
+            Icon(
+                Icons.Filled.VpnKey, null, Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Identifiants Inoreader",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Text(
-            "App ID, App Key et jeton de session employés par l'application : affichables et " +
-                "remplaçables ici.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
         // Connexion OAuth : chemin « avancé », qui exige une application Inoreader
         // enregistrée par le développeur, avec `pressia://oauth/inoreader` comme URL de
         // redirection. Les champs démarrent **vides** : l'identifiant par défaut (celui de
