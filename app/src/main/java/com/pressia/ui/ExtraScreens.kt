@@ -1564,7 +1564,7 @@ private val ABOUT_TOPICS = listOf(
     ),
     AboutTopic(
         "Apparence et confort de lecture",
-        "Thème de nuit (sombre, AMOLED), accent, fond, quatre tailles de police, justification, échelles du menu " +
+        "Thème de nuit (sombre, AMOLED), accent, fond, quatre tailles de police, échelles du menu " +
             "et de l'accueil : tout est réglable et exporté avec la sauvegarde."
     )
 )

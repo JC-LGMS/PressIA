@@ -616,6 +616,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Activité déjà vivante (relance, futur `singleTop`) : le retour OAuth doit être traité
+        // comme au premier lancement, sinon le code reste dans l'intent sans jamais partir.
+        intent.data?.takeIf { it.host == "oauth" }?.let { oauthLink.value = it }
     }
 }
 
