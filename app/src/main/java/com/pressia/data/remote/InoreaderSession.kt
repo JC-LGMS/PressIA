@@ -36,7 +36,7 @@ val INOREADER_COOKIE_HOSTS = listOf(
  * dernier recours : un essai raté ne coûte qu'un appel, mais Inoreader compte les
  * requêtes au quota.
  */
-val INOREADER_SESSION_COOKIES = listOf("SID", "LSID")
+val INOREADER_SESSION_COOKIES = listOf("SID", "LSID", "SSID", "BSID")
 
 /**
  * Longueur minimale d'un jeton de session plausible.

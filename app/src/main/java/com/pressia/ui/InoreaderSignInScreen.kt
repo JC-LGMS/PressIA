@@ -85,15 +85,24 @@ private fun forgetInoreaderSession() {
 private fun nativeCookieHeader(): String? {
     val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
     runCatching { cm.flush() }
-    val header = INOREADER_COOKIE_HOSTS.asSequence()
-        .mapNotNull { host -> runCatching { cm.getCookie(host) }.getOrNull() }
-        .firstOrNull { it.isNotBlank() }
-    if (header == null) {
+    // On collecte les cookies de **tous** les hôtes, pas seulement le premier non
+    // vide : le premier hôte (souvent www.inoreader.com) peut n'avoir que des
+    // cookies analytiques, tandis que le cookie de session (SID/LSID) vit sur un
+    // autre hôte (inoreader.com apex, ou l'inverse).
+    val headers = INOREADER_COOKIE_HOSTS
+        .mapNotNull { host ->
+            val c = runCatching { cm.getCookie(host) }.getOrNull()
+            android.util.Log.d("PressIA", "Inoreader cookie host $host: ${c?.takeIf { it.isNotBlank() } ?: "<aucun>"}")
+            c
+        }
+        .filter { it.isNotBlank() }
+    val header = headers.joinToString("; ")
+    if (header.isBlank()) {
         android.util.Log.w("PressIA", "Inoreader cookie: aucun cookie trouvé sur les ${INOREADER_COOKIE_HOSTS.size} hôtes")
     } else {
-        android.util.Log.i("PressIA", "Inoreader cookie: trouve ${header.take(60)}… sur ${INOREADER_COOKIE_HOSTS.first { runCatching { cm.getCookie(it) }.getOrNull() == header }}")
+        android.util.Log.i("PressIA", "Inoreader cookie: ${headers.size} hôte(s) avec cookie, ${header.take(60)}…")
     }
-    return header
+    return header.takeIf { it.isNotBlank() }
 }
 
 /**
@@ -115,9 +124,31 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
     /** Message de blocage déjà affiché : on ne le répète pas à chaque tour de sonde. */
     var stuckNotified by remember { mutableStateOf(false) }
 
+    /**
+     * Lit `document.cookie` depuis la WebView via JavaScript.
+     *
+     * `CookieManager.getInstance().getCookie()` peut manquer certains cookies (posés par
+     * JavaScript, cookies HttpOnly sur des chemins spécifiques…). `document.cookie` est
+     * la source la plus fiable pour voir tous les cookies de la page courante.
+     */
+    suspend fun webViewDocumentCookie(webView: WebView): String? = suspendCoroutine { cont ->
+        val script = "document.cookie"
+        runCatching {
+            webView.evaluateJavascript(script) { value ->
+                val v = value?.trim()?.trim('"')?.trim()
+                android.util.Log.d("PressIA", "Inoreader document.cookie: ${v ?: "<null/empty>"}")
+                cont.resume(if (v != null && v.isNotBlank()) v else null)
+            }
+        }.onFailure { cont.resume(null) }
+    }
+
     /** Valeurs candidates tirées du cookie de session, dans l'ordre de préférence. */
-    fun sessionCandidates(): List<String> =
-        inoreaderSessionCandidates(nativeCookieHeader())
+    suspend fun sessionCandidates(webView: WebView? = null): List<String> {
+        val native = nativeCookieHeader()
+        val web = if (webView != null) webViewDocumentCookie(webView) else null
+        val combined = listOfNotNull(native, web).joinToString("; ")
+        return inoreaderSessionCandidates(combined)
+    }
 
     /**
      * Vérifie le jeton, enregistre le compte, puis revient sur la liste des comptes.
@@ -180,7 +211,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         while (!done) {
             delay(1200)
             if (busy) continue
-            val candidates = if (manualToken.isNotBlank()) listOf(manualToken.trim()) else sessionCandidates()
+            val candidates = if (manualToken.isNotBlank()) listOf(manualToken.trim()) else sessionCandidates(webView)
             if (candidates.isEmpty()) {
                 // Pas de cookie lisible. Deux cas : l'utilisateur n'est pas encore
                 // connecté (formulaire de connexion affiché — rien à signaler), ou la
@@ -261,7 +292,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ scope.launch { tryConnect(sessionCandidates()) } }, enabled = !busy) {
+                    OutlinedButton({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
                         Text("Réessayer")
                     }
                     TextButton({ showTokenField = !showTokenField }) {
