@@ -85,9 +85,15 @@ private fun forgetInoreaderSession() {
 private fun nativeCookieHeader(): String? {
     val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
     runCatching { cm.flush() }
-    return INOREADER_COOKIE_HOSTS.asSequence()
+    val header = INOREADER_COOKIE_HOSTS.asSequence()
         .mapNotNull { host -> runCatching { cm.getCookie(host) }.getOrNull() }
         .firstOrNull { it.isNotBlank() }
+    if (header == null) {
+        android.util.Log.w("PressIA", "Inoreader cookie: aucun cookie trouvé sur les ${INOREADER_COOKIE_HOSTS.size} hôtes")
+    } else {
+        android.util.Log.i("PressIA", "Inoreader cookie: trouve ${header.take(60)}… sur ${INOREADER_COOKIE_HOSTS.first { runCatching { cm.getCookie(it) }.getOrNull() == header }}")
+    }
+    return header
 }
 
 /**
@@ -137,6 +143,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         val hasAppAuth = vm.repo.refreshInoreaderAppAuth()
         val session = vm.repo.verifyInoreaderWebSession(candidates)
         if (session == null) {
+            android.util.Log.w("PressIA", "Inoreader verifyWebSession: null — ${candidates.size} candidat(s) essayé(s) — AppAuth=${if (hasAppAuth) "OK" else "MANQUANT"}")
             busy = false
             status = if (!hasAppAuth) {
                 "Session Inoreader refusée : identifiants d'application Inoreader manquants " +

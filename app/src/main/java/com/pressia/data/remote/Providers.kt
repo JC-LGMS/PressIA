@@ -390,8 +390,12 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
                 }
             } catch (e: CancellationException) {
                 throw e   // une annulation ne doit jamais passer pour un refus de session
-            } catch (_: Exception) {
-                ""       // 401/403 ou réseau : cet essai est simply raté
+            } catch (e: Exception) {
+                // On journalise : sans ça, un 401 (jeton invalide), un 403 (identifiants
+                // applicatifs manquants) ou une panne réseau se ressemblent tous et le
+                // diagnostic pour l'utilisateur devient « session non valide ».
+                android.util.Log.w("PressIA", "Inoreader verifyWebSession ${t.takeIf { it.isNotBlank() }?.take(8)}… : ${e.javaClass.simpleName} ${e.message}")
+                ""       // essai suivant sur le candidat suivant
             }
             if (label.isNotBlank()) return WebSession(token = t, label = label)
         }

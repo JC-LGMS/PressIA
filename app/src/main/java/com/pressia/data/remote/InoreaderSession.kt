@@ -17,11 +17,15 @@ package com.pressia.data.remote
 /**
  * Hôtes où chercher les cookies de session après connexion.
  *
- * Le domaine nu est volontairement présent : la page pose certains cookies sur
- * `inoreader.com` et d'autres sur `www.inoreader.com`.
+ * La page pose certains cookies sur `inoreader.com` et d'autres sur `www.inoreader.com` :
+ * deux domaines sont scrutés, avec leurs variantes `http`/`https` et `www`/apex (le
+ * CookieManager accepte l'URL complète, la forme exacte est conservée telle quelle).
  */
 val INOREADER_COOKIE_HOSTS = listOf(
-    "https://www.inoreader.com", "https://inoreader.com"
+    "https://www.inoreader.com", "https://inoreader.com",
+    "https://www.inoreader.com/", "https://inoreader.com/",
+    "http://www.inoreader.com", "http://inoreader.com",
+    "http://www.inoreader.com/", "http://inoreader.com/"
 )
 
 /**
