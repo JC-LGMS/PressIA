@@ -379,23 +379,26 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
      * compte les requêtes au quota, inutile d'insister.
      */
     override suspend fun verifyWebSession(tokens: List<String>): WebSession? {
+        val appId = InoreaderAppAuth.appId.trim()
+        val appKey = InoreaderAppAuth.appKey.trim()
+        if (appId.isEmpty() || appKey.isEmpty()) return null
         for (t in tokens) {
             if (t.isBlank()) continue
+            // L'extension Inoreader passe AppId/AppKey en paramètre d'URL (pas en en-tête),
+            // utilise l'endpoint simple_api/ (pas reader/api/0/), et s'authentifie via
+            // le cookie de session (credentials: same-origin), PAS via
+            // Authorization: GoogleLogin auth=.
             val label = try {
-                api.userInfo(inoreaderAuthHeader(t)).let { u ->
+                api.userInfoSimple(appId, appKey, "get_user_info", t).let { u ->
                     listOfNotNull(
                         u.userName?.takeIf { it.isNotBlank() },
                         u.userEmail?.takeIf { it.isNotBlank() }
                     ).joinToString(" · ")
                 }
             } catch (e: CancellationException) {
-                throw e   // une annulation ne doit jamais passer pour un refus de session
-            } catch (e: Exception) {
-                // On journalise : sans ça, un 401 (jeton invalide), un 403 (identifiants
-                // applicatifs manquants) ou une panne réseau se ressemblent tous et le
-                // diagnostic pour l'utilisateur devient « session non valide ».
-                android.util.Log.w("PressIA", "Inoreader verifyWebSession ${t.takeIf { it.isNotBlank() }?.take(8)}… : ${e.javaClass.simpleName} ${e.message}")
-                ""       // essai suivant sur le candidat suivant
+                throw e
+            } catch (_: Exception) {
+                ""
             }
             if (label.isNotBlank()) return WebSession(token = t, label = label)
         }

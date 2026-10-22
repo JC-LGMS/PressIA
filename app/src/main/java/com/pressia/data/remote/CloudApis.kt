@@ -138,6 +138,14 @@ interface InoreaderService {
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
     suspend fun userInfo(@Header("Authorization") h: String): InoreaderUserInfo
+    /** Profil du compte connecté, authentification via en-tête Cookie + AppId/AppKey en query param (mécanisme de session web de l'extension Inoreader). */
+    @GET("simple_api/")
+    suspend fun userInfoSimple(
+        @Query("AppId") appId: String,
+        @Query("AppKey") appKey: String,
+        @Query("get_user_info") getUserInfo: String = "",
+        @Header("Cookie") cookie: String
+    ): InoreaderUserInfo
     /** Compteurs de non-lus : 1 appel léger, détecteur de changement pour la réconciliation. */
     @GET("reader/api/0/unread-count")
     suspend fun unreadCount(

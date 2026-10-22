@@ -142,12 +142,19 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         }.onFailure { cont.resume(null) }
     }
 
-    /** Valeurs candidates tirées du cookie de session, dans l'ordre de préférence. */
+    /** Valeurs candidates tirées du cookie de session, dans l'ordre de préférence.
+     *
+     * Le premier élément est l'en-tête `Cookie` complet (tous les cookies concatenés),
+     * utilisé pour l'authentification via l'en-tête `Cookie` (mécanisme de session web
+     * de l'extension Inoreader). Les éléments suivants sont des tokens individuels
+     * (SID, LSID, etc.) extraits du cookie, conservés pour la rétrocompatibilité.
+     */
     suspend fun sessionCandidates(webView: WebView? = null): List<String> {
         val native = nativeCookieHeader()
         val web = if (webView != null) webViewDocumentCookie(webView) else null
         val combined = listOfNotNull(native, web).joinToString("; ")
-        return inoreaderSessionCandidates(combined)
+        val tokens = inoreaderSessionCandidates(combined)
+        return if (combined.isNotBlank()) listOf(combined) + tokens else tokens
     }
 
     /**
