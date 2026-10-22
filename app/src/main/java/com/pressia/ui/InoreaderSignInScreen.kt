@@ -82,27 +82,28 @@ private fun forgetInoreaderSession() {
  * qu'après, et sans lui la détection peut arriver avant l'écriture (échec au premier
  * essai).
  */
-private fun nativeCookieHeader(): String? {
-    val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
+private fun nativeCookieHeaders(): List<String> {
+    val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return emptyList()
     runCatching { cm.flush() }
-    // On collecte les cookies de **tous** les hôtes, pas seulement le premier non
-    // vide : le premier hôte (souvent www.inoreader.com) peut n'avoir que des
-    // cookies analytiques, tandis que le cookie de session (SID/LSID) vit sur un
-    // autre hôte (inoreader.com apex, ou l'inverse).
-    val headers = INOREADER_COOKIE_HOSTS
+    // On collecte les cookies de **chaque hôte séparément**, pas concatenés :
+    // le navigateur n'enverrait que les cookies pour le domaine de l'URL.
+    // Le premier hôte de INOREADER_COOKIE_HOSTS est https://www.inoreader.com
+    // qui contient typiquement ssid/al/bsid — il sera essayé en premier.
+    return INOREADER_COOKIE_HOSTS
         .mapNotNull { host ->
             val c = runCatching { cm.getCookie(host) }.getOrNull()
             android.util.Log.d("PressIA", "Inoreader cookie host $host: ${c?.takeIf { it.isNotBlank() } ?: "<aucun>"}")
             c
         }
         .filter { it.isNotBlank() }
-    val header = headers.joinToString("; ")
-    if (header.isBlank()) {
-        android.util.Log.w("PressIA", "Inoreader cookie: aucun cookie trouvé sur les ${INOREADER_COOKIE_HOSTS.size} hôtes")
+}
+
+private fun logCookies(headers: List<String>, source: String) {
+    if (headers.isEmpty()) {
+        android.util.Log.w("PressIA", "Inoreader cookie ($source): aucun cookie trouvé sur les ${INOREADER_COOKIE_HOSTS.size} hôtes")
     } else {
-        android.util.Log.i("PressIA", "Inoreader cookie: ${headers.size} hôte(s) avec cookie, ${header.take(60)}…")
+        android.util.Log.i("PressIA", "Inoreader cookie ($source): ${headers.size} hôte(s), premier = ${headers.first().takeIf { it.isNotBlank() }?.take(60)}…")
     }
-    return header.takeIf { it.isNotBlank() }
 }
 
 /**
@@ -144,17 +145,30 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
 
     /** Valeurs candidates tirées du cookie de session, dans l'ordre de préférence.
      *
-     * Le premier élément est l'en-tête `Cookie` complet (tous les cookies concatenés),
-     * utilisé pour l'authentification via l'en-tête `Cookie` (mécanisme de session web
-     * de l'extension Inoreader). Les éléments suivants sont des tokens individuels
-     * (SID, LSID, etc.) extraits du cookie, conservés pour la rétrocompatibilité.
+     * Le premier candidat est le cookie de l'hôte https://www.inoreader.com
+     * (contient typiquement ssid/al/bsid), puis les autres hôtes, puis les tokens
+     * individuels extraits. Chaque hôte est essayé séparément : le navigateur
+     * n'enverrait que les cookies pour le domaine de l'URL, pas tous concaténés.
      */
     suspend fun sessionCandidates(webView: WebView? = null): List<String> {
-        val native = nativeCookieHeader()
+        val nativeHeaders = nativeCookieHeaders()
+        logCookies(nativeHeaders, "CookieManager")
         val web = if (webView != null) webViewDocumentCookie(webView) else null
-        val combined = listOfNotNull(native, web).joinToString("; ")
-        val tokens = inoreaderSessionCandidates(combined)
-        return if (combined.isNotBlank()) listOf(combined) + tokens else tokens
+        if (web != null && web.isNotBlank()) {
+            android.util.Log.d("PressIA", "Inoreader document.cookie: $web")
+        }
+        val candidates = mutableListOf<String>()
+        // 1. Cookie de l'hôte cible (www.inoreader.com) en premier
+        nativeHeaders.firstOrNull()?.let { candidates.add(it) }
+        // 2. Les autres hôtes
+        nativeHeaders.drop(1).forEach { candidates.add(it) }
+        // 3. document.cookie (complémentaire, peut contenir des cookies que CookieManager rate)
+        if (web != null && web.isNotBlank()) candidates.add(web)
+        // 4. Tokens individuels extraits (SID, LSID, etc.) — rétrocompatibilité
+        val allCookies = (nativeHeaders + listOfNotNull(web?.takeIf { it.isNotBlank() })).joinToString("; ")
+        val tokens = inoreaderSessionCandidates(allCookies)
+        candidates.addAll(tokens)
+        return candidates
     }
 
     /**
