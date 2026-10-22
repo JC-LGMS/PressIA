@@ -12,6 +12,9 @@ import com.pressia.data.remote.feedlyMarkAllMarkers
 import com.pressia.data.remote.reconcileUnchanged
 import com.pressia.data.remote.dedupHash
 import com.pressia.data.remote.LocalRssFetcher
+import com.pressia.data.remote.isSupportedFeedUrl
+import com.pressia.data.remote.sanitizeFeedUrl
+import com.pressia.data.mergeIncomingArticle
 import com.pressia.data.remote.inoreaderAuthHeader
 import com.pressia.data.remote.inoreaderSessionCandidates
 import com.pressia.data.remote.plausibleInoreaderToken
@@ -75,6 +78,86 @@ class PressLogicTest {
         assertEquals(1, arts.size)
         assertEquals("T1", arts[0].title)
         assertEquals("https://ex.com/i.jpg", arts[0].imageUrl)
+    }
+    @Test fun `url de flux nettoyee des caracteres de controle`() {
+        // Un NUL collé au clavier (invisible à l'écran) devenait `%00` dans la requête :
+        // le serveur répondait 404 et le flux restait vide, sans message d'erreur.
+        assertEquals(
+            "https://www.youtube.com/feeds/videos.xml?channel_id=UC25t",
+            sanitizeFeedUrl("https://www.youtube.com/feeds/videos.xml?channel_id=UC25t\u0000")
+        )
+        assertEquals("https://ex.com/flux.xml", sanitizeFeedUrl("  ex.com/flux.xml  "))
+        assertEquals("http://10.0.2.2:8899/g1.xml", sanitizeFeedUrl("http://10.0.2.2:8899/g1.xml"))
+        assertEquals("", sanitizeFeedUrl("\u0000  "))
+        assertTrue(isSupportedFeedUrl(sanitizeFeedUrl("ex.com/flux.xml")))
+        assertFalse(isSupportedFeedUrl("ftp://ex.com/flux.xml"))
+    }
+    @Test fun `atom youtube - miniature et description dans media group`() {
+        // YouTube niche ses médias dans `media:group` : le parcours des enfants directs ne les
+        // voyait pas — la miniature et le résumé de chaque vidéo restaient vides.
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <title>Chaine</title>
+ <entry>
+  <id>yt:video:abc</id>
+  <title>Une video</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=abc"/>
+  <author><name>Chaine</name></author>
+  <published>2026-10-21T16:19:38+00:00</published>
+  <updated>2026-10-21T18:06:20+00:00</updated>
+  <media:group>
+   <media:content url="https://www.youtube.com/v/abc?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/abc/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Le resume de la video</media:description>
+  </media:group>
+ </entry>
+</feed>"""
+        val arts = LocalRssFetcher.parse(xml, "yt")
+        assertEquals(1, arts.size)
+        assertEquals("Une video", arts[0].title)
+        assertEquals("https://www.youtube.com/watch?v=abc", arts[0].url)
+        // Le lecteur Flash de `media:content` n'est pas une image : c'est la vignette qui gagne.
+        assertEquals("https://i4.ytimg.com/vi/abc/hqdefault.jpg", arts[0].imageUrl)
+        assertEquals("Le resume de la video", arts[0].summary)
+        // La date de publication prime sur la date de modification.
+        assertEquals(java.time.Instant.parse("2026-10-21T16:19:38Z").toEpochMilli(), arts[0].published)
+    }
+    @Test fun `titre du flux youtube - nom de la chaine`() {
+        // Le titre de la racine est le nom de la chaîne : c'est lui qui doit être affiché à la
+        // place de l'URL (« youtube.com »), seule étiquette possible d'un flux saisi à la main.
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+ <title>Talks with a Spy</title>
+ <entry><id>yt:video:abc</id><title>Une video</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=abc"/></entry>
+</feed>"""
+        val parsed = LocalRssFetcher.parseFeed(xml, "yt")
+        assertEquals("Talks with a Spy", parsed.title)
+        assertEquals(1, parsed.articles.size)
+        // Le titre d'une entrée ne se confond pas avec celui du flux.
+        assertEquals("Une video", parsed.articles[0].title)
+    }
+    @Test fun `titre du flux rss classique - nom du site`() {
+        val xml = """<rss><channel><title>Le Comptoir du Hardware</title>
+            <item><title>T1</title><link>https://ex.com/1</link></item></channel></rss>"""
+        assertEquals("Le Comptoir du Hardware", LocalRssFetcher.parseFeed(xml, "f1").title)
+    }
+    @Test fun `la vignette connue est conservee quand le flux ne la renvoie plus`() {
+        // Feedly ne renvoie son champ « visual » que sur les entrées récentes : une entrée rejouée
+        // sans image effaçait celle déjà affichée, et la vignette disparaissait de la liste à
+        // chaque synchronisation.
+        val stored = com.pressia.data.local.ArticleEntity(
+            id = "a1", feedId = "f1", title = "T1", imageUrl = "https://ex.com/i.jpg")
+        val prev = com.pressia.data.local.ArticleFlags(
+            id = "a1", starred = false, laterSaved = false, imageCached = true,
+            imageUrl = "https://ex.com/i.jpg")
+        val sansImage = stored.copy(imageUrl = null)
+        assertEquals("https://ex.com/i.jpg", mergeIncomingArticle(sansImage, prev, false).imageUrl)
+        // Une image nouvelle remplace l'ancienne.
+        val nouvelle = stored.copy(imageUrl = "https://ex.com/j.jpg")
+        assertEquals("https://ex.com/j.jpg", mergeIncomingArticle(nouvelle, prev, false).imageUrl)
+        // Sans état antérieur, l'article entrant fait foi.
+        assertNull(mergeIncomingArticle(sansImage, null, false).imageUrl)
     }
     @Test fun `readability garde le contenu principal`() {
         val html = "<html><body><nav>menu</nav><article><p>un</p><p>deux trois quatre cinq six sept huit neuf dix onze douze</p><p>encore du texte long pour scorer</p></article></body></html>"

@@ -363,6 +363,9 @@ class PressRepository(
             val accounts = cloudAccounts().toMutableList()
             val idx = accounts.indexOfFirst { it.id == accountId }
             if (idx < 0) return@withContext null
+            // Le jeton de renouvellement est **conservé** : il appartient au même compte et
+            // peut encore servir (si le nouveau jeton est un jeton OAuth). S'il ne correspond
+            // plus, le renouvellement échouera sans dommage — l'ancien jeton reste en place.
             accounts[idx] = accounts[idx].copy(token = token, userId = newUserId)
             prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
             // Le miroir historique (TOKEN/PROVIDER) suit le compte actif.
@@ -429,7 +432,7 @@ class PressRepository(
                 accounts = accounts.map { if (it.id == acc.id) it.copy(userId = uid) else it }
             }
         }
-        accounts = AccountStore.refreshToken(accounts, service, token, name, userId)
+        accounts = AccountStore.refreshToken(accounts, service, token, name, userId, refreshToken)
         val account = accounts.first { it.token == token && it.service == svc }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         setActiveAccount(account.id)
@@ -1204,9 +1207,15 @@ class PressRepository(
         var added = 0
         // Flux RSS saisis à la main : sans compte, donc toujours synchronisés.
         runCatching {
-            local.feeds = dao.subscriptions()
-            if (local.feeds.any { isLocalProvider(it.provider) }) onSource?.invoke("flux locaux")
+            // Seuls les flux « local » : les abonnements d'un compte ont une URL de flux
+            // interne (« feed/… ») que le lecteur local ne sait pas interroger.
+            local.feeds = repairLocalFeeds(dao.subscriptions().filter { isLocalProvider(it.provider) })
+            if (local.feeds.isNotEmpty()) onSource?.invoke("flux locaux")
             val page = local.stream(null, feedId, categoryId, max)
+            android.util.Log.i("PressIA", "flux locaux : ${local.feeds.size} flux interrogés, ${page.articles.size} articles")
+            // Nom du flux : il remplace l'URL, seule étiquette possible d'un flux saisi à la main
+            // (« youtube.com » → « Talks with a Spy »).
+            page.feedTitles.forEach { (id, title) -> dao.setFeedTitle(id, title) }
             // keepRead : le flux RSS ne porte aucun état de lecture, tout article déjà connu
             // garde donc son lu/non-lu local (voir `storeArticles`).
             added += storeArticles(page.articles, keepRead = true)
@@ -1319,7 +1328,11 @@ class PressRepository(
         // URLs attendues, article par article (miniature déclarée puis corps) : relevées une
         // seule fois, elles servent au téléchargement comme au marquage final.
         val perArticle = rows.map { r -> r.id to articleImageUrls(r.imageUrl, r.content, r.summary, r.url) }
-        val thumbs = rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } }.distinct()
+        // Miniatures annoncées comme téléchargées dont le fichier a disparu (purge, cache vidé
+        // à la main, synchronisation interrompue) : le drapeau seul ne suffit pas, sans ce
+        // contrôle la vignette ne revenait jamais.
+        val lostThumbs = dao.cachedThumbUrls().filter { ThumbStore.cachedFile(ctx, it) == null }
+        val thumbs = (rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } } + lostThumbs).distinct()
         val bodies = perArticle.flatMap { (_, urls) -> urls }.distinct().filterNot { it in thumbs }
         val work: List<Pair<String, Boolean>> = thumbs.map { it to true } + bodies.map { it to false }
         if (work.isEmpty()) {
@@ -2795,13 +2808,56 @@ class PressRepository(
         dao.subscriptions().filter { isLocalProvider(it.provider) }.sortedBy { it.title.lowercase() }
 
     /**
+     * Combien d'articles un flux contient-il ?
+     *
+     * Sert à distinguer « flux synchronisé » de « flux ajouté mais vide » : une URL fausse
+     * (ou abîmée par un caractère parasite) ne renvoyait aucun article, et l'application
+     * annonçait quand même une synchronisation réussie.
+     */
+    suspend fun countArticlesOfFeed(feedId: String): Int =
+        withContext(Dispatchers.IO) { dao.articleCount(feedId) }
+
+    /**
+     * Répare les flux RSS locaux dont l'URL porte un caractère parasite (un NUL collé au
+     * clavier, invisible à l'écran).
+     *
+     * L'identifiant d'un flux local **est** son URL : un NUL dedans rendait la ligne
+     * inutilisable — la requête partait avec `%00` (404 côté serveur, aucun article), et la
+     * suppression du flux visait une ligne tronquée au lieu de la bonne. La ligne est donc
+     * remplacée par sa version propre ; les articles du flux sont repris au passage.
+     *
+     * Les suppressions se font sur l'identifiant **exact** : SQLite compare les octets, le NUL
+     * inclus, et la ligne sale ne se confond donc pas avec la ligne propre.
+     */
+    private suspend fun repairLocalFeeds(subs: List<SubscriptionEntity>): List<SubscriptionEntity> {
+        var result = subs
+        for (s in subs) {
+            if (!isLocalProvider(s.provider)) continue
+            val clean = sanitizeFeedUrl(s.id)
+            if (clean == s.id || clean.isEmpty()) continue
+            android.util.Log.w("PressIA", "flux local : URL réparée (« ${s.id.replace("\u0000", "")} »)")
+            dao.deleteArticlesOfFeed(s.id)
+            dao.deleteSubscription(s.id)
+            val fixed = s.copy(id = clean, title = clean, url = clean, siteUrl = clean)
+            dao.upsertSubscriptions(listOf(fixed))
+            result = result.filterNot { it.id == s.id } + fixed
+        }
+        return result
+    }
+
+    /**
      * Ajoute un flux RSS saisi à la main, éventuellement rangé dans un dossier. L'identifiant
      * est l'URL elle-même : PressIA n'attribue pas d'identifiant fictif, ce qui garde la
      * correspondance avec les URL affichées dans les écrans de compte.
+     *
+     * L'URL est nettoyée avant d'être enregistrée ([sanitizeFeedUrl]) : un caractère de
+     * contrôle collé au clavier (NUL, invisible à l'écran) transformait la requête en
+     * `…%00`, le serveur répondait 404, et le flux restait vide sans le moindre message.
+     * Une URL d'un autre protocole que http(s) est refusée.
      */
     suspend fun addLocalFeed(url: String, folderId: String? = null): String? = withContext(Dispatchers.IO) {
-        val link = url.trim()
-        if (link.isEmpty()) return@withContext null
+        val link = sanitizeFeedUrl(url)
+        if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext null
         dao.upsertSubscriptions(
             listOf(SubscriptionEntity(id = link, title = link, url = link, siteUrl = link, provider = LOCAL_PROVIDER))
         )
@@ -2939,6 +2995,10 @@ fun mergeIncomingArticle(incoming: ArticleEntity, prev: ArticleFlags?, keepRead:
         starred = prev.starred,
         laterSaved = prev.laterSaved || incoming.laterSaved,
         imageCached = prev.imageCached,
+        // La miniature ne se perd pas au retour du serveur : Feedly ne renvoie son champ
+        // « visual » que sur les entrées récentes, et une entrée rejouée sans image effaçait
+        // celle déjà affichée — la vignette disparaissait de la liste à chaque synchronisation.
+        imageUrl = incoming.imageUrl ?: prev.imageUrl,
         unread = if (keepRead) prev.unread else incoming.unread,
         readAt = if (keepRead) prev.readAt else incoming.readAt
     )

@@ -310,8 +310,8 @@ fun SubscriptionsScreen(
             onDismiss = { addingTo = null },
             onConfirm = { url ->
                 addingTo = null
-                vm.addLocalFeed(url, f.id) { ok ->
-                    toast(ctx, if (ok) "Flux ajouté" else "Flux non ajouté")
+                vm.addLocalFeed(url, f.id) { res ->
+                    toast(ctx, res.message)
                 }
             }
         )

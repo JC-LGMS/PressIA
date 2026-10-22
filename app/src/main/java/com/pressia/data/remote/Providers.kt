@@ -499,17 +499,23 @@ class LocalProvider : FeedProvider {
         // voulu, le parallélisme borné suffit à tenir le rythme (un `take(30)` en laissait
         // silencieusement une partie sans articles).
         val permits = Semaphore(8)
-        val all = coroutineScope {
+        val results = coroutineScope {
             targets.map { f ->
                 async {
                     permits.withPermit {
-                        runCatching { LocalRssFetcher.fetch(f.url.ifBlank { f.id }, f.id, max) }
-                            .getOrDefault(emptyList())
+                        val res = LocalRssFetcher.fetch(f.url.ifBlank { f.id }, f.id, max)
+                        // Un flux qui échoue ne doit pas disparaître dans le silence : c'est
+                        // ainsi qu'une URL enregistrée avec un caractère parasite restait invisible.
+                        if (res.error != null) android.util.Log.w("PressIA", "flux local ${f.id} : ${res.error}")
+                        res
                     }
                 }
-            }.awaitAll().flatten()
+            }.awaitAll()
         }
-        return StreamPage(all.sortedByDescending { it.published }.take(max))
+        val all = results.flatMap { it.articles }
+        // Nom du flux (chaîne YouTube, site…) : il remplace l'URL dans les listes.
+        val titles = results.mapNotNull { r -> r.title?.takeIf { it.isNotBlank() }?.let { r.feedId to it } }.toMap()
+        return StreamPage(all.sortedByDescending { it.published }.take(max), feedTitles = titles)
     }
     override suspend fun markRead(token: String?, articleIds: List<String>) {}
     override suspend fun markUnread(token: String?, articleIds: List<String>) {}

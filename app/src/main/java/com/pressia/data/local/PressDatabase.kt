@@ -210,6 +210,8 @@ interface PressDao {
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
     @Query("SELECT COUNT(*) FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND unread = 1")
     suspend fun unreadCount(feedId: String?): Int
+    @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId")
+    suspend fun articleCount(feedId: String): Int
     @Query("SELECT feedId AS feedId, COUNT(*) AS c FROM articles WHERE unread = 1 GROUP BY feedId")
     suspend fun unreadByFeed(): List<FeedUnread>
     @Query("SELECT title FROM subscriptions WHERE id = :feedId LIMIT 1")
@@ -234,7 +236,7 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt FROM articles WHERE id IN (:ids)")
+    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt, imageUrl FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
@@ -345,6 +347,23 @@ interface PressDao {
     /** Toutes les miniatures déclarées : sert au nettoyage des fichiers locaux orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
+    /**
+     * Miniatures annoncées comme téléchargées (drapeau `imageCached`).
+     *
+     * Le drapeau peut mentir : le fichier a pu disparaître (purge, cache vidé à la main,
+     * synchronisation interrompue). La comparaison avec le disque est faite par l'appelant —
+     * une image déjà là n'est jamais retéléchargée.
+     */
+    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageCached = 1 AND imageUrl IS NOT NULL AND imageUrl != ''")
+    suspend fun cachedThumbUrls(): List<String>
+    /**
+     * Remplace l'URL d'un flux local par le nom qu'il annonce (nom de la chaîne YouTube).
+     *
+     * Le titre n'est écrasé que s'il est encore l'URL : un nom choisi par l'utilisateur ne
+     * disparaît pas au premier passage du serveur.
+     */
+    @Query("UPDATE subscriptions SET title = :title WHERE id = :id AND (title = '' OR title = url)")
+    suspend fun setFeedTitle(id: String, title: String): Int
     /**
      * Images d'un flux juste avant sa suppression : miniature déclarée et HTML du corps, d'où
      * sont tirées les images affichées dans les articles. Le balayage des fichiers locaux
@@ -543,7 +562,13 @@ data class ArticleFlags(
     val imageCached: Boolean,
     /** État lu/non-lu et date de lecture : locaux pour un flux RSS sans compte (voir [mergeIncomingArticle]). */
     val unread: Boolean = true,
-    val readAt: Long? = null
+    val readAt: Long? = null,
+    /**
+     * Miniature connue de l'article : elle est conservée quand la nouvelle version n'en porte
+     * pas (le champ « visual » de Feedly ne revient pas sur les entrées anciennes) — sans quoi
+     * la vignette disparaissait de la liste à chaque synchronisation.
+     */
+    val imageUrl: String? = null
 )
 
 /** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */

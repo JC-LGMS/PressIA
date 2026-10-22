@@ -136,16 +136,62 @@ en arrière via la flèche retour de l'app (jamais `KEYCODE_BACK` dans une page 
 risque de quitter l'écran au lieu de fermer le clavier — préférer toucher une zone neutre
 pour le replier).
 
-**Flux RSS locaux de test : pas de HTTP en clair.** `LocalRssFetcher` passe par OkHttp, qui
-refuse le HTTP en clair (OkHttp 4.12, `RealConnection` → `CLEARTEXT … not permitted by network
-security policy`) dès lors que le manifeste ne déclare pas `usesCleartextTraffic` — cible
-targetSdk 34, aucun `networkSecurityConfig` : l'échec est **silencieux** (l'app affiche « Flux
-ajouté et synchronisé. » mais zéro article, et le serveur de test ne voit aucune requête).
-Pour tester contre un serveur sur la machine hôte (`10.0.2.2`), poser un manifeste **de debug**
-temporaire (`app/src/debug/AndroidManifest.xml`, `android:usesCleartextTraffic="true"`), le
-retirer avant de committer. Un petit serveur Python maison (`ThreadingHTTPServer` sur
-`0.0.0.0:8899`, flux `/fN.xml` + images `/img/N.jpg`) suffit : il compte les requêtes par URL,
-ce qui vérifie en direct « une seule requête par image » et « tous les flux interrogés ».
+**Flux RSS locaux : le HTTP en clair est autorisé** (`app/src/main/res/xml/network_security_config.xml`,
+`base-config cleartextTrafficPermitted="true"`, référencé par le manifeste). Un flux servi en
+HTTP — serveur de test de l'émulateur (`10.0.2.2:8899`), FreshRSS/Miniflux auto-hébergé, blog
+encore en http — est donc lu normalement. Le drapeau est dans le fichier de politique réseau
+(et non dans un attribut du manifeste) parce qu'Android ne sait pas restreindre cette
+permission aux seules adresses privées. Un petit serveur Python maison (`ThreadingHTTPServer`
+sur `0.0.0.0:8899`, flux `/fN.xml` + images `/img/N.jpg`) suffit pour les tests : il compte
+les requêtes par URL, ce qui vérifie en direct « une seule requête par image » et « tous les
+flux interrogés ».
+
+**L'APK release est signé avec la clé debug** (`build.gradle.kts` : `release { signingConfig =
+signingConfigs.getByName("debug") }`). Conséquence pratique : un APK **debug** s'installe par
+-dessus l'application release avec `adb install -r` **sans perdre les données** (même signature,
+même `versionCode`), et devient `run-as`-able → lecture directe de `databases/pressia.db`
+(indispensable pour diagnostiquer un flux : `adb exec-out run-as com.pressia cat
+databases/pressia.db > copie.db` puis lecture en Python ; pas de `sqlite3` sur l'image de
+l'émulateur). À l'inverse, une app **release** installée ne l'est pas (`run-as: package not
+debuggable`).
+
+## Flux RSS locaux (pièges)
+
+- **L'identifiant d'un flux local EST son URL.** Un caractère de contrôle collé au clavier (NUL,
+  invisible à l'écran) rendait la ligne inutilisable : OkHttp encodait le NUL en `%00`, YouTube
+  répondait **404**, et l'app annonçait « flux ajouté et synchronisé » avec **zéro article** —
+  l'échec était muet (`fetch` renvoyait une liste vide, `runCatching` avalait l'erreur). Le NUL
+  venait de la saisie, pas de PressIA (aucun code ne l'ajoute).
+  - `sanitizeFeedUrl` (`data/remote/LocalRssFetcher.kt`) nettoie l'URL **à l'entrée** (retrait
+    des caractères de contrôle, ajout de `https://` si le schéma manque) et **à la requête** (un
+    flux déjà enregistré reste donc exploitable). `isSupportedFeedUrl` refuse `ftp://` etc.
+  - `PressRepository.repairLocalFeeds` (début de `syncDown`) remplace une ligne sale par sa
+    version propre : la ligne et ses articles sont supprimés **sur l'identifiant exact** (SQLite
+    compare les octets, NUL inclus — Room préserve le NUL dans le binding, il n'y a donc pas de
+    troncature), puis le flux est réenregistré proprement. Sans cette réparation, un flux sale
+    et son jumeau propre donnaient **deux fois les mêmes articles**.
+  - `LocalProvider` ne doit interroger que les flux `provider = "local"` : les abonnements d'un
+    compte portent une URL interne (`feed/…`) que le lecteur local ne sait pas interroger (il
+    essayait, échouait, et le signalait à chaque synchro).
+  - **Le nom du flux remplace l'URL dans les listes.** Un flux saisi à la main n'a pour étiquette
+    que son URL — d'où « youtube.com ». `LocalRssFetcher.parseFeed` rend le **titre de la racine**
+    (`<feed>` en Atom, `<channel>` en RSS : le nom de la chaîne YouTube, le nom du site), et
+    `PressRepository` l'écrit dans `subscriptions.title` (`setFeedTitle`, qui n'écrase que si le
+    titre est encore l'URL). Le titre d'une **entrée** ne se confond pas avec celui du flux.
+  - **Un flux qui répond 5xx ou 429 est retenté** (une fois, 1,5 s d'attente) : YouTube le fait
+    régulièrement, et un 404 — lui — signifie que l'URL est fausse (insister ne sert à rien).
+- **Les médias d'une entrée Atom peuvent être imbriqués** : YouTube met sa miniature et sa
+  description dans `<media:group>`, hors du parcours des enfants directs → ni vignette ni
+  résumé. `parse` parcourt donc toute la descendance (`getAllElements`). `media:content` n'est
+  retenu comme image que s'il est **une image** (YouTube y met son lecteur Flash, `type` non
+  image) : sans ce filtre la miniature devient une URL de lecteur, non téléchargable.
+- **Date : la première trouvée l'emporte.** `published` (publication) passe avant `updated`
+  (modification) dans l'ordre du document → c'est la date de publication qui est retenue, pas la
+  date de retouche de la vidéo.
+- **Un flux local vide doit se dire** : `LocalFeedResult` (VM) distingue « URL refusée »,
+  « flux synchronisé (n articles) » et « flux ajouté mais aucun article reçu » ; l'échec HTTP est
+  journalisé (`flux local <id> : HTTP 404`).
+
 
 ## Images / miniatures (non intuitif, tout est là)
 
@@ -175,6 +221,20 @@ ce qui vérifie en direct « une seule requête par image » et « tous les flux
 - **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
   parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
   téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).
+- **La vignette ne se perd pas au retour du serveur.** `upsertArticles` remplace la ligne
+  entière : l'`imageUrl` de l'article entrant **écrase** celui qui était en base. Or Feedly ne
+  renvoie son champ « visual » que sur les entrées **récentes** : une entrée rejouée sans image
+  effaçait celle déjà affichée, et la vignette disparaissait de la liste à chaque
+  synchronisation (visible surtout dans le flux ouvert, là où les vignettes se voient).
+  `mergeIncomingArticle` conserve donc l'`imageUrl` connu quand l'article entrant n'en porte pas
+  (`ArticleFlags.imageUrl` le relit — `flagsOf` le ramène dans la requête).
+  - Corollaire : `imageCached` ne vaut pas preuve que le fichier existe. `syncImages` compare
+    donc les fichiers au disque (`cachedThumbUrls`) et **retélécharge** les vignettes disparues
+    (purge, cache vidé à la main, synchro interrompue) — sans cela la vignette ne revenait
+    jamais, l'article étant « déjà téléchargé ».
+  - `gcThumbs()` (appelé par `trimToMax` quand des articles dépassent le quota) supprime les
+    fichiers dont plus aucun article ne porte l'URL : une `imageUrl` perdue rendait donc la
+    vignette orpheline — c'est pour cela que la perte de l'`imageUrl` était si grave.
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 :
   la prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits
   via Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec

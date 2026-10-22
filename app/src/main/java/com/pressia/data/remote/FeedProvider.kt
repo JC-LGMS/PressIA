@@ -115,7 +115,13 @@ data class WebSession(val token: String, val label: String)
 
 data class StreamPage(
     val articles: List<ArticleEntity>,
-    val continuation: String? = null
+    val continuation: String? = null,
+    /**
+     * Nom de chaque flux tel que le serveur l'annonce (nom de la chaîne pour un flux RSS
+     * local) : `feedId → titre`. Le dépôt s'en sert pour remplacer l'URL, seule étiquette
+     * possible d'un flux saisi à la main, par le vrai nom du flux.
+     */
+    val feedTitles: Map<String, String> = emptyMap()
 )
 
 /**

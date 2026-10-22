@@ -21,6 +21,15 @@ import kotlinx.coroutines.launch
 data class Scope(val feedId: String? = null, val categoryId: String? = null, val label: String = "Tous les articles")
 
 /**
+ * Résultat de l'ajout d'un flux RSS local : ce qui a pu être fait, et le message à afficher.
+ *
+ * Le message distingue les trois issues — URL refusée, flux synchronisé, flux ajouté mais vide —
+ * là où l'application annonçait toujours « flux ajouté et synchronisé », y compris quand aucun
+ * article n'avait été reçu.
+ */
+data class LocalFeedResult(val added: Boolean, val message: String)
+
+/**
  * Périmètre affiché par l'écran Favoris : le jeu de favoris d'un côté (« mes étoiles », le tableau
  * « Read later » du compte, ou les deux réunis), le flux ou le dossier de l'autre. Les deux sont
  * affichés en permanence et modifiables sur place.
@@ -452,22 +461,29 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * La première synchronisation est annoncée comme les autres (bandeau + snackbar, dès qu'une
      * URL valide est reconnue) : sans cela l'ajout restait muet pendant tout le premier
      * téléchargement, alors qu'il peut durer (flux de plusieurs centaines d'articles).
+     *
+     * Le retour dit ce qui s'est **vraiment** passé : un flux ajouté mais resté vide (URL
+     * fausse, serveur injoignable) n'est plus présenté comme une synchronisation réussie.
      */
-    fun addLocalFeed(url: String, folderId: String? = null, done: (Boolean) -> Unit = {}) = viewModelScope.launch {
+    fun addLocalFeed(url: String, folderId: String? = null, done: (LocalFeedResult) -> Unit = {}) = viewModelScope.launch {
         if (localFeedAdding) {
-            done(false)
+            done(LocalFeedResult(false, "Un autre flux est en cours d'ajout."))
             return@launch
         }
         localFeedAdding = true
-        var ok = false
+        var result = LocalFeedResult(false, "Flux non ajouté.")
         try {
             val link = repo.addLocalFeed(url, folderId)
-            if (link != null) {
+            if (link == null) {
+                result = LocalFeedResult(false, "URL de flux invalide (http ou https attendu).")
+            } else {
                 lockSync()
                 try {
                     syncMsg = "Réception des articles du nouveau flux…"
                     repo.syncDown(link)
-                    ok = true
+                    val n = repo.countArticlesOfFeed(link)
+                    result = if (n > 0) LocalFeedResult(true, "Flux ajouté et synchronisé ($n articles).")
+                    else LocalFeedResult(true, "Flux ajouté, mais aucun article reçu : l'URL est-elle exacte ?")
                 } finally {
                     unlockSync()
                 }
@@ -477,7 +493,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             // Voir deleteLocalFeed : le compteur Comptes ne suit pas `refreshNow`.
             account = repo.accountInfo()
             localFeedAdding = false
-            done(ok)
+            done(result)
         }
     }
 
