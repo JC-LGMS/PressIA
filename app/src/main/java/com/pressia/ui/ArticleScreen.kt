@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -29,6 +31,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.LifecycleEventObserver
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
 
@@ -428,6 +431,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                 onDoubleClick = { fireArticleAction(doubleTap) }
                             )
                     )
+                    is ABlock.V -> VideoPlayer(url = b.url, poster = b.poster, modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth())
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -546,12 +550,14 @@ fun stripHtml(html: String): String {
     return try { org.jsoup.Jsoup.parse(html).text().replace(Regex(" +"), " ").trim() } catch (_: Exception) { html }
 }
 
-/** Blocs de contenu ordonnés (texte / images / liens) pour un rendu fidèle avec images inline. */
+/** Blocs de contenu ordonnés (texte / images / liens / vidéos) pour un rendu fidèle. */
 sealed interface ABlock {
     data class T(val text: String) : ABlock
     data class I(val url: String) : ABlock
     /** Lien hypertexte : le texte à afficher et l'URL cible (ouvre le navigateur externe). */
     data class L(val text: String, val url: String) : ABlock
+    /** Vidéo embarquée (balise <video> ou <iframe> YouTube/Vimeo…). */
+    data class V(val url: String, val poster: String?) : ABlock
 }
 
 fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
@@ -573,8 +579,17 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
             if (!seen.add(x)) return null
             return x
         }
+        // Détecte une URL YouTube embed et en extrait l'identifiant de vidéo pour une miniature
+        // d'affiche (poster) si aucune n'est fournie.
+        fun youtubePoster(url: String): String? {
+            val id = url.substringAfter("youtube.com/embed/").takeIf { it.length != url.length }
+                ?: url.substringAfter("youtu.be/").takeIf { it.length != url.length }
+                ?: url.substringAfter("youtube.com/v/").takeIf { it.length != url.length }
+            return id?.let { "https://img.youtube.com/vi/$it/hqdefault.jpg" }
+        }
         // Les éléments de bloc (p, li, h…) sont traités dans l'ordre du document. Leurs enfants
-        // texte et liens (<a>) produisent les blocs correspondants, préservant l'ordre d'apparition.
+        // texte, liens (<a>) et images (<img>) produisent les blocs correspondants, préservant
+        // l'ordre d'apparition. Les vidéos (<video>, <iframe>) créent un bloc ABlock.V.
         fun processBlock(el: org.jsoup.nodes.Element) {
             when (el.tagName()) {
                 "img" -> {
@@ -585,6 +600,23 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                     val t = el.text().trim()
                     val href = el.absUrl("href").ifBlank { el.attr("href") }
                     if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
+                }
+                "video" -> {
+                    // Poster : attribut poster, ou première <source>, ou null.
+                    val poster = el.attr("poster").takeIf { it.isNotBlank() }
+                        ?: el.select("source").firstOrNull()?.let { it.absUrl("src").takeIf { it.isNotBlank() } }
+                        ?: el.select("source").firstOrNull()?.let { it.attr("src").takeIf { it.isNotBlank() } }
+                    val src = el.absUrl("src").ifBlank { el.attr("src") }
+                    val u = abs(src)
+                    if (u != null) out += ABlock.V(u, poster)
+                    else poster?.let { out += ABlock.V(it, null) } // vidéo sans src exploitable : poster seul
+                }
+                "iframe" -> {
+                    val src = el.absUrl("src").ifBlank { el.attr("src") }
+                    abs(src)?.let {
+                        // YouTube embed : on construit une miniature d'affiche pour le bloc vidéo.
+                        out += ABlock.V(it, youtubePoster(it))
+                    }
                 }
                 else -> {
                     el.childNodes().forEach { node ->
@@ -604,6 +636,15 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                                         val u = node.absUrl("src").ifBlank { node.attr("src") }
                                         abs(u)?.let { out += ABlock.I(it) }
                                     }
+                                    "video" -> {
+                                        val poster = node.attr("poster").takeIf { it.isNotBlank() }
+                                        val src = node.absUrl("src").ifBlank { node.attr("src") }
+                                        abs(src)?.let { out += ABlock.V(it, poster) }
+                                    }
+                                    "iframe" -> {
+                                        val src = node.absUrl("src").ifBlank { node.attr("src") }
+                                        abs(src)?.let { out += ABlock.V(it, youtubePoster(it)) }
+                                    }
                                 }
                             }
                         }
@@ -611,11 +652,12 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 }
             }
         }
-        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img")?.forEach { processBlock(it) }
-        // Les <a> et  isolés au niveau du corps (hors conteneur de bloc) sont aussi pris en compte.
+        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img, video, iframe")?.forEach { processBlock(it) }
+        // Les <a>, <img>, <video>, <iframe> isolés au niveau du corps (hors conteneur de bloc)
+        // sont aussi pris en compte.
         doc.body()?.children()?.filterIsInstance<org.jsoup.nodes.Element>()?.forEach { el ->
             when (el.tagName()) {
-                "a", "img" -> processBlock(el)
+                "a", "img", "video", "iframe" -> processBlock(el)
             }
         }
         if (out.isEmpty()) listOf(ABlock.T(stripHtml(html))) else out
@@ -658,5 +700,82 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
         builder.build().launchUrl(ctx, parsed)
     } catch (_: Exception) {
         openUrl(ctx, url)
+    }
+}
+
+/**
+ * Lecteur vidéo embarqué dans un article (balise <video> ou <iframe> YouTube/Vimeo…).
+ *
+ * Affiche une miniature (poster) cliquable avant lecture, puis un [android.widget.VideoView]
+ * piloté par le cycle de vie Compose : pause sur ON_STOP/ON_DESTROY, arrêt complet à la
+ * sortie de la composition. Si le flux fournit une miniature (poster), elle est affichée en
+ * attendant que l'utilisateur lance la lecture — la vidéo ne démarre jamais en autoplay
+ * (économie de données, respect du lecteur).
+ */
+@Composable
+fun VideoPlayer(url: String, poster: String?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val videoView = remember { android.widget.VideoView(context) }
+    val playing = remember { mutableStateOf(false) }
+
+    Column(modifier = modifier) {
+        if (!playing.value && poster != null) {
+            // Miniature d'affiche : tap pour lancer la lecture.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .aspectRatio(16f / 9f)
+                    .background(androidx.compose.ui.graphics.Color.Black)
+                    .clickable {
+                        videoView.setVideoURI(android.net.Uri.parse(url))
+                        videoView.start()
+                        playing.value = true
+                    }
+            ) {
+                coil.compose.AsyncImage(
+                    thumbModel(context, poster),
+                    null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+                Icon(
+                    imageVector = Icons.Filled.PlayCircleFilled,
+                    contentDescription = "Lancer la vidéo",
+                    tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier
+                        .size(56.dp)
+                        .align(androidx.compose.ui.Alignment.Center)
+                )
+            }
+        } else {
+            AndroidView(
+                factory = { videoView },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .aspectRatio(16f / 9f)
+                    .background(androidx.compose.ui.graphics.Color.Black)
+            ) { view: android.widget.VideoView ->
+                if (!playing.value) {
+                    view.setVideoURI(android.net.Uri.parse(url))
+                    playing.value = true
+                }
+            }
+            // Cycle de vie : pause quand l'écran est quitté, arrêt complet à la destruction.
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        androidx.lifecycle.Lifecycle.Event.ON_STOP,
+                        androidx.lifecycle.Lifecycle.Event.ON_DESTROY -> videoView.pause()
+                        else -> Unit
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                    videoView.stopPlayback()
+                }
+            }
+        }
     }
 }

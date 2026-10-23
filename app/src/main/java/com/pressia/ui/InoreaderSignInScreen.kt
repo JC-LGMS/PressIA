@@ -265,7 +265,8 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                     jsResult = checkSessionViaJs(wv, appId, appKey)
                 }
             }
-            if (jsResult != null && jsResult.isNotBlank() && !jsResult.startsWith("ERROR:")) {
+            if (jsResult != null && jsResult.isNotBlank() && !jsResult.startsWith("ERROR:")
+                && (jsResult.contains("userId") || jsResult.contains("userName"))) {
                 // La session est valide depuis le navigateur. Le cookie de
                 // session (premier candidat) est utilisé comme token.
                 val token = candidates.firstOrNull() ?: ""
@@ -342,7 +343,9 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
             val now = System.currentTimeMillis()
             if (candidates == lastCandidates && now - lastTry < 5000) continue
             lastCandidates = candidates; lastTry = now
-            if (tryConnect(candidates)) break
+            // L'utilisateur doit cliquer sur « Je suis connecté » pour déclencher
+            // la vérification : on ne tente pas automatiquement, car des cookies
+            // peuvent être présents avant que la connexion ne soit terminée.
         }
     }
 
@@ -364,7 +367,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         Column(Modifier.padding(pad).fillMaxSize()) {
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             InoreaderSignInView(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.6f),
                 url = INOREADER_LOGIN_URL,
                 onView = { webView = it },
                 onLoaded = {
@@ -399,6 +402,9 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
                         Text("Réessayer")
+                    }
+                    Button({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
+                        Text("Je suis connecté sur Inoreader")
                     }
                     TextButton({ showTokenField = !showTokenField }) {
                         Text(if (showTokenField) "Masquer la saisie manuelle" else "Connexion bloquée ? Saisir un jeton")
