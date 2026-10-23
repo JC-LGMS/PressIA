@@ -14,11 +14,18 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.Text
 import androidx.compose.material3.*
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -406,6 +413,21 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                 onDoubleClick = { fireArticleAction(doubleTap) }
                             ),
                         contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
+                    is ABlock.L -> Text(
+                        text = b.text,
+                        fontSize = fontSize.sp,
+                        lineHeight = (fontSize + 6).sp,
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline
+                        ),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { openUrl(ctx, b.url) },
+                                onDoubleClick = { fireArticleAction(doubleTap) }
+                            )
+                    )
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -524,10 +546,12 @@ fun stripHtml(html: String): String {
     return try { org.jsoup.Jsoup.parse(html).text().replace(Regex(" +"), " ").trim() } catch (_: Exception) { html }
 }
 
-/** Blocs de contenu ordonnés (texte / images) pour un rendu fidèle avec images inline. */
+/** Blocs de contenu ordonnés (texte / images / liens) pour un rendu fidèle avec images inline. */
 sealed interface ABlock {
     data class T(val text: String) : ABlock
     data class I(val url: String) : ABlock
+    /** Lien hypertexte : le texte à afficher et l'URL cible (ouvre le navigateur externe). */
+    data class L(val text: String, val url: String) : ABlock
 }
 
 fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
@@ -549,13 +573,49 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
             if (!seen.add(x)) return null
             return x
         }
-        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img")?.forEach { el ->
-            if (el.tagName() == "img") {
-                val u = el.absUrl("src").ifBlank { el.attr("src") }
-                abs(u)?.let { out += ABlock.I(it) }
-            } else {
-                val t = el.text().trim()
-                if (t.length >= 2) out += ABlock.T(t)
+        // Les éléments de bloc (p, li, h…) sont traités dans l'ordre du document. Leurs enfants
+        // texte et liens (<a>) produisent les blocs correspondants, préservant l'ordre d'apparition.
+        fun processBlock(el: org.jsoup.nodes.Element) {
+            when (el.tagName()) {
+                "img" -> {
+                    val u = el.absUrl("src").ifBlank { el.attr("src") }
+                    abs(u)?.let { out += ABlock.I(it) }
+                }
+                "a" -> {
+                    val t = el.text().trim()
+                    val href = el.absUrl("href").ifBlank { el.attr("href") }
+                    if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
+                }
+                else -> {
+                    el.childNodes().forEach { node ->
+                        when (node) {
+                            is org.jsoup.nodes.TextNode -> {
+                                val t = node.text().trim()
+                                if (t.length >= 2) out += ABlock.T(t)
+                            }
+                            is org.jsoup.nodes.Element -> {
+                                when (node.tagName()) {
+                                    "a" -> {
+                                        val t = node.text().trim()
+                                        val href = node.absUrl("href").ifBlank { node.attr("href") }
+                                        if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
+                                    }
+                                    "img" -> {
+                                        val u = node.absUrl("src").ifBlank { node.attr("src") }
+                                        abs(u)?.let { out += ABlock.I(it) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img")?.forEach { processBlock(it) }
+        // Les <a> et  isolés au niveau du corps (hors conteneur de bloc) sont aussi pris en compte.
+        doc.body()?.children()?.filterIsInstance<org.jsoup.nodes.Element>()?.forEach { el ->
+            when (el.tagName()) {
+                "a", "img" -> processBlock(el)
             }
         }
         if (out.isEmpty()) listOf(ABlock.T(stripHtml(html))) else out
