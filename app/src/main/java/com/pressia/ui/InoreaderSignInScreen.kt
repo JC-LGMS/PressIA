@@ -209,10 +209,15 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
      * d'échec.
      */
     suspend fun checkSessionViaJs(webView: WebView, appId: String, appKey: String): String? {
-        if (jsInterface == null) return null
+        if (jsInterface == null) {
+            android.util.Log.w("PressIA", "Inoreader checkSessionViaJs: jsInterface null")
+            return null
+        }
+        android.util.Log.i("PressIA", "Inoreader checkSessionViaJs: appel JS simple_api/?get_user_info")
         return withTimeoutOrNull(10000) {
             suspendCoroutine { cont ->
                 jsInterface!!.callback = { json ->
+                    android.util.Log.i("PressIA", "Inoreader checkSessionViaJs: callback JS reçu, longueur=${json.length}")
                     cont.resume(json)
                 }
                 val url = "https://www.inoreader.com/simple_api/?AppId=$appId&AppKey=$appKey&get_user_info"
@@ -224,7 +229,9 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                             .catch(function(e) { InoreaderJs.onSessionResult('ERROR:' + e.message); });
                     })()
                 """.trimIndent()
-                webView.evaluateJavascript(script) { /* résultat géré par le callback JS */ }
+                webView.evaluateJavascript(script) { result ->
+                    android.util.Log.d("PressIA", "Inoreader evaluateJavascript: résultat=$result")
+                }
             }
         }
     }
@@ -242,9 +249,13 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
      * sa sortie.
      */
     suspend fun tryConnect(tokens: List<String>): Boolean {
+        android.util.Log.i("PressIA", "Inoreader tryConnect: called, candidates=${tokens.size}, busy=$busy, done=$done")
         if (busy || done) return false
         val candidates = tokens.filter { it.isNotBlank() }
-        if (candidates.isEmpty()) return false
+        if (candidates.isEmpty()) {
+            android.util.Log.w("PressIA", "Inoreader tryConnect: no candidates, webView null=$webView")
+            return false
+        }
         busy = true
         status = "Vérification de la session Inoreader…"
         // Les identifiants d'application (`AppId` / `AppKey`) sont exigés par l'API sur
@@ -258,26 +269,36 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
             // reproduit exactement le comportement de l'extension Inoreader.
             val appId = InoreaderAppAuth.appId.trim()
             val appKey = InoreaderAppAuth.appKey.trim()
+            android.util.Log.i("PressIA", "Inoreader tryConnect: verifyWebSession=null, appId=${appId.isNotEmpty()}, appKey=${appKey.isNotEmpty()}, webView=${webView != null}, jsInterface=${jsInterface != null}")
             var jsResult: String? = null
             if (appId.isNotEmpty() && appKey.isNotEmpty()) {
                 status = "Vérification de la session depuis la page Inoreader…"
                 webView?.let { wv ->
+                    android.util.Log.i("PressIA", "Inoreader tryConnect: calling checkSessionViaJs")
                     jsResult = checkSessionViaJs(wv, appId, appKey)
                 }
+                if (webView == null) {
+                    android.util.Log.w("PressIA", "Inoreader tryConnect: webView is null, cannot call JS")
+                }
+            } else {
+                android.util.Log.w("PressIA", "Inoreader tryConnect: AppAuth missing, cannot call JS")
             }
-            if (jsResult != null && jsResult.isNotBlank() && !jsResult.startsWith("ERROR:")
-                && (jsResult.contains("userId") || jsResult.contains("userName"))) {
-                // La session est valide depuis le navigateur. Le cookie de
-                // session (premier candidat) est utilisé comme token.
-                val token = candidates.firstOrNull() ?: ""
-                val label = extractUserLabel(jsResult)
-                vm.connectAccount("inoreader", token, label)
-                status = "Connexion réussie — récupération de vos flux…"
-                vm.loadAccount()
-                busy = false
-                done = true
-                onDone("Connecté à Inoreader ✓")
-                return true
+            if (jsResult != null && jsResult.isNotBlank() && !jsResult.startsWith("ERROR:")) {
+                android.util.Log.i("PressIA", "Inoreader JS result: ${jsResult.take(200)}")
+                android.util.Log.i("PressIA", "Inoreader JS contains userId=${jsResult.contains("userId")}, contains userName=${jsResult.contains("userName")}")
+                if (jsResult.contains("userId") || jsResult.contains("userName")) {
+                    // La session est valide depuis le navigateur. Le cookie de
+                    // session (premier candidat) est utilisé comme token.
+                    val token = candidates.firstOrNull() ?: ""
+                    val label = extractUserLabel(jsResult)
+                    vm.connectAccount("inoreader", token, label)
+                    status = "Connexion réussie — récupération de vos flux…"
+                    vm.loadAccount()
+                    busy = false
+                    done = true
+                    onDone("Connecté à Inoreader ✓")
+                    return true
+                }
             }
             android.util.Log.w("PressIA", "Inoreader verifyWebSession: null — ${candidates.size} candidat(s) essayé(s) — AppAuth=${if (hasAppAuth) "OK" else "MANQUANT"}")
             busy = false
@@ -403,7 +424,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                     OutlinedButton({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
                         Text("Réessayer")
                     }
-                    Button({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
+                    Button({ scope.launch { android.util.Log.i("PressIA", "Inoreader button: Je suis connecté clicked"); tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
                         Text("Je suis connecté sur Inoreader")
                     }
                     TextButton({ showTokenField = !showTokenField }) {
