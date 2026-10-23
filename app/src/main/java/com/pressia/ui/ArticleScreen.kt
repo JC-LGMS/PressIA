@@ -431,7 +431,12 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                                 onDoubleClick = { fireArticleAction(doubleTap) }
                             )
                     )
-                    is ABlock.V -> VideoPlayer(url = b.url, poster = b.poster, modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth())
+                    is ABlock.V -> VideoPlayer(
+                        url = b.url,
+                        poster = b.poster,
+                        embed = b.embed,
+                        modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+                    )
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -557,7 +562,7 @@ sealed interface ABlock {
     /** Lien hypertexte : le texte à afficher et l'URL cible (ouvre le navigateur externe). */
     data class L(val text: String, val url: String) : ABlock
     /** Vidéo embarquée (balise <video> ou <iframe> YouTube/Vimeo…). */
-    data class V(val url: String, val poster: String?) : ABlock
+    data class V(val url: String, val poster: String?, val embed: Boolean = false) : ABlock
 }
 
 fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
@@ -602,20 +607,19 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                     if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
                 }
                 "video" -> {
-                    // Poster : attribut poster, ou première <source>, ou null.
+                    // Affiche : attribut `poster` uniquement (une <source> est le média, pas une image).
                     val poster = el.attr("poster").takeIf { it.isNotBlank() }
-                        ?: el.select("source").firstOrNull()?.let { it.absUrl("src").takeIf { it.isNotBlank() } }
-                        ?: el.select("source").firstOrNull()?.let { it.attr("src").takeIf { it.isNotBlank() } }
                     val src = el.absUrl("src").ifBlank { el.attr("src") }
                     val u = abs(src)
                     if (u != null) out += ABlock.V(u, poster)
-                    else poster?.let { out += ABlock.V(it, null) } // vidéo sans src exploitable : poster seul
                 }
                 "iframe" -> {
                     val src = el.absUrl("src").ifBlank { el.attr("src") }
                     abs(src)?.let {
                         // YouTube embed : on construit une miniature d'affiche pour le bloc vidéo.
-                        out += ABlock.V(it, youtubePoster(it))
+                        // C'est une PAGE web, pas un fichier média : le lecteur intégré ne peut pas
+                        // la lire — le tap ouvre donc la vidéo dans le navigateur.
+                        out += ABlock.V(it, youtubePoster(it), embed = true)
                     }
                 }
                 else -> {
@@ -640,10 +644,9 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                                         val poster = node.attr("poster").takeIf { it.isNotBlank() }
                                         val src = node.absUrl("src").ifBlank { node.attr("src") }
                                         abs(src)?.let { out += ABlock.V(it, poster) }
-                                    }
-                                    "iframe" -> {
+                                    }                                    "iframe" -> {
                                         val src = node.absUrl("src").ifBlank { node.attr("src") }
-                                        abs(src)?.let { out += ABlock.V(it, youtubePoster(it)) }
+                                        abs(src)?.let { out += ABlock.V(it, youtubePoster(it), embed = true) }
                                     }
                                 }
                             }
@@ -706,42 +709,54 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
 /**
  * Lecteur vidéo embarqué dans un article (balise <video> ou <iframe> YouTube/Vimeo…).
  *
- * Affiche une miniature (poster) cliquable avant lecture, puis un [android.widget.VideoView]
- * piloté par le cycle de vie Compose : pause sur ON_STOP/ON_DESTROY, arrêt complet à la
- * sortie de la composition. Si le flux fournit une miniature (poster), elle est affichée en
- * attendant que l'utilisateur lance la lecture — la vidéo ne démarre jamais en autoplay
- * (économie de données, respect du lecteur).
+ * Deux cas :
+ *  - **fichier média** (balise <video>) : miniature (poster) cliquable, puis un
+ *    [android.widget.VideoView] piloté par le cycle de vie Compose — pause sur ON_STOP/ON_DESTROY,
+ *    arrêt complet à la sortie de la composition. La vidéo ne démarre jamais en autoplay
+ *    (économie de données, respect du lecteur) ;
+ *  - **page d'intégration** (balise <iframe> YouTube/Vimeo) : ce n'est pas un média, le lecteur
+ *    intégré ne pourrait pas la lire — la miniature s'affiche et le tap ouvre la vidéo dans le
+ *    navigateur externe.
  */
 @Composable
-fun VideoPlayer(url: String, poster: String?, modifier: Modifier = Modifier) {
+fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val videoView = remember { android.widget.VideoView(context) }
     val playing = remember { mutableStateOf(false) }
 
+    // Intégration (iframe) : la vignette ouvre la vidéo dans le navigateur, pas le lecteur.
+    val onTap: () -> Unit = if (embed) {
+        { openUrl(context, url) }
+    } else {
+        {
+            videoView.setVideoURI(android.net.Uri.parse(url))
+            videoView.start()
+            playing.value = true
+        }
+    }
+
     Column(modifier = modifier) {
-        if (!playing.value && poster != null) {
-            // Miniature d'affiche : tap pour lancer la lecture.
+        if (!playing.value) {
+            // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .aspectRatio(16f / 9f)
                     .background(androidx.compose.ui.graphics.Color.Black)
-                    .clickable {
-                        videoView.setVideoURI(android.net.Uri.parse(url))
-                        videoView.start()
-                        playing.value = true
-                    }
+                    .clickable { onTap() }
             ) {
-                coil.compose.AsyncImage(
-                    thumbModel(context, poster),
-                    null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                )
+                if (poster != null) {
+                    coil.compose.AsyncImage(
+                        thumbModel(context, poster),
+                        null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                }
                 Icon(
                     imageVector = Icons.Filled.PlayCircleFilled,
-                    contentDescription = "Lancer la vidéo",
+                    contentDescription = if (embed) "Ouvrir la vidéo" else "Lancer la vidéo",
                     tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
                     modifier = Modifier
                         .size(56.dp)

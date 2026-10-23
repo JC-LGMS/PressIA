@@ -193,6 +193,26 @@ debuggable`).
   journalisé (`flux local <id> : HTTP 404`).
 
 
+## Contenu HTML de l'article (texte, liens, vidéos)
+
+- Le contenu affiché vient de `feedHtml(article)` (résumé/contenu du flux, ou copie Readability) puis
+  de `articleBlocks(html, baseUrl)` (`ui/ArticleScreen.kt`), qui le découpe en `ABlock` :
+  `T` texte, `I` image, `L` lien, `V` vidéo. **Le HTML du flux n'est pas rendu tel quel** : les
+  balises sont interprétées bloc par bloc (sélecteur `p, li, h1..h3, pre, blockquote, img, video,
+  iframe` + les enfants `a`/`img`/`video`/`iframe` de chaque bloc).
+- **Liens** : un `<a href>` devient un bloc `ABlock.L` — texte souligné, couleur primaire, tap →
+  `openUrl` (navigateur externe). Le texte du lien est celui de la balise, pas l'URL.
+- **Vidéos** : deux cas distincts, à ne pas confondre :
+  - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
+    `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur `ON_STOP`/`ON_DESTROY`,
+    arrêt à la sortie. Jamais d'autoplay (forfait, respect du lecteur).
+  - `<iframe src="…/embed/…">` = **page web**, pas un média → `ABlock.V(embed = true)` : le lecteur
+    intégré ne pourrait pas la lire, le tap ouvre donc la vidéo dans le navigateur. L'affiche est
+    l'image YouTube déduite de l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
+- L'**image AOSP** de l'émulateur n'a **aucun décodeur vidéo** (« no video decoder », « OMX service
+  is not available ») : la lecture y échoue alors que le code est correct. Tester la lecture sur un
+  appareil réel ou une image `google_apis`.
+
 ## Images / miniatures (non intuitif, tout est là)
 
 - Miniature **déclarée** par le flux (`imageUrl`, bannière de liste et image de tête) :

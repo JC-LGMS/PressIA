@@ -489,6 +489,37 @@ class PressLogicTest {
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.T && (it as com.pressia.ui.ABlock.T).text.contains("Intro") })
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.I && (it as com.pressia.ui.ABlock.I).url == "https://ex.com/a.jpg" })
     }
+    @Test fun `blocs article - liens cliquables`() {
+        // Un lien du flux (YouTube, article lié…) doit devenir un bloc cliquable, pas du texte
+        // plat : sans cela, le contenu HTML n'était qu'une suite de blocs de texte.
+        val html = "<p>Voir <a href=\"https://ex.com/article\">notre article</a> pour la suite.</p>"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        val link = blocks.filterIsInstance<com.pressia.ui.ABlock.L>().firstOrNull()
+        assertNotNull(link)
+        assertEquals("notre article", link!!.text)
+        assertEquals("https://ex.com/article", link.url)
+    }
+    @Test fun `blocs article - video et iframe youtube`() {
+        // Balise <video> : l'URL est celle de la vidéo, le poster est l'affiche.
+        val html = "<p>Intro</p><video poster=\"https://ex.com/p.jpg\" src=\"https://ex.com/v.mp4\"></video>"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        val video = blocks.filterIsInstance<com.pressia.ui.ABlock.V>().firstOrNull()
+        assertNotNull(video)
+        assertEquals("https://ex.com/v.mp4", video!!.url)
+        assertEquals("https://ex.com/p.jpg", video.poster)
+        // Iframe YouTube : l'identifiant de la vidéo sert à construire la miniature d'affiche.
+        val yt = com.pressia.ui.articleBlocks(
+            "<iframe src=\"https://www.youtube.com/embed/abc123\"></iframe>", "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.V>().firstOrNull()
+        assertNotNull(yt)
+        assertEquals("https://www.youtube.com/embed/abc123", yt!!.url)
+        assertEquals("https://img.youtube.com/vi/abc123/hqdefault.jpg", yt.poster)
+        // Une iframe est une PAGE web, pas un média : le lecteur intégré ne pourrait pas la lire,
+        // le tap doit donc ouvrir le navigateur (drapeau `embed`).
+        assertTrue(yt.embed)
+        // Une balise <video>, elle, pointe un fichier média : lecteur intégré.
+        assertFalse(video!!.embed)
+    }
     @Test fun `blocs article texte nu conserve`() {
         // Flux qui livre le corps hors balise de bloc, relevé en vrai sur Les Numériques : nœuds
         // texte de premier niveau, un <br>, l'image, un autre <br>, la suite. Le texte doit
