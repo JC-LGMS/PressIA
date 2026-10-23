@@ -181,7 +181,14 @@ fun ArticleRow(
     // L'étoile est centrée sur la largeur totale de la ligne, bord droit à l'écran : sa marge doit
     // donc valoir le padding de la ligne + la moitié de gouttière - le rayon de l'icône (9 dp).
     // Sinon elle dérive d'autant vers l'extérieur que le padding.
-    val starEnd = if (mode == "compact" && trailW > 0.dp) 12.dp + trailW / 2 - 9.dp else 28.dp
+    //
+    // En magazine la ligne a un retrait de 12 dp à l'intérieur de la carte, elle-même posée à
+    // 8 dp du bord : l'étoile doit tenir compte des deux pour se superposer au bouton de fin.
+    val starEnd = when {
+        mode == "compact" && trailW > 0.dp -> 12.dp + trailW / 2 - 9.dp
+        mode == "magazine" && trailW > 0.dp -> 20.dp + trailW / 2 - 9.dp
+        else -> 28.dp
+    }
     val density = LocalDensity.current
     // Hauteur du bloc de méta, mesurée au rendu : elle permet de remonter l'étoile de swipe sur le
     // bloc titre, puisque la ligne compacte est plus haute que le titre.
@@ -245,7 +252,9 @@ fun ArticleRow(
                 )
                 Text(title, Modifier.padding(12.dp), fontSize = titleSp.sp,
                     fontWeight = if (a.unread) FontWeight.Bold else FontWeight.Normal, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp)
+                        .onSizeChanged { metaH = with(density) { it.height.toDp() } },
+                    verticalAlignment = Alignment.CenterVertically) {
                     // Le rond lu/non-lu vit à gauche dans la vue magazine (aucune vignette en
                     // tête de ligne pour le porter), et l'action de fin reste au bord droit :
                     // la méta occupe la place restante, sans quoi `fillMaxWidth` laisserait
@@ -324,7 +333,7 @@ fun ArticleRow(
         }
     }
     }
-    SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, content)
+    SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, mode == "magazine", content)
 }
 
 /**
@@ -341,6 +350,8 @@ fun ArticleRow(
  * la vue : l'icône apparaît ainsi exactement là où l'information a disparu. [iconEnd] est la
  * marge qui la superpose au bouton de fin, et [iconBottom] la hauteur à retrancher en bas pour
  * la remonter sur le seul bloc titre des vues où la ligne est plus haute que le titre.
+ * [iconOnMeta] renverse ce dernier point pour la vue magazine : la hauteur retranchée est celle
+ * de la ligne de méta, qui est alors **en bas** de la carte (bandeau + titre au-dessus).
  */
 @Composable
 private fun SwipeAction(
@@ -354,6 +365,7 @@ private fun SwipeAction(
     iconAtStart: Boolean,
     iconEnd: Dp,
     iconBottom: Dp,
+    iconOnMeta: Boolean,
     content: @Composable (Boolean, Boolean) -> Unit
 ) {
     if (action == "none" && actionRight == "none") {
@@ -399,33 +411,40 @@ private fun SwipeAction(
         if (dx < -8f || dx > 8f) {
             val goingRight = dx > 0f
             val act = if (goingRight) actionRight else action
-            // L'icône vit sur la bande découverte par le geste ; vers la gauche on garde le
-            // placement historique (côté du rond, sinon bout de ligne), vers la droite son
-            // miroir : la bande découverte est à gauche dans tous les cas.
-            val atStart = goingRight || iconAtStart
-            Row(
-                Modifier.matchParentSize().padding(bottom = iconBottom).background(primary.copy(alpha = 0.18f)),
-                horizontalArrangement = if (atStart) Arrangement.Start else Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val (icon, desc) = when (act) {
-                    "read" -> (if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
-                        (if (a.unread) "marquer lu" else "marquer non lu")
-                    "share" -> Icons.Filled.Share to "partager"
-                    "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
-                    else -> (if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
-                        (if (a.starred) "Retirer des favoris" else "Ajouter aux favoris")
+            // L'icône vit dans la bande **découverte** par le geste : à gauche quand on tire vers la
+            // droite, à droite quand on tire vers la gauche. La placer du côté du rond (à gauche en
+            // magazine) la cachait sous la ligne décalée : le geste ne montrait alors rien.
+            val atStart = goingRight
+            BoxWithConstraints(Modifier.matchParentSize()) {
+                // Bande verticale de l'icône : le bloc titre (la ligne de méta est retranchée en
+                // bas) ou, en magazine, la ligne de méta elle-même, qui est en bas de la carte.
+                val bandTop = if (iconOnMeta) (maxHeight - iconBottom).coerceAtLeast(0.dp) else 0.dp
+                val bandBottom = if (iconOnMeta) 0.dp else iconBottom
+                Box(Modifier.matchParentSize().background(primary.copy(alpha = 0.18f)))
+                Row(
+                    Modifier.matchParentSize().padding(top = bandTop, bottom = bandBottom),
+                    horizontalArrangement = if (atStart) Arrangement.Start else Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val (icon, desc) = when (act) {
+                        "read" -> (if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
+                            (if (a.unread) "marquer lu" else "marquer non lu")
+                        "share" -> Icons.Filled.Share to "partager"
+                        "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
+                        else -> (if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
+                            (if (a.starred) "Retirer des favoris" else "Ajouter aux favoris")
+                    }
+                    Icon(
+                        icon, desc,
+                        tint = primary,
+                        modifier = Modifier
+                            .padding(
+                                start = if (atStart) (if (iconAtStart) 22.dp else iconEnd) else 0.dp,
+                                end = if (atStart) 0.dp else iconEnd
+                            )
+                            .size(18.dp)
+                    )
                 }
-                Icon(
-                    icon, desc,
-                    tint = primary,
-                    modifier = Modifier
-                        .padding(
-                            start = if (atStart) (if (iconAtStart) 22.dp else iconEnd) else 0.dp,
-                            end = if (atStart) 0.dp else iconEnd
-                        )
-                        .size(18.dp)
-                )
             }
         }
         // La méta ne perd son étoile que si le geste a basculé les favoris, dans un sens ou l'autre.

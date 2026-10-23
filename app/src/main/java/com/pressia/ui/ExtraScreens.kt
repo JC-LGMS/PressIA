@@ -157,18 +157,42 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     val scope = rememberCoroutineScope()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val totalDup = vm.dups.sumOf { it.size - 1 }
+    // Analyse en cours : le bouton se désactive et affiche un spinner tant que le scan n'est pas
+    // fini (sans cela, deux appuis lançaient deux analyses concurrentes).
+    var scanning by remember { mutableStateOf(false) }
 
     Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Button(
                 {
+                    if (scanning) return@Button
+                    scanning = true
                     scope.launch {
-                        vm.loadDupsNow()
-                        toast(ctx, "Recherche de doublons terminée")
+                        try {
+                            vm.loadDupsNow()
+                            toast(ctx, "Recherche de doublons terminée")
+                        } finally {
+                            scanning = false
+                        }
                     }
                 },
-                enabled = !vm.syncing
-            ) { Text(if (vm.dupScanned) "Re-scanner" else "Rechercher les doublons") }
+                enabled = !vm.syncing && !scanning
+            ) {
+                if (scanning) {
+                    CircularProgressIndicator(
+                        Modifier.size(16.dp), strokeWidth = 2.dp,
+                        color = LocalContentColor.current
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    when {
+                        scanning -> "Recherche…"
+                        vm.dupScanned -> "Re-scanner"
+                        else -> "Rechercher les doublons"
+                    }
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Text(
                 if (!vm.dupScanned) "analyse à lancer"
