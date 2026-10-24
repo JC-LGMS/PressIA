@@ -618,7 +618,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         refreshNow()
         // Les échecs par compte sont avalés par la sync (les autres comptes passent quand
         // même) : si un jeton est mort, on le dit au lieu d'annoncer un succès aveugle.
-        if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
+        // Le bandeau y joint le raccourci « Reconnecter » (voir EXPIRED_SESSION_MSG).
+        if (repo.expiredAccounts().isNotEmpty()) return EXPIRED_SESSION_MSG
         // Un 429 quelque part dans le pipeline : la synchro n'a rien pu récupérer (ou pas
         // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
         val rl = repo.syncRateLimit
@@ -632,7 +633,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Échec commun manuel/lancement : une session connue comme expirée mérite mieux
      * qu'un vague problème de connexion. */
     private suspend fun failSync(): String {
-        if (repo.expiredAccounts().isNotEmpty()) return "Session expirée : reconnectez le compte dans Comptes"
+        if (repo.expiredAccounts().isNotEmpty()) return EXPIRED_SESSION_MSG
         return "Échec de synchronisation : vérifiez la connexion"
     }
 
@@ -1213,23 +1214,55 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Un seul approvisionnement à la fois : une reconnexion rapide annule le précédent.
      */
     private var backfillJob: Job? = null
+
+    /**
+     * Fenêtre pendant laquelle une reconnexion se contente d'une **synchro normale** plutôt que
+     * de la synchronisation d'historique d'une première connexion : un mois.
+     */
+    private val reconnectFullHistoryMs = 30L * 24 * 60 * 60 * 1000
+
+    /**
+     * Dernière synchronisation réussie de cet appareil date-t-elle de moins d'un mois ?
+     *
+     * `LAST_SYNC_AT` n'est écrit que sur une synchro menée à son terme (voir `syncPipeline`) :
+     * c'est le repère de fraîcheur de la base locale. Il est global à l'application, pas par
+     * compte — suffisant ici : la reconnexion retrouve les articles déjà en base, et le
+     * réapprovisionnement de la synchro normale couvre les flux en retard.
+     */
+    private suspend fun lastSyncIsRecent(): Boolean {
+        val last = repo.prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
+        return last > 0L && System.currentTimeMillis() - last < reconnectFullHistoryMs
+    }
+
     /**
      * Enregistre un compte connecté et lance sa première synchronisation.
      *
      * [refreshToken] est le jeton de renouvellement OAuth : il accompagne le compte dans le
      * registre et lui permet de renouveler son jeton d'accès expiré sans refaire la
      * connexion.
+     *
+     * Une **reconnexion** (même compte, nouveau jeton : `AccountStore.refreshToken` conserve
+     * l'identifiant) dont la dernière synchro réussie a moins d'un mois ne repart pas de zéro :
+     * la synchro normale suffit, l'historique est déjà en base. Sans ce garde-fou, chaque
+     * reconnexion rejouait le long approvisionnement d'une première connexion. Un compte
+     * inconnu, ou resté plus d'un mois sans synchro (base peut-être vidée, quotas, fenêtre
+     * d'historique), reprend la synchronisation d'historique complète.
      */
     fun connectAccount(service: String, token: String, name: String = "", refreshToken: String = "") {
         backfillJob?.cancel()
         backfillJob = viewModelScope.launch {
+            // Identité des comptes déjà connus, relevée AVANT l'enregistrement : une
+            // reconnexion conserve l'identifiant du compte, un compte neuf en reçoit un autre.
+            val known = repo.cloudAccounts().mapTo(HashSet()) { it.id }
             val connected = repo.addAccount(service, token, name, refreshToken)
+            val reconnected = connected.id in known
             refreshNow()
             account = repo.accountInfo()
             lockSync()
             try {
                 syncMsg = try {
                     if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
+                    else if (reconnected && lastSyncIsRecent()) finishSync(repo.syncPipeline())
                     else finishSync(repo.initialSync(connected.id))
                 } catch (e: CancellationException) {
                     // Déconnexion pendant la passe : ne pas annoncer d'échec, juste s'arrêter.

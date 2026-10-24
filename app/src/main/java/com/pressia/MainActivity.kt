@@ -284,6 +284,12 @@ class MainActivity : ComponentActivity() {
                 // custom — pas de dismiss/re-show à chaque mise à jour du compteur
                 // d'images (« … 45/200 »), le texte se rafraîchit en place.
                 val snackbarHostState = remember { SnackbarHostState() }
+                // Raccourci « Reconnecter » : la destination est la page de connexion du service
+                // du compte expiré (WebView), pas l'écran Comptes — il n'y a rien à y chercher.
+                val expiredIds by vm.expiredAccounts.collectAsState()
+                val reconnectRoute = remember(expiredIds, vm.accounts) {
+                    expiredReconnectRoute(expiredIds, vm.accounts)
+                }
                 // Un seul bandeau du début de la synchro jusqu'à la fin du message final :
                 // le show reste actif dans le scope (pas dans l'effet, sinon sa fin de
                 // synchro l'annulerait et le bandeau se fermerait avant de se rouvrir
@@ -324,7 +330,9 @@ class MainActivity : ComponentActivity() {
                     } else if (bannerJob != null) {
                         // Fin de synchro : le bandeau reste ouvert, seul le texte passe au
                         // message final — aucune fermeture/réouverture intermédiaire.
-                        delay(4000)
+                        // Une session expirée laisse plus de temps : le raccourci
+                        // « Reconnecter » ne doit pas disparaître sous le doigt.
+                        delay(if (vm.expiredAccounts.value.isEmpty()) 4_000 else 12_000)
                         snackbarHostState.currentSnackbarData?.dismiss()
                         bannerJob = null
                         if (vm.syncMsg == msg) vm.syncMsg = null
@@ -554,7 +562,21 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(12.dp).onSizeChanged { bannerLift = with(density) { it.height.toDp() } },
                             containerColor = if (snackCs.background.luminance() < 0.5f) lerp(snackCs.inverseSurface, Color.Black, 0.15f) else snackCs.inverseSurface,
                             contentColor = snackCs.inverseOnSurface
-                        ) { Text(vm.syncMsg ?: "") }
+                        ) {
+                            // Une session expirée s'accompagne du raccourci « Reconnecter »,
+                            // qui ouvre la page de connexion du service concerné.
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Text(vm.syncMsg ?: "", Modifier.weight(1f, fill = false))
+                                if (reconnectRoute != null && vm.syncMsg == EXPIRED_SESSION_MSG) {
+                                    TextButton(onClick = {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        bannerJob = null
+                                        vm.syncMsg = null
+                                        nav.navigate(reconnectRoute) { launchSingleTop = true }
+                                    }) { Text("Reconnecter") }
+                                }
+                            }
+                        }
                     }
                     // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
                     // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.

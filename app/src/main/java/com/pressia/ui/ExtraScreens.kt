@@ -1566,10 +1566,11 @@ private data class AboutTopic(val title: String, val body: String)
  */
 private val ABOUT_TOPICS = listOf(
     AboutTopic(
-        "Comptes : Feedly, flux locaux",
-        "Feedly se connecte sur sa page officielle intégrée (le niveau gratuit suffit), et les flux " +
-            "RSS/Atom saisis à la main restent dans PressIA sans compte. Plusieurs comptes coexistent, " +
-            "l'actif est synchronisé en premier ; reconnecter le même utilisateur remplace son jeton, sans doublon."
+        "Comptes : Feedly, Inoreader, flux locaux",
+        "Feedly et Inoreader se connectent sur leur page officielle intégrée (le jeton ou le cookie de " +
+            "session est repris automatiquement), et les flux RSS/Atom saisis à la main restent dans PressIA " +
+            "sans compte. Plusieurs comptes coexistent, l'actif est synchronisé en premier ; reconnecter le " +
+            "même utilisateur remplace son jeton sans doublon : dossiers, abonnements et articles restent."
     ),
     AboutTopic(
         "Synchronisation : bouton, lancement, geste",
@@ -1618,7 +1619,8 @@ private val ABOUT_TOPICS = listOf(
         "Favoris et Read later : jamais marqués lus",
         "L'étoile PressIA et le tableau « Read later » du compte sont deux choses distinctes (périmètre réglable " +
             "dans les Favoris). Ni « tout marquer lu », ni le menu d'appui long, ni les doublons ne les font passer " +
-            "en lu : « tout marquer lu » bascule à l'unité dès qu'un favori ou un Read later doit rester non lu."
+            "en lu : « tout marquer lu » bascule à l'unité dès qu'un favori ou un Read later doit rester non lu. " +
+            "Un favori garde aussi sa source (le nom du flux) figée avec lui, même si ce flux est supprimé ensuite."
     ),
     AboutTopic(
         "Gestes configurables",
@@ -1639,13 +1641,17 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Conservation : quota par flux et historique",
         "Seul le quota par flux (100 à 10 000 articles, 1 000 par défaut) limite la taille hors-ligne, avec une " +
-            "fenêtre d'historique de 0 à 36 mois (0 = sans limite, 1 par défaut, à la connexion d'un compte). " +
-            "Les favoris sont toujours gardés."
+            "fenêtre d'historique de 0 à 36 mois (0 = sans limite, 1 par défaut, appliqué à la première " +
+            "connexion d'un compte). Les favoris sont toujours gardés ; une reconnexion récente ne " +
+            "retélécharge pas cet historique."
     ),
     AboutTopic(
         "Recherche et doublons",
-        "La recherche demande 2 lettres, dans le flux courant, un dossier ou tous les articles. L'écran doublons " +
-            "repère les mêmes sujets repris par plusieurs flux et peut tout marquer lu sauf le plus récent."
+        "La recherche n'interroge que les articles déjà en base, sur le titre par défaut (auteur compris ; " +
+            "« Inclure le texte » ajoute résumé et contenu) et s'arrête à 200 résultats en le disant. Son état " +
+            "survit à l'ouverture d'un article et au retour, jusqu'à la fermeture de l'application, et " +
+            "« Marquer tous lus » s'annule. L'écran doublons compare « tous » les non lus et peut tout marquer " +
+            "lu sauf le plus récent."
     ),
     AboutTopic(
         "Sauvegarde et restauration",
@@ -1674,7 +1680,17 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Limites réseau et session expirée",
         "Trop de demandes d'affilée (erreur 429) affiche un message d'attente avec le délai demandé, jamais " +
-            "confondu avec une session expirée : dans ce cas, l'application demande une reconnexion du compte."
+            "confondu avec une session expirée. Une session morte est annoncée avec un raccourci " +
+            "« Reconnecter » qui ouvre directement la page de connexion du compte concerné. Reconnecter un " +
+            "compte déjà connu dont la dernière synchro réussie a moins d'un mois relance une synchronisation " +
+            "normale, sans retélécharger tout l'historique."
+    ),
+    AboutTopic(
+        "Version et journal des modifications",
+        "Le numéro de version avance tout seul à chaque modification de l'application. Toucher le numéro de " +
+            "version avec sa date de build — en bas du menu ou sur cet écran — ouvre le journal des " +
+            "modifications : chaque changement livré, avec sa date, son heure et son détail, depuis la " +
+            "première version."
     ),
     AboutTopic(
         "Apparence et confort de lecture",

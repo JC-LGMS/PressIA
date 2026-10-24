@@ -47,6 +47,39 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.4",
+        listOf(
+            ChangelogItem(
+                "2026-10-25",
+                "Session expirée : raccourci « Reconnecter » dans le bandeau",
+                "Le message de session expirée porte un bouton « Reconnecter » qui ouvre " +
+                    "directement la page de connexion du service du compte concerné (Feedly, " +
+                    "Inoreader), sans passer par Comptes ; Instapaper et un identifiant inconnu " +
+                    "renvoient à Comptes. Le bandeau reste affiché 12 s au lieu de 4 s pour " +
+                    "laisser le temps de toucher le raccourci.",
+                time = "01:50"
+            ),
+            ChangelogItem(
+                "2026-10-25",
+                "Reconnexion d'un compte récent : synchro normale",
+                "Une reconnexion (même compte, nouveau jeton) dont la dernière synchro réussie a " +
+                    "moins d'un mois lance la synchronisation normale au lieu de la première " +
+                    "synchronisation d'historique : l'historique est déjà en base. Un compte " +
+                    "inconnu, ou resté plus d'un mois sans synchro, reprend la passe complète.",
+                time = "01:50"
+            ),
+            ChangelogItem(
+                "2026-10-25",
+                "À propos : fonctionnalités et règles à jour",
+                "Comptes Inoreader, reconnexion sans historique, raccourci de session expirée, " +
+                    "recherche locale (titre par défaut, option texte, borne à 200 résultats, " +
+                    "marquage annulable), doublons sur tous les non-lus, source des favoris " +
+                    "conservée, et nouvelle entrée « Version et journal des modifications ».",
+                time = "01:50"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.3",
         listOf(
             ChangelogItem(
