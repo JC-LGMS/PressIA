@@ -467,6 +467,16 @@ debuggable`).
   base et le nombre de résultats affiché n'était pas celui de la bibliothèque. La requête du DAO
   borne l'affichage à 200 entrées, et l'écran le dit (« affichage limité ») plutôt que de laisser
   croire que la liste s'arrête là.
+- Écran Recherche : son état (requête, portée, option « texte », résultats) vit dans `PressVM`, pas
+  dans le composable — ouvrir un article ou passer par une autre page puis revenir doit retrouver
+  les résultats, et ils ne disparaissent qu'à la fermeture de l'application. Seuls un changement de
+  portée ou de l'option les effacent (ils ne correspondraient plus au libellé affiché). La
+  recherche porte sur le **titre** par défaut (`withBody = 0` dans `dao.search`, l'auteur comptant
+  comme un titre), l'interrupteur « Inclure le texte » ajoute résumé et contenu. Nouvelle recherche
+  ⇒ `searchEpoch` change et la `key(...)` autour d'`ArticleList` reconstruit la liste : on repart en
+  haut (une relecture après marquage groupé, elle, ne bouge pas la position). Page ouverte sans
+  requête ⇒ `FocusRequester` + clavier. « Marquer tous lus » s'annule par `offerUndo` /
+  `undoMarkRead`, qui relit aussi la recherche (les lignes portent leur propre état lu/non-lu).
 - Écran Doublons : la requête couvre **tous** les non lus (`dao.unreadDuplicates`, **sans**
   `LIMIT`) et le regroupement se fait en Kotlin (`groupDuplicates`, testé). Un `LIMIT 200` trié
   par date rendait invisibles les doublons anciens — l'écran annonçait alors « aucun doublon »

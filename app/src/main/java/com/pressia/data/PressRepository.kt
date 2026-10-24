@@ -908,10 +908,14 @@ class PressRepository(
      * ouvrir et marquer, et la recherche du compte est partielle (Feedly ne renvoie que quelques
      * entrées) — l'interroger laissait croire à des résultats complets alors qu'elle en masquait
      * la majorité. Aucun appel réseau ici.
+     *
+     * [withBody] = faux par défaut : le titre seul (voir `PressDao.search`).
      */
-    suspend fun search(q: String, feedId: String?, catId: String?): List<ArticleEntity> {
+    suspend fun search(
+        q: String, feedId: String?, catId: String?, withBody: Boolean = false
+    ): List<ArticleEntity> {
         val feedIds = catId?.let { folderFeeds(it) } ?: emptyList()
-        return dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0)
+        return dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0, if (withBody) 1 else 0)
     }
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----

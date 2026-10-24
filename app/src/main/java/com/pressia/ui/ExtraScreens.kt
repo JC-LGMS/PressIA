@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -20,8 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -37,47 +43,66 @@ import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.Prefs
 import com.pressia.data.sortFeeds
 import com.pressia.ui.theme.toHex
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
  * Recherche avec portée explicite : la portée est affichée en permanence et élargissable à la
  * demande (Tous les articles / un dossier / un flux), indépendante de la portée du flux principal.
+ *
+ * L'état (requête, portée, option « texte », résultats) vit dans [PressVM] : il survit donc à
+ * l'ouverture d'un article ou au passage par une autre page, et ne disparaît qu'à la fermeture de
+ * l'application. Seuls un changement de portée ou de l'option effacent les résultats, qui ne
+ * correspondraient plus à ce qui est affiché.
  */
 @Composable
 fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
-    var q by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<ArticleEntity>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
     var showScope by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    // Portée de recherche : par défaut celle du flux affiché, élargissable sans y toucher.
-    var searchScope by remember { mutableStateOf(vm.scope) }
-    // La portée suit le flux affiché : en revenant à l'accueil (ou en changeant de flux), une
-    // portée devenue obsolète est réalignée et les résultats périmés sont vidés. Un choix manuel
-    // dans cet écran n'y touche pas : seul switchScope (la navigation) fait bouger vm.scope.
-    LaunchedEffect(vm.scope) { searchScope = vm.scope; results = emptyList() }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // Première portée : celle du flux affiché (ensuite la recherche garde la sienne).
+    LaunchedEffect(Unit) { vm.initSearchScope() }
+    // Page ouverte sur une recherche vide : champ actif et clavier ouvert. Le champ doit être
+    // composé et attaché avant de réclamer le focus, d'où le court délai.
+    LaunchedEffect(Unit) {
+        if (vm.searchQuery.isBlank()) {
+            delay(150)
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), label = { Text("Rechercher…") },
-            leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true)
-        Spacer(Modifier.height(8.dp))
+    Column(
+        Modifier.fillMaxSize()
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+    ) {
+        OutlinedTextField(
+            vm.searchQuery, { vm.searchQuery = it },
+            Modifier.fillMaxWidth().focusRequester(focus),
+            label = { Text("Rechercher…") },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); vm.runSearch() })
+        )
+        Spacer(Modifier.height(6.dp))
 
         // Portée courante, visible et modifiable.
         Row(
             Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .clickable { showScope = !showScope }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                if (searchScope.feedId != null) Icons.Filled.RssFeed else Icons.Filled.FolderOpen,
+                if (vm.searchScope.feedId != null) Icons.Filled.RssFeed else Icons.Filled.FolderOpen,
                 null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("Portée : ${searchScope.label}", style = MaterialTheme.typography.bodyMedium)
+                Text("Portée : ${vm.searchScope.label}", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "Touchez pour élargir la recherche",
                     style = MaterialTheme.typography.labelSmall,
@@ -99,43 +124,91 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp)
             ) {
-                ScopeChoiceRow("Tous les articles", searchScope.feedId == null && searchScope.categoryId == null) {
-                    searchScope = Scope(label = "Tous les articles"); results = emptyList()
-                }
+                ScopeChoiceRow(
+                    "Tous les articles",
+                    vm.searchScope.feedId == null && vm.searchScope.categoryId == null
+                ) { vm.selectSearchScope(Scope(label = "Tous les articles")) }
                 vm.categories.forEach { c ->
-                    ScopeChoiceRow(c.label, searchScope.categoryId == c.id) {
-                        searchScope = Scope(categoryId = c.id, label = c.label); results = emptyList()
+                    ScopeChoiceRow(c.label, vm.searchScope.categoryId == c.id) {
+                        vm.selectSearchScope(Scope(categoryId = c.id, label = c.label))
                     }
                 }
                 vm.subs.forEach { s ->
-                    ScopeChoiceRow(prettyFeedTitle(s.title), searchScope.feedId == s.id) {
-                        searchScope = Scope(feedId = s.id, label = prettyFeedTitle(s.title)); results = emptyList()
+                    ScopeChoiceRow(prettyFeedTitle(s.title), vm.searchScope.feedId == s.id) {
+                        vm.selectSearchScope(Scope(feedId = s.id, label = prettyFeedTitle(s.title)))
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-        Button({
-            scope.launch {
-                loading = true
-                try { results = vm.repo.search(q, searchScope.feedId, searchScope.categoryId) }
-                finally { loading = false }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                { keyboard?.hide(); vm.runSearch() },
+                enabled = vm.searchQuery.trim().length >= 2 && !vm.searchLoading
+            ) { Text("Chercher") }
+            Spacer(Modifier.width(8.dp))
+            // Recherche sur le titre par défaut : le texte intégral (contenu de l'article) est une
+            // option, il ramenait beaucoup de résultats hors sujet quand il était systématique.
+            Row(
+                Modifier.weight(1f).clip(MaterialTheme.shapes.small)
+                    .clickable { vm.setSearchBody(!vm.searchWithBody) }
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Switch(checked = vm.searchWithBody, onCheckedChange = { vm.setSearchBody(it) })
+                Spacer(Modifier.width(6.dp))
+                Column {
+                    Text("Inclure le texte", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (vm.searchWithBody) "titre + texte" else "titre seul",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-        }, enabled = q.length >= 2) { Text("Chercher") }
-        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-        Spacer(Modifier.height(8.dp))
-        // La requête borne l'affichage à 200 articles : le dire, plutôt que de laisser croire
-        // que la recherche s'arrête là.
-        Text(
-            if (results.size >= 200) "${results.size} résultat(s) (affichage limité) · ${searchScope.label}"
-            else "${results.size} résultat(s) · ${searchScope.label}"
-        )
+        }
+        if (vm.searchLoading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+
+        if (vm.searchRan) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                // La requête borne l'affichage à 200 articles : le dire, plutôt que de laisser
+                // croire que la recherche s'arrête là.
+                Text(
+                    (if (vm.searchResults.size >= 200) "${vm.searchResults.size} résultat(s) (affichage limité)"
+                    else "${vm.searchResults.size} résultat(s)") + " · ${vm.searchScope.label}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (vm.searchResults.any { it.unread }) {
+                    TextButton({ vm.markAllSearchRead() }, enabled = !vm.syncing) {
+                        Text("Marquer tous lus")
+                    }
+                }
+            }
+            // Annulation du marquage groupé : les lignes restent affichées (elles sont estompées),
+            // ce bouton est donc le seul moyen de revenir en arrière une fois la pastille effacée.
+            val offer = vm.undoOffer
+            if (offer != null && offer.ids.all { id -> vm.searchResults.any { it.id == id } }) {
+                TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Annuler — ${offer.label}")
+                }
+            }
+        }
         // Les résultats occupent la place restante : sous `ArticleList` (une LazyColumn
         // `fillMaxSize`) une hauteur quasi nulle ne laissait voir que deux ou trois lignes,
-        // comme si la recherche s'arrêtait là.
+        // comme si la recherche s'arrêtait là. La clé [PressVM.searchEpoch] reconstruit la liste
+        // à chaque nouvelle recherche : on repart donc en haut des résultats.
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            ArticleList(results, "list", onOpen, vm, showSource = searchScope.feedId == null)
+            key(vm.searchEpoch) {
+                ArticleList(
+                    vm.searchResults, "list", onOpen, vm,
+                    showSource = vm.searchScope.feedId == null
+                )
+            }
         }
     }
 }

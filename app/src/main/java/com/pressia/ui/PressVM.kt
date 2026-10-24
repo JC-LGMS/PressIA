@@ -114,6 +114,31 @@ fun parseArticleActions(raw: String): List<String> =
 class PressVM(val repo: PressRepository) : ViewModel() {
     val prefs = repo.prefs
     var scope by mutableStateOf(Scope())
+    /**
+     * État de l'écran Recherche. Il vit ici (et non dans le composable) pour survivre à la
+     * navigation : ouvrir un article ou passer par une autre page puis revenir doit retrouver la
+     * requête et ses résultats, et ils ne disparaissent qu'à la fermeture de l'application (le
+     * ViewModel meurt avec le processus).
+     */
+    var searchQuery by mutableStateOf("")
+    /** Portée de la recherche (Tous les articles / un dossier / un flux). */
+    var searchScope by mutableStateOf(Scope())
+    /** Vrai une fois la portée initialisée sur celle du flux affiché (premier passage seulement). */
+    private var searchScopeInit = false
+    /** Faux par défaut : la recherche porte sur le titre, l'option ajoute le texte des articles. */
+    var searchWithBody by mutableStateOf(false)
+    var searchResults by mutableStateOf<List<ArticleEntity>>(emptyList())
+    /** Vrai dès qu'une recherche a été lancée : distingue « 0 résultat » de « pas encore cherché ». */
+    var searchRan by mutableStateOf(false)
+        private set
+    var searchLoading by mutableStateOf(false)
+        private set
+    /**
+     * Incrémenté à chaque nouvelle recherche : la liste des résultats est reconstruite (clé de
+     * composition) et repart donc **en haut**, au lieu de garder le défilement de la précédente.
+     */
+    var searchEpoch by mutableStateOf(0)
+        private set
     var articles by mutableStateOf<List<ArticleEntity>>(emptyList())
     var categories by mutableStateOf<List<CategoryEntity>>(emptyList())
     /** Dossiers affichés (un par dossier, ou fusionnés entre comptes selon [mergeFolders]). */
@@ -692,10 +717,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             // la ligne ne fait que changer d'apparence (estompage).
             repo.article(id)?.let { full ->
                 articles = (articles + full).sortedByDescending { it.published }
+                // La ligne de la liste de recherche ne s'alimente pas de `articles` : sans ce
+                // report, son rond lu/non-lu y resterait celui d'avant le tap.
+                searchResults = searchResults.map { if (it.id == id) it.copy(unread = unread) else it }
                 return@launch
             }
         }
         articles = articles.map { if (it.id == id) it.copy(unread = unread) else it }
+        searchResults = searchResults.map { if (it.id == id) it.copy(unread = unread) else it }
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
@@ -759,6 +788,75 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         keepIds.value = keepIds.value + ids.toSet()
         refresh()
     }
+
+    // ----- Écran Recherche -----
+
+    /** Portée initiale de la recherche : celle du flux affiché, au premier passage seulement. */
+    fun initSearchScope() {
+        if (searchScopeInit) return
+        searchScopeInit = true
+        searchScope = scope
+    }
+
+    /**
+     * Changement de portée : les résultats affichés ne correspondent plus au libellé, ils sont
+     * donc oubliés (il faut relancer la recherche). C'est le seul cas, avec [setSearchBody],
+     * où l'on efface — la navigation, elle, les conserve.
+     */
+    fun selectSearchScope(s: Scope) {
+        searchScope = s
+        searchResults = emptyList()
+        searchRan = false
+    }
+
+    /** Option « inclure le texte » : même raison, les résultats en cours deviennent faux. */
+    fun setSearchBody(on: Boolean) {
+        if (searchWithBody == on) return
+        searchWithBody = on
+        searchResults = emptyList()
+        searchRan = false
+    }
+
+    /** Lance la recherche (base locale) et repart du haut de la liste. */
+    fun runSearch() = viewModelScope.launch { runSearchNow() }
+
+    private suspend fun runSearchNow(bumpEpoch: Boolean = true) {
+        val q = searchQuery.trim()
+        // Deux caractères au minimum : une lettre seule ramenait la moitié de la bibliothèque.
+        if (q.length < 2) return
+        searchLoading = true
+        try {
+            searchResults = repo.search(q, searchScope.feedId, searchScope.categoryId, searchWithBody)
+            searchRan = true
+            // Nouvelle recherche : la liste repart en haut. Une relecture (marquage groupé) garde
+            // la position, l'utilisateur n'a pas relancé de recherche.
+            if (bumpEpoch) searchEpoch++
+        } finally {
+            searchLoading = false
+        }
+    }
+
+    /**
+     * Rejoue la recherche en cours après un changement d'état lu/non-lu : les lignes affichées
+     * portent leur propre état, sans cette relecture elles garderaient l'ancien.
+     */
+    private suspend fun reloadSearch() {
+        if (searchRan) runSearchNow(bumpEpoch = false)
+    }
+
+    /**
+     * « Marquer tous lus » sur les résultats affichés (écran Recherche), annulable comme les
+     * autres marquages groupés : [offerUndo] avant l'écriture, [undoMarkRead] pour revenir.
+     */
+    fun markAllSearchRead() = viewModelScope.launch {
+        val ids = searchResults.filter { it.unread }.map { it.id }
+        if (ids.isEmpty()) return@launch
+        offerUndo(ids)
+        repo.markArticlesRead(ids)
+        keepIds.value = keepIds.value + ids.toSet()
+        refresh()
+        reloadSearch()
+    }
     /** Proposition d'annulation d'un marquage groupé (« tout marquer lu », menu appui long). */
     data class UndoOffer(val ids: List<String>, val label: String)
     var undoOffer by mutableStateOf<UndoOffer?>(null)
@@ -796,6 +894,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         refresh()
         // Écran Doublons : les groupes rouverts doivent réapparaître dans la liste affichée.
         if (dupScanned) dups = repo.duplicateGroups()
+        // Écran Recherche : les résultats affichés doivent retrouver leur état non lu.
+        reloadSearch()
     }
     fun loadStats(period: StatsPeriod = StatsPeriod.WEEK, year: Int = 0) = viewModelScope.launch {
         val now = System.currentTimeMillis()

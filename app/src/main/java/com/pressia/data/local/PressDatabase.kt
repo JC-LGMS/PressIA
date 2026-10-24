@@ -421,8 +421,16 @@ interface PressDao {
     suspend fun unreadDuplicates(): List<ArticleEntity>
 
     // --- Recherche périmètre (FTS simplifié via LIKE, suffisant offline) ---
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' OR summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%') ORDER BY published DESC LIMIT 200")
-    suspend fun search(q: String, feedId: String?, feedIds: List<String>, catEmpty: Int): List<ArticleEntity>
+    /**
+     * Recherche bornée au périmètre demandé. **Le titre d'abord** : `withBody = 0` ne regarde que
+     * le titre (et l'auteur, court et assimilable à un titre) ; `withBody = 1` ajoute le résumé et
+     * le corps. Chercher partout par défaut ramenait trop de résultats hors sujet (« de » dans le
+     * corps d'un article quelconque) et l'utilisateur ne pouvait pas revenir au titre seul.
+     */
+    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT 200")
+    suspend fun search(
+        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int
+    ): List<ArticleEntity>
 
     // --- Sync queue ---
     @Insert
