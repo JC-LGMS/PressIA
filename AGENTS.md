@@ -462,6 +462,16 @@ debuggable`).
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le
   compteur est croissant et finit sur le vrai total, jamais sur le nombre d'abonnements.
+- Recherche : **base locale uniquement** (`PressRepository.search`). La recherche du compte est
+  partielle (Feedly ne renvoie que quelques entrées) : l'interroger masquait les articles déjà en
+  base et le nombre de résultats affiché n'était pas celui de la bibliothèque. La requête du DAO
+  borne l'affichage à 200 entrées, et l'écran le dit (« affichage limité ») plutôt que de laisser
+  croire que la liste s'arrête là.
+- Écran Doublons : la requête couvre **tous** les non lus (`dao.unreadDuplicates`, **sans**
+  `LIMIT`) et le regroupement se fait en Kotlin (`groupDuplicates`, testé). Un `LIMIT 200` trié
+  par date rendait invisibles les doublons anciens — l'écran annonçait alors « aucun doublon »
+  alors qu'il y en avait. L'écran est une `LazyColumn` : sans plafond, tout composer d'un coup
+  peinerait sur une grosse base.
 - Commits auto : `.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`,
   message `Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message
   reste préférable quand l'utilisateur le demande.

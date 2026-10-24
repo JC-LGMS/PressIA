@@ -408,10 +408,17 @@ interface PressDao {
     /** Suppression par paquets (limite de variables SQLite) du trop-plein par flux. */
     @Query("DELETE FROM articles WHERE id IN (:ids)")
     suspend fun deleteArticlesByIds(ids: List<String>): Int
-    @Query("SELECT * FROM articles WHERE titleHash != '' GROUP BY titleHash HAVING SUM(CASE WHEN unread = 1 THEN 1 ELSE 0 END) > 0 ORDER BY published DESC LIMIT 200")
-    suspend fun duplicateGroupsSeedUnread(): List<ArticleEntity>
-    @Query("SELECT * FROM articles WHERE titleHash = :hash ORDER BY published DESC")
-    suspend fun duplicatesOf(hash: String): List<ArticleEntity>
+    /**
+     * Tous les articles non lus dont le titre normalisé apparaît plusieurs fois, du plus récent
+     * au plus ancien. **Sans plafond** : un `LIMIT` sur les groupes les plus récents rendait
+     * invisibles les doublons plus anciens (l'écran annonçait alors « aucun doublon »).
+     */
+    @Query(
+        "SELECT * FROM articles WHERE unread = 1 AND titleHash != '' AND titleHash IN (" +
+            "SELECT titleHash FROM articles WHERE unread = 1 AND titleHash != '' " +
+            "GROUP BY titleHash HAVING COUNT(*) > 1) ORDER BY published DESC, id DESC"
+    )
+    suspend fun unreadDuplicates(): List<ArticleEntity>
 
     // --- Recherche périmètre (FTS simplifié via LIKE, suffisant offline) ---
     @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' OR summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%') ORDER BY published DESC LIMIT 200")

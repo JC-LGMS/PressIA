@@ -6,6 +6,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -123,7 +125,12 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         }, enabled = q.length >= 2) { Text("Chercher") }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         Spacer(Modifier.height(8.dp))
-        Text("${results.size} résultat(s) · ${searchScope.label}")
+        // La requête borne l'affichage à 200 articles : le dire, plutôt que de laisser croire
+        // que la recherche s'arrête là.
+        Text(
+            if (results.size >= 200) "${results.size} résultat(s) (affichage limité) · ${searchScope.label}"
+            else "${results.size} résultat(s) · ${searchScope.label}"
+        )
         // Les résultats occupent la place restante : sous `ArticleList` (une LazyColumn
         // `fillMaxSize`) une hauteur quasi nulle ne laissait voir que deux ou trois lignes,
         // comme si la recherche s'arrêtait là.
@@ -173,72 +180,80 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     // fini (sans cela, deux appuis lançaient deux analyses concurrentes).
     var scanning by remember { mutableStateOf(false) }
 
-    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                {
-                    if (scanning) return@Button
-                    scanning = true
-                    scope.launch {
-                        try {
-                            vm.loadDupsNow()
-                            toast(ctx, "Recherche de doublons terminée")
-                        } finally {
-                            scanning = false
+    // Liste paresseuse : le scan couvre **tous** les non lus (plus de plafond sur les groupes),
+    // une colonne qui composerait toutes les cartes d'un coup peinerait sur une grosse base.
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    {
+                        if (scanning) return@Button
+                        scanning = true
+                        scope.launch {
+                            try {
+                                vm.loadDupsNow()
+                                toast(ctx, "Recherche de doublons terminée")
+                            } finally {
+                                scanning = false
+                            }
                         }
+                    },
+                    enabled = !vm.syncing && !scanning
+                ) {
+                    if (scanning) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp), strokeWidth = 2.dp,
+                            color = LocalContentColor.current
+                        )
+                        Spacer(Modifier.width(8.dp))
                     }
-                },
-                enabled = !vm.syncing && !scanning
-            ) {
-                if (scanning) {
-                    CircularProgressIndicator(
-                        Modifier.size(16.dp), strokeWidth = 2.dp,
-                        color = LocalContentColor.current
+                    Text(
+                        when {
+                            scanning -> "Recherche…"
+                            vm.dupScanned -> "Re-scanner"
+                            else -> "Rechercher les doublons"
+                        }
                     )
-                    Spacer(Modifier.width(8.dp))
                 }
+                Spacer(Modifier.width(12.dp))
                 Text(
-                    when {
-                        scanning -> "Recherche…"
-                        vm.dupScanned -> "Re-scanner"
-                        else -> "Rechercher les doublons"
-                    }
+                    if (!vm.dupScanned) "analyse à lancer"
+                    else if (totalDup > 0) "$totalDup doublon${if (totalDup > 1) "s" else ""}"
+                    else "aucun doublon",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                if (!vm.dupScanned) "analyse à lancer"
-                else if (totalDup > 0) "$totalDup doublon${if (totalDup > 1) "s" else ""}"
-                else "aucun doublon",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
-        Spacer(Modifier.height(8.dp))
+        item { Spacer(Modifier.height(8.dp)) }
         if (totalDup > 0) {
-            OutlinedButton(
-                {
-                    scope.launch {
-                        vm.markAllDupsRead()
-                        toast(ctx, "$totalDup doublon(s) marqué(s) lus")
-                    }
-                },
-                enabled = !vm.syncing,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Tout marquer lu sauf le + récent") }
-            Spacer(Modifier.height(4.dp))
+            item {
+                OutlinedButton(
+                    {
+                        scope.launch {
+                            vm.markAllDupsRead()
+                            toast(ctx, "$totalDup doublon(s) marqué(s) lus")
+                        }
+                    },
+                    enabled = !vm.syncing,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Tout marquer lu sauf le + récent") }
+                Spacer(Modifier.height(4.dp))
+            }
         }
         // Annulation du marquage groupé : une fois les doublons marqués lus, il n'y en a plus à
         // l'écran et la pastille du bas s'efface au bout de quelques secondes. Cet écran n'a pas
         // le bouton d'annulation de la barre des listes d'articles : sans ce bouton, l'annulation
         // devenait inatteignable.
         vm.undoOffer?.let { o ->
-            TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
-                Text("Annuler — ${o.label}")
+            item {
+                TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Annuler — ${o.label}")
+                }
+                Spacer(Modifier.height(4.dp))
             }
-            Spacer(Modifier.height(4.dp))
         }
-        vm.dups.forEach { group ->
+        items(vm.dups) { group ->
             Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
@@ -282,7 +297,9 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
             }
         }
         if (vm.dupScanned && vm.dups.isEmpty()) {
-            Text("Aucun doublon détecté.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            item {
+                Text("Aucun doublon détecté.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

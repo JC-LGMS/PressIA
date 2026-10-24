@@ -72,6 +72,24 @@ class PressLogicTest {
         val h2 = dedupHash("hello  world ", "https://ex.com/a?y=2")
         assertEquals(h1.substringBefore(":"), h2.substringBefore(":"))
     }
+    @Test fun `doublons groupes par titre, plus recent en tete`() {
+        fun art(id: String, hash: String, published: Long) =
+            com.pressia.data.local.ArticleEntity(id = id, feedId = "f", title = id, published = published, titleHash = hash)
+        // Déjà triés du plus récent au plus ancien, comme la requête le rend.
+        val groups = com.pressia.data.remote.groupDuplicates(
+            listOf(
+                art("a1", "T", 300), art("a2", "T", 200), art("b1", "U", 150),
+                art("a3", "T", 100), art("c1", "V", 50)
+            )
+        )
+        assertEquals(1, groups.size)
+        assertEquals(listOf("a1", "a2", "a3"), groups[0].map { it.id })
+        // Un titre non normalisé (hash vide) ne forme jamais de groupe, même répété.
+        assertEquals(
+            0,
+            com.pressia.data.remote.groupDuplicates(listOf(art("x", "", 2), art("y", "", 1))).size
+        )
+    }
     @Test fun `rss parse extrait titre lien image`() {
         val xml = """<rss><channel><item><title>T1</title><link>https://ex.com/1</link><description><![CDATA[hello <img src="https://ex.com/i.jpg"/>]]></description></item></channel></rss>"""
         val arts = LocalRssFetcher.parse(xml, "feed1")

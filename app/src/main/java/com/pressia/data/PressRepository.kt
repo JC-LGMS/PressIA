@@ -903,20 +903,15 @@ class PressRepository(
     }
 
     suspend fun article(id: String) = dao.article(id)
+    /**
+     * Recherche **uniquement dans la base locale** : ce sont les articles que le lecteur peut
+     * ouvrir et marquer, et la recherche du compte est partielle (Feedly ne renvoie que quelques
+     * entrées) — l'interroger laissait croire à des résultats complets alors qu'elle en masquait
+     * la majorité. Aucun appel réseau ici.
+     */
     suspend fun search(q: String, feedId: String?, catId: String?): List<ArticleEntity> {
         val feedIds = catId?.let { folderFeeds(it) } ?: emptyList()
-        // 1) les articles déjà en base d'abord : la recherche du compte est **partielle**
-        // (Feedly ne renvoie que quelques entrées), et la préférer masquait les dizaines
-        // d'articles que la base contenait — d'où les « 3 résultats » alors qu'il y en a plus.
-        val local = dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0)
-        if (local.isNotEmpty()) return local
-        // 2) rien en base : le compte peut connaître l'article (historique non téléchargé).
-        return try {
-            val p = provider(); val t = token()
-            p.search(t, q, feedId) ?: emptyList()
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0)
     }
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----
@@ -2726,16 +2721,12 @@ class PressRepository(
 
     // ----- Déduplication -----
     /**
-     * Groupes de doublons **non lus** : on ne renvoie que les articles encore non lus du groupe,
-     * et un groupe n'est retenu que s'il en compte au moins deux. Un groupe réduit à un seul
-     * article n'est plus un doublon, donc « tout marquer lu sauf le + récent » vide bien l'écran.
+     * Groupes de doublons **non lus**, sur **toute** la base : un groupe ne retient que ses
+     * articles encore non lus, et compte au moins deux entrées (sinon ce n'est plus un doublon,
+     * et « tout marquer lu sauf le + récent » vide bien l'écran).
      */
     suspend fun duplicateGroups(): List<List<ArticleEntity>> = withContext(Dispatchers.IO) {
-        val seeds = dao.duplicateGroupsSeedUnread()
-        seeds.mapNotNull { s ->
-            val g = dao.duplicatesOf(s.titleHash).filter { it.unread }
-            if (g.size > 1) g else null
-        }.take(50)
+        groupDuplicates(dao.unreadDuplicates())
     }
 
     // ----- Stats -----

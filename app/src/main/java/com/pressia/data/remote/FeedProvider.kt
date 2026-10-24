@@ -207,3 +207,15 @@ fun dedupHash(title: String, url: String): String {
     val t = title.lowercase().replace(Regex("[^a-z0-9àâäéèêëîïôöùûüÿç ]"), "").replace(Regex("\\s+"), " ").trim()
     return "${t.hashCode()}:${url.substringAfter("://").substringBefore("?").hashCode()}"
 }
+
+/**
+ * Regroupe par [ArticleEntity.titleHash] des articles **déjà triés du plus récent au plus
+ * ancien**. L'ordre des groupes suit la première apparition (donc le titre le plus récent
+ * d'abord) et chaque groupe garde son article le plus récent en tête : c'est lui que « tout
+ * marquer lu sauf le + récent » épargne. Un titre non normalisé ne forme jamais de groupe.
+ */
+fun groupDuplicates(articles: List<ArticleEntity>): List<List<ArticleEntity>> =
+    articles.filter { it.titleHash.isNotBlank() }
+        .groupBy { it.titleHash }
+        .values
+        .filter { it.size > 1 }
