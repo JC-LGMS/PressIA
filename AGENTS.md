@@ -62,8 +62,8 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
   l'application puis builder suffit donc — ne jamais retoucher les numéros à la main.
 - **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
   le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
-  chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, titre, détail = le
-  message de commit) **en tête de la version courante** de `CHANGELOG` : compléter l'entrée
+  chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,
+  titre, détail = le message de commit) **en tête de la version courante** de `CHANGELOG` : compléter l'entrée
   existante si la version n'a pas changé, en créer une si le build l'a déjà incrémentée. Un
   commit sans entrée laisse la page mentir sur ce qui a changé.
 - L'historique initial (208 commits, jusqu'au 2026-10-25) est dans `ui/ChangelogHistory.kt`,

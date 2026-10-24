@@ -13,8 +13,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** Un changement livré : sa date, son titre et, quand le commit en portait un, son détail. */
-data class ChangelogItem(val date: String, val title: String, val detail: String? = null)
+/**
+ * Un changement livré : sa date et son heure, son titre et, quand le commit en portait un, son
+ * détail. L'heure ([time], `HH:mm`) est celle du commit : elle s'affiche sous la date et
+ * départage deux changements du même jour.
+ */
+data class ChangelogItem(
+    val date: String,
+    val title: String,
+    val detail: String? = null,
+    val time: String? = null
+)
 
 /** Une version publiée et ses changements, du plus récent au plus ancien. */
 data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
@@ -31,6 +40,19 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.1",
+        listOf(
+            ChangelogItem(
+                "2026-10-25",
+                "Journal des modifications : heure et minute sous chaque date",
+                "Chaque changement du journal affiche désormais l'heure du commit (`HH:mm`) sous " +
+                    "sa date, ce qui départage deux changements du même jour. L'historique a été " +
+                    "régénéré avec ces horaires.",
+                time = "01:34"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.0",
         listOf(
             ChangelogItem(
@@ -38,7 +60,8 @@ val CHANGELOG: List<ChangelogEntry> = listOf(
                 "Journal des modifications",
                 "Page accessible en touchant le numéro de version et la date de build (tiroir, " +
                     "À propos). Le numéro de version avance automatiquement à chaque modification " +
-                    "de l'application : plus besoin d'y penser."
+                    "de l'application : plus besoin d'y penser.",
+                time = "01:29"
             )
         ) + CHANGELOG_HISTORY
     )
@@ -112,16 +135,25 @@ fun ChangelogScreen() {
     }
 }
 
-/** Une ligne du journal : date à gauche, titre puis détail du commit à droite. */
+/** Une ligne du journal : date et heure à gauche, titre puis détail du commit à droite. */
 @Composable
 private fun ChangelogRow(item: ChangelogItem) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
-        Text(
-            item.date,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(84.dp).padding(top = 2.dp)
-        )
+        // Colonne étroite : la date sur une ligne, l'heure juste en dessous.
+        Column(Modifier.width(84.dp).padding(top = 2.dp, end = 6.dp)) {
+            Text(
+                item.date,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (!item.time.isNullOrBlank()) {
+                Text(
+                    item.time,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                )
+            }
+        }
         Column(Modifier.weight(1f)) {
             Text(item.title, style = MaterialTheme.typography.bodyMedium)
             if (!item.detail.isNullOrBlank()) {
