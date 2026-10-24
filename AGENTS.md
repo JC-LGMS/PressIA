@@ -53,6 +53,24 @@ rien n'a changé côté dépendances ; sinon le build échoue sur une résolutio
 
 APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
 
+## Version et journal des modifications
+
+- **Le numéro de version avance tout seul.** `app/build.gradle.kts` calcule l'empreinte de
+  `app/src/main` et du script, puis la compare à `sourceHash` dans `version.properties` : si elle
+  a changé, `versionName` passe au correctif suivant (`1.0.x`) et `versionCode` augmente de 1,
+  **avant** que `defaultConfig` ne les lise. Un build sans modification ne bouge rien. Modifier
+  l'application puis builder suffit donc — ne jamais retoucher les numéros à la main.
+- **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
+  le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
+  chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, titre, détail = le
+  message de commit) **en tête de la version courante** de `CHANGELOG` : compléter l'entrée
+  existante si la version n'a pas changé, en créer une si le build l'a déjà incrémentée. Un
+  commit sans entrée laisse la page mentir sur ce qui a changé.
+- L'historique initial (208 commits, jusqu'au 2026-10-25) est dans `ui/ChangelogHistory.kt`,
+  généré depuis `git log` : **ne plus le modifier**. Les commits de tests, de documentation
+  (`AGENTS.md`, `README.md`) ou d'outillage n'y figurent pas ; seuls ceux qui touchent
+  `app/src/main` ou `app/build.gradle.kts` comptent.
+
 ## Émulateur et pilotage de l'app (adb + UIAutomator)
 
 Un émulateur est souvent déjà démarré sur `emulator-5554`. Sinon :

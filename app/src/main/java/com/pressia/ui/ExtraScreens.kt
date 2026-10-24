@@ -1472,7 +1472,7 @@ fun ColorPickerDialog(title: String, current: String, onDismiss: () -> Unit, onP
 /** Écran « À propos » : nom, version, description courte, bouton vers le code source,
  * puis résumé cherchable des fonctionnalités et règles de l'application. */
 @Composable
-fun AboutScreen() {
+fun AboutScreen(onChangelog: () -> Unit = {}) {
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }
     var query by remember { mutableStateOf("") }
@@ -1496,9 +1496,12 @@ fun AboutScreen() {
             Text("PressIA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             if (!version.isNullOrBlank()) {
                 Spacer(Modifier.height(2.dp))
+                // Même geste que dans le tiroir : le numéro de version (avec sa date de build)
+                // ouvre le journal des modifications.
                 Text(
                     "Version $version", style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable(onClick = onChangelog)
                 )
             }
             Spacer(Modifier.height(16.dp))

@@ -166,13 +166,18 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             )
             if (!version.isNullOrBlank()) {
                 Spacer(Modifier.height(2.dp))
+                // Le numéro de version (et la date de build qu'il porte) ouvre le journal des
+                // modifications : c'est là qu'on cherche « ce qui a changé ».
                 Text(
                     "v$version",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     textAlign = TextAlign.Center,
                     maxLines = 1,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onNavigate("changelog")
+                        onClose()
+                    }
                 )
             }
         }

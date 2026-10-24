@@ -11,6 +11,53 @@ plugins {
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Properties
+import java.security.MessageDigest
+
+/*
+ * Version automatique (voir AGENTS.md, « Version et journal des modifications »).
+ *
+ * L'empreinte des sources de l'application (`src/main` + ce script) est comparée à celle
+ * enregistrée dans `version.properties`. Si elle a changé, le correctif (1.0.x) et `versionCode`
+ * sont incrémentés **avant** la lecture par `defaultConfig`, puis la nouvelle empreinte est
+ * écrite. Un build sans modification ne bouge donc pas la version ; toute modification de
+ * l'application, elle, la fait avancer sans intervention.
+ */
+val versionFile = rootProject.file("version.properties")
+val versionProps = Properties().apply {
+    if (versionFile.exists()) versionFile.inputStream().use { load(it) }
+}
+val sourceHash = run {
+    val md = MessageDigest.getInstance("SHA-256")
+    val base = projectDir
+    fileTree(base) {
+        include("src/main/**")
+        include("build.gradle.kts")
+    }.files.sortedBy { it.relativeTo(base).path }.forEach { f ->
+        md.update(f.relativeTo(base).path.toByteArray(Charsets.UTF_8))
+        md.update(0.toByte())
+        md.update(f.readBytes())
+        md.update(0.toByte())
+    }
+    md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+}
+val storedSourceHash = versionProps.getProperty("sourceHash", "")
+var appVersionCode = versionProps.getProperty("versionCode", "1").toIntOrNull() ?: 1
+var appVersionName = versionProps.getProperty("versionName", "1.0.0")
+if (storedSourceHash.isNotBlank() && storedSourceHash != sourceHash) {
+    appVersionCode += 1
+    val parts = appVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
+    while (parts.size < 3) parts += 0
+    parts[2] += 1
+    appVersionName = parts.take(3).joinToString(".")
+    logger.lifecycle("PressIA : sources modifiées, nouvelle version $appVersionName ($appVersionCode)")
+}
+if (storedSourceHash != sourceHash || versionProps.getProperty("versionName") != appVersionName) {
+    versionFile.writeText(
+        "versionCode=$appVersionCode\nversionName=$appVersionName\nsourceHash=$sourceHash\n",
+        Charsets.UTF_8
+    )
+}
 
 android {
     namespace = "com.pressia"
@@ -20,8 +67,8 @@ android {
         applicationId = "com.pressia"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         // OAuth placeholders - surchargeables via local.properties ou variables d'env.
         // Utiles seulement au flux OAuth générique (Inoreader via OAuthWebViewScreen).

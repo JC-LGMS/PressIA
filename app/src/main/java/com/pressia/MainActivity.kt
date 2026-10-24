@@ -490,8 +490,15 @@ class MainActivity : ComponentActivity() {
                                  composable("about") {
                                      BackRule()
                                      ScaffoldWithMenu("À propos", { openDrawer() }, drawerIconFor("about"), vm) {
-                                         AboutScreen()
+                                         AboutScreen(onChangelog = { nav.navigate("changelog") })
                                      }
+                                 }
+                                 composable("changelog") {
+                                     BackRule()
+                                     ScaffoldWithMenu(
+                                         "Journal des modifications", { openDrawer() },
+                                         drawerIconFor("changelog"), vm
+                                     ) { ChangelogScreen() }
                                  }
                                 composable("feedly-signin") {
                                     BackRule()
@@ -633,7 +640,7 @@ private val CONTENT_ROUTES = setOf("home", "stream", "article")
  * sans avoir à remonter l'empilement des écrans précédents.
  */
 private val UTILITY_ROUTES = setOf(
-    "starred", "search", "dedup", "stats", "settings", "login", "backup", "feedly-signin", "inoreader-signin", "oauth", "about"
+    "starred", "search", "dedup", "stats", "settings", "login", "backup", "feedly-signin", "inoreader-signin", "oauth", "about", "changelog"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

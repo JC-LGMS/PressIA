@@ -741,6 +741,7 @@ fun drawerIconFor(route: String): ImageVector? = when (route) {
     "login" -> Icons.Filled.AccountCircle
     "backup" -> Icons.Filled.Save
     "about" -> Icons.Filled.Info
+    "changelog" -> Icons.Filled.History
     else -> null
 }
 
