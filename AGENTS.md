@@ -331,7 +331,7 @@ debuggable`).
     suivent. Un `CancellationException` n'est **jamais** confondu avec un jeton à
     renouveler.
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
-  `exportSchema = false`, version DB actuelle : 5.
+  `exportSchema = false`, version DB actuelle : 6.
 - Réglage ajouté, modifié ou supprimé = cycle complet obligatoire : clé dans `Prefs`,
   état + `reloadFromPrefs`/`save()` dans l'écran Réglages, entrée dans `Prefs.ENTRIES`
   (sinon absent de l'export/import — test `entrees de preferences` à étendre), valeur
@@ -477,6 +477,24 @@ debuggable`).
   haut (une relecture après marquage groupé, elle, ne bouge pas la position). Page ouverte sans
   requête ⇒ `FocusRequester` + clavier. « Marquer tous lus » s'annule par `offerUndo` /
   `undoMarkRead`, qui relit aussi la recherche (les lignes portent leur propre état lu/non-lu).
+  L'action est une **icône** de la barre des résultats, comme celle des listes : `DoneAll` devient
+  `Undo` tant que l'annulation porte sur ces résultats (`undoOffer.ids` tous affichés) — un
+  marquage fait ailleurs ne se confond pas avec celui-ci.
+- Choix de portée (Recherche, Favoris) : `scopeEntries` / `ScopeChooser` (`ui/ScopeChooser.kt`)
+  donnent **le même ordre que la page Accueil** — dossiers dans l'ordre de `vm.folders`, chacun
+  suivi de ses flux triés par `sortOrder` (un dossier fusionné rassemble les flux de tous ses
+  identifiants), puis les flux sans dossier — et les **mêmes icônes** : dossier, favicon du flux
+  (`FeedAvatar`, décalé de 26 dp sous son dossier). Ne pas réénumérer `vm.categories` ou
+  `vm.subs` à la main dans un nouvel écran : l'ordre et les repères divergeraient. Le défilement
+  et la hauteur maximale restent à l'appelant (`heightIn(max = …)` **avant** `verticalScroll`,
+  sinon la limite porte sur le contenu et le panneau déborde sans défiler).
+- Source d'un article : `articles.feedTitle` (migration 5→6) fige le titre du flux **au moment de
+  l'enregistrement**. Les listes lisaient la source dans `subscriptions` ; la ligne disparaissant
+  au désabonnement, les favoris d'un flux supprimé perdaient leur provenance. `storeArticles` le
+  remplit depuis l'abonnement, `Providers` depuis `origin.title` de l'entrée (couvre le tableau
+  « Read later » d'un flux non abonné), `mergeIncomingArticle` le conserve si l'entrée n'en porte
+  pas, `ArticleRow` et l'écran Doublons retombent dessus (et `FeedAvatar` sur l'initiale).
+  `setFeedTitle` (flux local qui annonce son nom) met aussi à jour les articles du flux.
 - Écran Doublons : la requête couvre **tous** les non lus (`dao.unreadDuplicates`, **sans**
   `LIMIT`) et le regroupement se fait en Kotlin (`groupDuplicates`, testé). Un `LIMIT 200` trié
   par date rendait invisibles les doublons anciens — l'écran annonçait alors « aucun doublon »

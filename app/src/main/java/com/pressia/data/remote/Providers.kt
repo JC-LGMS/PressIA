@@ -283,7 +283,10 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         return ArticleEntity(id = id, feedId = origin?.streamId.orEmpty(), title = t,
             author = author, url = link, summary = summary?.content, content = html, imageUrl = img,
             published = published, unread = unread, starred = false,
-            titleHash = dedupHash(t, link))
+            titleHash = dedupHash(t, link),
+            // Source portée par l'entrée : elle survit à la suppression du flux et couvre les
+            // articles du tableau « Read later » dont le flux n'est pas abonné.
+            feedTitle = origin?.title.orEmpty())
     }
 }
 
@@ -488,7 +491,10 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
             // normalisation que la réconciliation et la fenêtre d'historique.
             published = publishedMs(published), unread = !categories.contains(READ_STATE),
             starred = false,
-            titleHash = dedupHash(tt, link))
+            titleHash = dedupHash(tt, link),
+            // Même raison que côté Feedly : la source vient de l'entrée, pas seulement de
+            // l'abonnement (tableau « à lire plus tard », flux supprimé depuis).
+            feedTitle = origin?.title.orEmpty())
     }
 }
 

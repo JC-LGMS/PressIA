@@ -2086,7 +2086,14 @@ class PressRepository(
                 prev[it.id] = it
             }
         }
-        val merged = articles.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead) }
+        // Source de l'article, figée à l'enregistrement : la ligne `subscriptions` peut disparaître
+        // (désabonnement) et l'article garder son origine — c'est ce que lisent les favoris.
+        val needsTitle = articles.any { it.feedTitle.isBlank() }
+        val feedTitles = if (needsTitle) dao.subscriptions().associate { it.id to it.title } else emptyMap()
+        val tagged = if (needsTitle) {
+            articles.map { a -> if (a.feedTitle.isBlank()) a.copy(feedTitle = feedTitles[a.feedId].orEmpty()) else a }
+        } else articles
+        val merged = tagged.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead) }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
         return fresh
@@ -2999,6 +3006,9 @@ fun mergeIncomingArticle(incoming: ArticleEntity, prev: ArticleFlags?, keepRead:
         // « visual » que sur les entrées récentes, et une entrée rejouée sans image effaçait
         // celle déjà affichée — la vignette disparaissait de la liste à chaque synchronisation.
         imageUrl = incoming.imageUrl ?: prev.imageUrl,
+        // Même raison pour la source : l'article garde le titre de son flux même si celui-ci a
+        // été supprimé depuis (les favoris d'un flux désabonné gardent leur provenance).
+        feedTitle = incoming.feedTitle.ifBlank { prev.feedTitle },
         unread = if (keepRead) prev.unread else incoming.unread,
         readAt = if (keepRead) prev.readAt else incoming.readAt
     )
@@ -3127,5 +3137,8 @@ fun fmtDuration(sec: Int): String {
 
 fun buildDatabase(ctx: Context): PressDatabase =
     Room.databaseBuilder(ctx, PressDatabase::class.java, "pressia.db")
-        .addMigrations(PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3, PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5)
+        .addMigrations(
+            PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3,
+            PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5, PressDatabase.MIGRATION_5_6
+        )
         .build()

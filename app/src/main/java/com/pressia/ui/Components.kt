@@ -111,7 +111,16 @@ fun ArticleRow(
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
     val alpha = if (a.unread) 1f else 0.48f
-    val src = remember(a.feedId, feeds) { prettyFeedTitle(feeds[a.feedId]?.title ?: feeds[a.feedId]?.id) }
+    val src = remember(a.feedId, a.feedTitle, feeds) {
+        // Source : le flux s'il existe encore, sinon le titre figé avec l'article — les favoris
+        // d'un flux supprimé gardent leur provenance —, sinon son identifiant.
+        val sub = feeds[a.feedId]
+        when {
+            sub != null -> prettyFeedTitle(sub.title)
+            a.feedTitle.isNotBlank() -> prettyFeedTitle(a.feedTitle)
+            else -> prettyFeedTitle(a.feedId)
+        }
+    }
     // Titres déjà en base avec des entités HTML (« &nbsp; », …) : nettoyés à l'affichage.
     val title = remember(a.title) { cleanTitle(a.title).ifBlank { "(sans titre)" } }
     /**
@@ -212,7 +221,7 @@ fun ArticleRow(
                 Box(
                     Modifier.size(28.dp).longPressInert(leadTap),
                     contentAlignment = Alignment.Center
-                ) { FeedAvatar(feeds[a.feedId], 24) }
+                ) { FeedAvatar(feeds[a.feedId], 24, a.feedTitle) }
                 Spacer(Modifier.width(8.dp))
                 Text(title, fontSize = titleSp.sp, lineHeight = (titleSp * 1.2f).sp,
                     fontWeight = FontWeight.Normal,
@@ -295,7 +304,7 @@ fun ArticleRow(
                         else Box(
                             Modifier.size(48.dp).longPressInert(leadTap),
                             contentAlignment = Alignment.Center
-                        ) { FeedAvatar(feeds[a.feedId], 48) }
+                        ) { FeedAvatar(feeds[a.feedId], 48, a.feedTitle) }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(title, fontSize = titleSp.sp,
@@ -540,9 +549,11 @@ fun feedFaviconUrl(sub: SubscriptionEntity?, direct: Boolean = false, resolved: 
 
 /** Favicon de l'abonnement, sinon pastille avec l'initiale (100 % hors-ligne). */
 @Composable
-fun FeedAvatar(sub: SubscriptionEntity?, sizeDp: Int = 28) {
-    FeedAvatarContent(prettyFeedTitle(sub?.title),
-        feedFaviconUrl(sub, LocalFaviconDirect.current, LocalFaviconResolved.current[sub?.id]), sizeDp)
+fun FeedAvatar(sub: SubscriptionEntity?, sizeDp: Int = 28, fallbackTitle: String? = null) {
+    FeedAvatarContent(
+        prettyFeedTitle(sub?.title ?: fallbackTitle),
+        feedFaviconUrl(sub, LocalFaviconDirect.current, LocalFaviconResolved.current[sub?.id]), sizeDp
+    )
 }
 
 /** Pastille avec l'initiale : repli quand il n'y a pas d'icône, ou quand elle ne charge pas. */

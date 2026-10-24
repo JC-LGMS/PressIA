@@ -3,9 +3,14 @@ package com.pressia
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
 import com.pressia.ui.parseArticleActions
+import com.pressia.data.PressRepository
+import com.pressia.data.local.ArticleEntity
+import com.pressia.data.local.ArticleFlags
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
+import com.pressia.data.local.SubscriptionEntity
 import com.pressia.data.local.ThumbStore
+import com.pressia.ui.scopeEntries
 import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.feedlyGlobalStream
 import com.pressia.data.remote.feedlyMarkAllMarkers
@@ -1411,5 +1416,59 @@ class PressLogicTest {
         )
         assertEquals(listOf("https://ex.com/corps-1.jpg"), com.pressia.data.articleImageUrls("/miniature.jpg", """<img src="https://ex.com/corps-1.jpg">""", null, "https://ex.com/a"))
         assertEquals(emptyList<String>(), com.pressia.data.articleImageUrls(null, null, "  ", "https://ex.com/a"))
+    }
+
+    @Test fun `choix de portee - ordre de l accueil, dossiers puis leurs flux`() {
+        // L'ordre de la page Accueil : chaque dossier (dans l'ordre choisi par l'utilisateur),
+        // suivi de ses flux triés par `sortOrder`, puis les flux sans dossier. Recherche et
+        // Favoris s'appuient dessus : mêmes groupes, même ordre partout.
+        val folders = listOf(
+            PressRepository.Folder(
+                id = "cat-b", label = "Bon plan", ids = listOf("cat-b"), providers = listOf("local")
+            ),
+            PressRepository.Folder(
+                id = "merged:A", label = "A", ids = listOf("cat-a1", "cat-a2"),
+                providers = listOf("p1", "p2")
+            )
+        )
+        val subs = listOf(
+            SubscriptionEntity(id = "f3", title = "Sans dossier", sortOrder = 5),
+            SubscriptionEntity(id = "f2", title = "Deuxieme flux", categoryId = "cat-b", sortOrder = 2),
+            SubscriptionEntity(id = "f1", title = "Premier flux", categoryId = "cat-b", sortOrder = 1),
+            SubscriptionEntity(id = "f4", title = "Autre dossier", categoryId = "cat-a2", sortOrder = 9)
+        )
+        val entries = scopeEntries(folders, subs)
+        assertEquals(
+            listOf("Bon plan", "Premier flux", "Deuxieme flux", "A", "Autre dossier", "Sans dossier"),
+            entries.map { it.scope.label }
+        )
+        // Les lignes de flux portent leur abonnement (le favicon en a besoin), les lignes de
+        // dossier n'en portent pas — l'icône de dossier, elle, dépend de `folder`.
+        assertEquals("f1", entries[1].feed?.id)
+        assertTrue(entries[0].feed == null && entries[0].folder)
+        assertTrue(entries[3].feed == null && entries[3].folder)
+        assertFalse(entries[5].folder)
+    }
+
+    @Test fun `article resynchronise - la source du flux est conservee`() {
+        // Le titre du flux est figé avec l'article : quand le flux est supprimé (ou que
+        // l'article vient du tableau « Read later » d'un flux non abonné), la liste doit
+        // encore dire d'où il vient.
+        val incoming = ArticleEntity(id = "a1", feedId = "feed/x", title = "Titre", feedTitle = "")
+        val prev = ArticleFlags(
+            id = "a1", starred = false, laterSaved = true, imageCached = true,
+            unread = false, readAt = 42L, imageUrl = null, feedTitle = "Le site"
+        )
+        assertEquals("Le site", mergeIncomingArticle(incoming, prev, keepRead = false).feedTitle)
+        // Une entrée qui porte sa source la met à jour (renommage côté compte).
+        assertEquals(
+            "Nouveau nom",
+            mergeIncomingArticle(incoming.copy(feedTitle = "Nouveau nom"), prev, keepRead = false).feedTitle
+        )
+        // Premier enregistrement : rien à relire, la source de l'entrée est gardée telle quelle.
+        assertEquals(
+            "Le site",
+            mergeIncomingArticle(incoming.copy(feedTitle = "Le site"), null, keepRead = false).feedTitle
+        )
     }
 }

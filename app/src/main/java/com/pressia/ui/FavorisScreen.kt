@@ -120,6 +120,8 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                         vm = vm,
                         set = set,
                         showSet = true,
+                        selectedCategoryId = feedScope.categoryId,
+                        selectedFeedId = feedScope.feedId,
                         onPickSet = { vm.setFavSet(it); showSet = false },
                         onPickFeed = { feedScope = it; showFeed = false }
                     )
@@ -131,6 +133,8 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                         vm = vm,
                         set = set,
                         showSet = false,
+                        selectedCategoryId = feedScope.categoryId,
+                        selectedFeedId = feedScope.feedId,
                         onPickSet = { vm.setFavSet(it); showSet = false },
                         onPickFeed = { feedScope = it; showFeed = false }
                     )
@@ -177,39 +181,42 @@ private fun FavScopeChip(icon: ImageVector, label: String, onClick: () -> Unit) 
 
 /**
  * Sélecteur du périmètre affiché, déplié sous le bandeau. Le jeu de favoris offre les deux
- * ensembles plus leur réunion ; le flux couvert offre l'ensemble, puis chaque dossier et chaque flux.
+ * ensembles plus leur réunion ; le flux couvert utilise le choix de portée commun (mêmes dossiers,
+ * même ordre et mêmes icônes que la page Accueil).
  */
 @Composable
 private fun FavScopeChooser(
     vm: PressVM,
     set: String,
     showSet: Boolean,
+    selectedCategoryId: String?,
+    selectedFeedId: String?,
     onPickSet: (String) -> Unit,
     onPickFeed: (Scope) -> Unit
 ) {
     Surface(tonalElevation = 2.dp) {
-        Column(
-            Modifier
-                .padding(vertical = 4.dp)
-                .verticalScroll(rememberScrollState())
-                .heightIn(max = 320.dp)
-        ) {
-            if (showSet) {
+        if (showSet) {
+            Column(Modifier.padding(vertical = 4.dp)) {
                 FavChoiceRow("Tous les favoris", set == "all") { onPickSet("all") }
                 FavChoiceRow("Favoris PressIA", set == "app") { onPickSet("app") }
                 if (vm.hasCloudAccounts) {
                     FavChoiceRow("À lire plus tard - Feedly", set == "later") { onPickSet("later") }
                 }
-            } else {
-                FavChoiceRow("Tous les articles") { onPickFeed(Scope(label = "Tous les articles")) }
-                vm.folders.forEach { f ->
-                    FavChoiceRow(f.label) { onPickFeed(Scope(categoryId = f.id, label = f.label)) }
-                }
-                vm.subs.forEach { s ->
-                    val pretty = prettyFeedTitle(s.title)
-                    FavChoiceRow(pretty) { onPickFeed(Scope(feedId = s.id, label = pretty)) }
-                }
             }
+        } else {
+            ScopeChooser(
+                vm,
+                selectedCategoryId = selectedCategoryId,
+                selectedFeedId = selectedFeedId,
+                onPick = onPickFeed,
+                modifier = Modifier
+                    // Hauteur **avant** le défilement : dans l'autre ordre, la limite portait sur
+                    // le contenu et le panneau débordait de l'écran sans jamais défiler — les
+                    // flux du bas restaient inaccessibles.
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp)
+            )
         }
     }
 }

@@ -118,27 +118,17 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         if (showScope) {
             // Le panneau peut lister des dizaines de dossiers et de flux : il défile tout seul
             // et se borne en hauteur, sinon le bouton « Chercher » et les résultats sortaient
-            // de l'écran (l'écran, lui, n'était pas défilant).
-            Column(
-                Modifier.fillMaxWidth().heightIn(max = 240.dp)
+            // de l'écran (l'écran, lui, n'était pas défilant). Ordre et icônes de la page
+            // Accueil (dossiers puis leurs flux, favicons) : mêmes repères que la navigation.
+            ScopeChooser(
+                vm,
+                selectedCategoryId = vm.searchScope.categoryId,
+                selectedFeedId = vm.searchScope.feedId,
+                onPick = { vm.selectSearchScope(it) },
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp)
-            ) {
-                ScopeChoiceRow(
-                    "Tous les articles",
-                    vm.searchScope.feedId == null && vm.searchScope.categoryId == null
-                ) { vm.selectSearchScope(Scope(label = "Tous les articles")) }
-                vm.categories.forEach { c ->
-                    ScopeChoiceRow(c.label, vm.searchScope.categoryId == c.id) {
-                        vm.selectSearchScope(Scope(categoryId = c.id, label = c.label))
-                    }
-                }
-                vm.subs.forEach { s ->
-                    ScopeChoiceRow(prettyFeedTitle(s.title), vm.searchScope.feedId == s.id) {
-                        vm.selectSearchScope(Scope(feedId = s.id, label = prettyFeedTitle(s.title)))
-                    }
-                }
-            }
+            )
         }
 
         Spacer(Modifier.height(6.dp))
@@ -173,6 +163,12 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         }
 
         if (vm.searchRan) {
+            // Une seule action à cet endroit, en icône : marquer tous les résultats lus, puis —
+            // comme le bouton de la barre des listes — annuler ce marquage. L'annulation ne
+            // s'affiche que si elle porte bien sur ces résultats : un marquage fait ailleurs ne
+            // doit pas se confondre avec celui-ci.
+            val shownIds = remember(vm.searchResults) { vm.searchResults.mapTo(HashSet()) { it.id } }
+            val offer = vm.undoOffer?.takeIf { o -> o.ids.all { it in shownIds } }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 // La requête borne l'affichage à 200 articles : le dire, plutôt que de laisser
                 // croire que la recherche s'arrête là.
@@ -183,18 +179,18 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
-                if (vm.searchResults.any { it.unread }) {
-                    TextButton({ vm.markAllSearchRead() }, enabled = !vm.syncing) {
-                        Text("Marquer tous lus")
+                when {
+                    offer != null -> IconButton({ vm.undoMarkRead() }) {
+                        Icon(
+                            Icons.Filled.Undo,
+                            "annuler le marquage (${offer.label})"
+                        )
                     }
-                }
-            }
-            // Annulation du marquage groupé : les lignes restent affichées (elles sont estompées),
-            // ce bouton est donc le seul moyen de revenir en arrière une fois la pastille effacée.
-            val offer = vm.undoOffer
-            if (offer != null && offer.ids.all { id -> vm.searchResults.any { it.id == id } }) {
-                TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Annuler — ${offer.label}")
+                    vm.searchResults.any { it.unread } -> IconButton(
+                        { vm.markAllSearchRead() }, enabled = !vm.syncing
+                    ) {
+                        Icon(Icons.Filled.DoneAll, "marquer tous les résultats lus")
+                    }
                 }
             }
         }
@@ -210,27 +206,6 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                 )
             }
         }
-    }
-}
-
-/** Une ligne du sélecteur de portée de recherche. */
-@Composable
-private fun ScopeChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-            null, Modifier.size(18.dp),
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            label, style = MaterialTheme.typography.bodyMedium, maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-        )
     }
 }
 
@@ -345,7 +320,7 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                                     fontWeight = if (newest) FontWeight.Bold else FontWeight.Normal
                                 )
                                 Text(
-                                    "${prettyFeedTitle(feeds[a.feedId]?.title ?: feeds[a.feedId]?.id)} · " +
+                                    "${prettyFeedTitle(feeds[a.feedId]?.title ?: a.feedTitle.takeIf { it.isNotBlank() } ?: feeds[a.feedId]?.id)} · " +
                                         "${fmtDay(a.published)} · ${fmtTime(a.published)}" +
                                         if (newest) " · le plus récent" else "",
                                     style = MaterialTheme.typography.labelSmall,

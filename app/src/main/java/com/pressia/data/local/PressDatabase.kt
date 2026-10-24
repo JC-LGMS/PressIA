@@ -65,7 +65,13 @@ data class ArticleEntity(
     val fullFetched: Boolean = false, // article complet extrait ?
     val imageCached: Boolean = false,
     val titleHash: String = "",  // pour déduplication
-    val readAt: Long? = null
+    val readAt: Long? = null,
+    /**
+     * Titre du flux **au moment de l'enregistrement** : les listes lisent la source dans
+     * `subscriptions`, or la ligne disparaît quand le flux est supprimé — les favoris d'un flux
+     * désabonné perdaient alors leur provenance. Cette copie la conserve.
+     */
+    val feedTitle: String = ""
 )
 
 /** File de synchronisation bidirectionnelle : actions offline à pousser. */
@@ -236,7 +242,7 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt, imageUrl FROM articles WHERE id IN (:ids)")
+    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt, imageUrl, feedTitle FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
@@ -363,7 +369,21 @@ interface PressDao {
      * disparaît pas au premier passage du serveur.
      */
     @Query("UPDATE subscriptions SET title = :title WHERE id = :id AND (title = '' OR title = url)")
-    suspend fun setFeedTitle(id: String, title: String): Int
+    suspend fun setFeedTitleRow(id: String, title: String): Int
+
+    /** Titre d'origine recopié dans les articles du flux (voir [setFeedTitle]). */
+    @Query("UPDATE articles SET feedTitle = :title WHERE feedId = :id AND (feedTitle = '' OR feedTitle = :id)")
+    suspend fun setArticlesFeedTitle(id: String, title: String)
+
+    /**
+     * Nom du flux adopté : la ligne `subscriptions` **et** les articles déjà enregistrés, qui
+     * portaient jusque-là l'URL pour toute source. Sans cette reprise, un article dont le flux est
+     * ensuite supprimé gardait l'URL comme provenance au lieu du nom du site.
+     */
+    @androidx.room.Transaction
+    suspend fun setFeedTitle(id: String, title: String) {
+        if (setFeedTitleRow(id, title) > 0) setArticlesFeedTitle(id, title)
+    }
     /**
      * Images d'un flux juste avant sa suppression : miniature déclarée et HTML du corps, d'où
      * sont tirées les images affichées dans les articles. Le balayage des fichiers locaux
@@ -583,7 +603,9 @@ data class ArticleFlags(
      * pas (le champ « visual » de Feedly ne revient pas sur les entrées anciennes) — sans quoi
      * la vignette disparaissait de la liste à chaque synchronisation.
      */
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+    /** Titre du flux enregistré avec l'article : conservé si la nouvelle version n'en porte pas. */
+    val feedTitle: String = ""
 )
 
 /** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
@@ -593,7 +615,7 @@ data class ArticleFeed(val id: String, val feedId: String)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 5, exportSchema = false
+    version = 6, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -645,6 +667,23 @@ abstract class PressDatabase : RoomDatabase() {
         val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_articles_imageCached_published_imageUrl` ON `articles` (`imageCached`, `published`, `imageUrl`)")
+            }
+        }
+
+        /**
+         * v5 → v6 : titre du flux recopié dans l'article (`feedTitle`). Les listes affichent la
+         * source à partir de `subscriptions` ; quand un flux est supprimé, ses favoris perdaient
+         * leur provenance. La colonne est remplie d'après les abonnements connus, pour que les
+         * articles déjà en base en profitent aussi.
+         */
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `articles` ADD COLUMN `feedTitle` TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "UPDATE `articles` SET `feedTitle` = COALESCE(" +
+                        "(SELECT `title` FROM `subscriptions` s WHERE s.`id` = `articles`.`feedId`), '') " +
+                        "WHERE `feedTitle` = ''"
+                )
             }
         }
     }
