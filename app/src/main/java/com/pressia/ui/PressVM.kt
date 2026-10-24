@@ -794,6 +794,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         repo.markArticlesUnread(o.ids)
         keepIds.value = keepIds.value - o.ids.toSet()
         refresh()
+        // Écran Doublons : les groupes rouverts doivent réapparaître dans la liste affichée.
+        if (dupScanned) dups = repo.duplicateGroups()
     }
     fun loadStats(period: StatsPeriod = StatsPeriod.WEEK, year: Int = 0) = viewModelScope.launch {
         val now = System.currentTimeMillis()
@@ -821,6 +823,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun markAllDupsRead() = viewModelScope.launch {
         val ids = dups.flatMap { group -> group.drop(1).map { it.id } }
         if (ids.isEmpty()) return@launch
+        // Même mécanique que « tout marquer lu » : l'annulation est proposée avant l'écriture,
+        // sinon le marquage de masse de l'écran Doublons était le seul sans retour possible.
+        offerUndo(ids)
         ids.forEach { repo.setRead(it, false) }
         dups = repo.duplicateGroups()
         refreshNow()
@@ -1055,18 +1060,30 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             return when (res) {
                 com.pressia.data.remote.InstapaperWeb.SendResult.Ok -> {
                     val id = saved!!.bookmarkId
-                    if (folderId != null && folderId != 0L) com.pressia.data.remote.InstapaperWeb.move(id, folderId)
-                    val sess = try {
-                        com.pressia.data.remote.InstapaperWeb.session()
-                    } catch (_: Exception) { null }
-                    // La pose des tags demande la clé anti-CSRF (cookie `form_key` ou session).
-                    if (tags.isNotEmpty()) {
+                    // Le rangement et les tags peuvent échouer séparément : l'article est bien
+                    // enregistré, mais annoncer « envoyé » tout court laissait croire que le
+                    // dossier et les tags étaient posés alors que le service avait répondu non.
+                    val moved = if (folderId != null && folderId != 0L) {
+                        runCatching { com.pressia.data.remote.InstapaperWeb.move(id, folderId) }
+                            .getOrDefault(false)
+                    } else true
+                    val tagged = if (tags.isEmpty()) true else runCatching {
+                        val sess = try {
+                            com.pressia.data.remote.InstapaperWeb.session()
+                        } catch (_: Exception) { null }
+                        // La pose des tags demande la clé anti-CSRF (cookie `form_key` ou session).
                         val key = com.pressia.data.remote.InstapaperWeb.formKey(
                             com.pressia.data.remote.InstapaperWeb.cookieHeader(), sess?.formKey
                         )
                         com.pressia.data.remote.InstapaperWeb.addTags(id, tags, key)
+                    }.getOrDefault(false)
+                    when {
+                        moved && tagged -> "Envoyé vers Instapaper"
+                        !moved && !tagged ->
+                            "Envoyé vers Instapaper, mais le dossier et les tags n'ont pas été appliqués"
+                        !moved -> "Envoyé vers Instapaper, mais le dossier n'a pas été appliqué"
+                        else -> "Envoyé vers Instapaper, mais les tags n'ont pas été posés"
                     }
-                    "Envoyé vers Instapaper"
                 }
                 com.pressia.data.remote.InstapaperWeb.SendResult.Expired -> "EXPIRED"
                 com.pressia.data.remote.InstapaperWeb.SendResult.Refused -> "Envoi refusé par Instapaper"

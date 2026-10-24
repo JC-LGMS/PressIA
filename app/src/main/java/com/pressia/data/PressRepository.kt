@@ -905,13 +905,18 @@ class PressRepository(
     suspend fun article(id: String) = dao.article(id)
     suspend fun search(q: String, feedId: String?, catId: String?): List<ArticleEntity> {
         val feedIds = catId?.let { folderFeeds(it) } ?: emptyList()
-        // 1) essai serveur
-        try {
+        // 1) les articles déjà en base d'abord : la recherche du compte est **partielle**
+        // (Feedly ne renvoie que quelques entrées), et la préférer masquait les dizaines
+        // d'articles que la base contenait — d'où les « 3 résultats » alors qu'il y en a plus.
+        val local = dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0)
+        if (local.isNotEmpty()) return local
+        // 2) rien en base : le compte peut connaître l'article (historique non téléchargé).
+        return try {
             val p = provider(); val t = token()
-            p.search(t, q, feedId)?.let { if (it.isNotEmpty()) return it }
-        } catch (_: Exception) {}
-        // 2) fallback local (périmètre respecté)
-        return dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0)
+            p.search(t, q, feedId) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----

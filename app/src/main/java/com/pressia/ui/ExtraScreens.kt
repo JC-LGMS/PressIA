@@ -56,7 +56,7 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     // dans cet écran n'y touche pas : seul switchScope (la navigation) fait bouger vm.scope.
     LaunchedEffect(vm.scope) { searchScope = vm.scope; results = emptyList() }
 
-    Column(Modifier.padding(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), label = { Text("Rechercher…") },
             leadingIcon = { Icon(Icons.Filled.Search, null) }, singleLine = true)
         Spacer(Modifier.height(8.dp))
@@ -89,7 +89,14 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         }
 
         if (showScope) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            // Le panneau peut lister des dizaines de dossiers et de flux : il défile tout seul
+            // et se borne en hauteur, sinon le bouton « Chercher » et les résultats sortaient
+            // de l'écran (l'écran, lui, n'était pas défilant).
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp)
+            ) {
                 ScopeChoiceRow("Tous les articles", searchScope.feedId == null && searchScope.categoryId == null) {
                     searchScope = Scope(label = "Tous les articles"); results = emptyList()
                 }
@@ -117,7 +124,12 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
         Spacer(Modifier.height(8.dp))
         Text("${results.size} résultat(s) · ${searchScope.label}")
-        ArticleList(results, "list", onOpen, vm, showSource = searchScope.feedId == null)
+        // Les résultats occupent la place restante : sous `ArticleList` (une LazyColumn
+        // `fillMaxSize`) une hauteur quasi nulle ne laissait voir que deux ou trois lignes,
+        // comme si la recherche s'arrêtait là.
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            ArticleList(results, "list", onOpen, vm, showSource = searchScope.feedId == null)
+        }
     }
 }
 
@@ -214,6 +226,16 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                 enabled = !vm.syncing,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Tout marquer lu sauf le + récent") }
+            Spacer(Modifier.height(4.dp))
+        }
+        // Annulation du marquage groupé : une fois les doublons marqués lus, il n'y en a plus à
+        // l'écran et la pastille du bas s'efface au bout de quelques secondes. Cet écran n'a pas
+        // le bouton d'annulation de la barre des listes d'articles : sans ce bouton, l'annulation
+        // devenait inatteignable.
+        vm.undoOffer?.let { o ->
+            TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Annuler — ${o.label}")
+            }
             Spacer(Modifier.height(4.dp))
         }
         vm.dups.forEach { group ->
