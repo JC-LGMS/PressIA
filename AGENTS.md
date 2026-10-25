@@ -367,6 +367,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   identifiants). Bonus : ça rattrape les articles que le serveur croit encore non lus alors que
   l'app les a marqués lus, que la réconciliation suivante rouvrirait sinon. Ne pas « optimiser » ce
   chemin en un appel de masse.
+- **Feedly marque lu tout seul au-delà de 31 jours** : son état lu/non-lu ne dit plus ce que
+  l'utilisateur a lu passé ce délai. `autoReadAgeMs("feedly")` = `FEEDLY_AUTO_READ_AGE_MS`, et
+  `autoReadCutoff` borne **deux** chemins : `storeArticles(..., keepReadBeforeMs = …)` préserve
+  l'état local des articles plus vieux déjà connus (`mergeIncomingArticle` → `beyondAutoRead`), et
+  `reconcileReadState` ne ferme que les non-lus de la fenêtre (`closableUnread`). Sans ces bornes,
+  chaque synchronisation refermait les vieux non-lus balayés par le service. Un article **inconnu**
+  garde l'état annoncé par le serveur : il n'y a rien de local à préserver.
 - Bandeau de synchro : l'avancement par flux d'un compte (découverte, puis rattrapage) vient de
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le

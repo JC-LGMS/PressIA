@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.6",
+        listOf(
+            ChangelogItem(
+                "2026-10-25",
+                "Feedly : les vieux non-lus ne sont plus refermés par la synchro",
+                "Feedly marque automatiquement en lu tous les articles non lus de plus de " +
+                    "31 jours. L'état lu/non-lu du service n'est donc plus appliqué au-delà " +
+                    "de ce délai : un article déjà connu garde son état local (lu ou non lu), " +
+                    "et la réconciliation ne ferme plus les non-lus plus vieux que la " +
+                    "fenêtre. Un article qui arrive pour la première fois garde l'état " +
+                    "annoncé par le serveur.",
+                time = "23:52"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.5",
         listOf(
             ChangelogItem(

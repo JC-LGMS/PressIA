@@ -275,17 +275,19 @@ interface PressDao {
     suspend fun feedOfIds(ids: List<String>): List<ArticleFeed>
     /**
      * Réconciliation du lu/non-lu distant : non-lus locaux des flux d'un compte, pour les
-     * comparer aux non-lus du compte (lus ailleurs → à passer en lus).
+     * comparer aux non-lus du compte (lus ailleurs → à passer en lus). La date est jointe
+     * pour écarter les articles plus vieux que la fenêtre d'auto-lecture du service
+     * (voir `beyondAutoRead`).
      */
-    @Query("SELECT a.id FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 1")
-    suspend fun unreadIdsOfProvider(provider: String): List<String>
+    @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 1")
+    suspend fun unreadStatesOfProvider(provider: String): List<ReconcileState>
     /**
      * États locaux utiles à la réconciliation, en une seule passe : non-lus du compte, plus
      * lus locaux parmi des IDs distants (non lus ailleurs → à rouvrir). Remplace deux
-     * balayages ([unreadIdsOfProvider] + [readIdsOfProviderAmong]) par un seul par paquet ;
-     * [unreadIdsOfProvider] reste pour le cas dégénéré (aucun ID distant : `IN ()` invalide).
+     * balayages ([unreadStatesOfProvider] + l'équivalent lu) par un seul par paquet ;
+     * [unreadStatesOfProvider] reste pour le cas dégénéré (aucun ID distant : `IN ()` invalide).
      */
-    @Query("SELECT a.id, a.unread FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND (a.unread = 1 OR a.id IN (:ids))")
+    @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND (a.unread = 1 OR a.id IN (:ids))")
     suspend fun readStatesOfProvider(provider: String, ids: List<String>): List<ReconcileState>
     @Query("UPDATE articles SET unread = 0, readAt = :now WHERE id IN (:ids)")
     suspend fun markIdsRead(ids: List<String>, now: Long)
@@ -608,8 +610,12 @@ data class ArticleFlags(
     val feedTitle: String = ""
 )
 
-/** État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider]). */
-data class ReconcileState(val id: String, val unread: Boolean)
+/**
+ * État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider])
+ * avec sa date de publication : au-delà de la fenêtre d'auto-lecture du service, l'état
+ * distant ne doit plus l'arbitrer.
+ */
+data class ReconcileState(val id: String, val unread: Boolean, val published: Long = 0L)
 /** Flux d'articles connus (file de sync à l'unité, voir `markArticlesRead`). */
 data class ArticleFeed(val id: String, val feedId: String)
 

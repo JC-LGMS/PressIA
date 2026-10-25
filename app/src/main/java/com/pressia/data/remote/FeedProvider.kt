@@ -2,6 +2,7 @@ package com.pressia.data.remote
 
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.CategoryEntity
+import com.pressia.data.local.ReconcileState
 import com.pressia.data.local.SubscriptionEntity
 
 /** Contrat commun — permet Feedly, Inoreader (API compatibles) et RSS local. */
@@ -160,6 +161,41 @@ fun readLaterHash(ids: Set<String>): String {
  * Feedly au-delà de 31 jours.
  */
 const val RECONCILE_WINDOW_MS = 30L * 24 * 3600 * 1000
+
+/**
+ * Marquage lu automatique de Feedly : tout non-lu de plus de 31 jours passe en lu côté
+ * service, sans que l'utilisateur l'ait ouvert.
+ */
+const val FEEDLY_AUTO_READ_AGE_MS = 31L * 24 * 3600 * 1000
+
+/**
+ * Âge au-delà duquel un service marque de lui-même les articles en lus (31 jours chez Feedly),
+ * ou null quand son état lu/non-lu reste fiable sans limite (Inoreader, flux locaux).
+ *
+ * Passé ce délai, « lu » côté service ne dit plus que l'utilisateur a lu l'article : la
+ * synchronisation ne doit donc pas en tenir compte (voir [beyondAutoRead]).
+ */
+fun autoReadAgeMs(providerId: String): Long? =
+    if (providerId == "feedly") FEEDLY_AUTO_READ_AGE_MS else null
+
+/** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */
+fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =
+    autoReadAgeMs(providerId)?.let { now - it }
+
+/**
+ * L'article est-il plus vieux que la fenêtre d'auto-lecture ? Une date inconnue (0) ne compte
+ * pas comme ancienne : faute de savoir, on laisse la synchronisation faire son travail.
+ */
+fun beyondAutoRead(published: Long, cutoffMs: Long?): Boolean =
+    cutoffMs != null && publishedMs(published) in 1 until cutoffMs
+
+/**
+ * Non-lus locaux que l'état distant peut encore fermer : ceux publiés dans la fenêtre
+ * d'auto-lecture du service (ou tous quand [cutoffMs] est nul). Au-delà, le « lu » du service
+ * ne prouve pas une lecture de l'utilisateur — ils gardent leur état local.
+ */
+fun closableUnread(states: List<ReconcileState>, cutoffMs: Long?): Set<String> =
+    states.filter { it.unread && !beyondAutoRead(it.published, cutoffMs) }.map { it.id }.toSet()
 
 /** `published` en ms, qu'il soit exprimé en secondes (Inoreader) ou en ms (Feedly). */
 fun publishedMs(published: Long): Long =

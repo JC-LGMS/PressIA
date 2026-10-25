@@ -1627,7 +1627,7 @@ class PressRepository(
             if (feedId != null || categoryId != null) {
                 // Périmètre restreint : le flux seul, comme avant (ni dossiers ni compteurs).
                 val only = p.stream(account.token, feedId, categoryId, max)
-                val added = storeArticles(only.articles)
+                val added = storeArticles(only.articles, keepReadBeforeMs = autoReadCutoff(p.id))
                 // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
                 clearAccountExpired(account.id)
                 return added
@@ -1673,7 +1673,7 @@ class PressRepository(
                 }
                 page = dPage.await(); cats = dCats.await(); subs = dSubs.await(); rawCounts = dCounts.await()
             }
-            var added = storeArticles(page.articles)
+            var added = storeArticles(page.articles, keepReadBeforeMs = autoReadCutoff(p.id))
             val subIds = subs.map { it.id }.toSet()
             val serverUnread = rawCounts?.filterKeys { it in subIds }
             android.util.Log.i(
@@ -1768,10 +1768,16 @@ class PressRepository(
      *
      * Les actions locales non poussées gagnent toujours : le serveur est périmé pour elles
      * (file « read » / « unread », ou « markAllRead » en attente qui interdit tout passage en lu).
+     *
+     * Au-delà de la fenêtre d'auto-lecture du service (31 jours chez Feedly, voir
+     * [autoReadCutoff]), l'état distant ne dit plus ce que l'utilisateur a lu : les articles
+     * plus vieux ne sont donc **pas** passés en lus — ils gardent leur état local. Sans cette
+     * borne, chaque synchronisation refermait les vieux non-lus que Feedly a balayés tout seul.
      * Renvoie (passés en lus, rouverts).
      */
     suspend fun reconcileReadState(account: CloudAccount, maxIds: Int = 5000): Pair<Int, Int> = withContext(Dispatchers.IO) {
-        val remote = providerFor(account.provider).unreadIds(account.token, maxIds) ?: return@withContext 0 to 0
+        val p = providerFor(account.provider)
+        val remote = p.unreadIds(account.token, maxIds) ?: return@withContext 0 to 0
         // Toute la file, pas seulement la page de `pendingSync` : sinon un marquage groupé
         // plus gros qu'une page n'était protégé qu'en partie et la réconciliation rouvrait
         // les articles dont l'action attendait encore (le serveur ne les avait pas vus).
@@ -1782,12 +1788,22 @@ class PressRepository(
         // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
         // (qui suffisent : rien à rouvrir quand le compte n'a aucun non-lu).
         val states = if (remote.ids.isEmpty()) {
-            dao.unreadIdsOfProvider(account.id).map { ReconcileState(it, true) }
+            dao.unreadStatesOfProvider(account.id)
         } else {
             remote.ids.chunked(500).flatMap { dao.readStatesOfProvider(account.id, it) }
         }
-        val localUnread = states.filter { it.unread }.map { it.id }.toSet()
+        val cutoff = autoReadCutoff(p.id)
+        val localUnread = closableUnread(states, cutoff)
         val localReadAmongRemote = states.filter { !it.unread }.map { it.id }.toSet()
+        if (cutoff != null) {
+            val spared = states.count { it.unread && beyondAutoRead(it.published, cutoff) }
+            if (spared > 0) {
+                android.util.Log.i(
+                    "PressIA",
+                    "reconcile ${account.id} : $spared non-lus hors fenêtre d'auto-lecture laissés tels quels"
+                )
+            }
+        }
         val split = computeReadReconciliation(localUnread, remote.ids, localReadAmongRemote, pendingIds, remote.complete, hasPendingMarkAll)
         var read = 0
         var unread = 0
@@ -1944,7 +1960,7 @@ class PressRepository(
             }
             val known = mine.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             val fresh = withinHistory(mine, cutoff, known)
-            added += storeArticles(capByQuota(fresh, counts, known, keep))
+            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = autoReadCutoff(p.id))
             seen += page.articles.size
             if (feedSaturated(counts[feedId] ?: 0, keep, mine.any { it.id in known })) break
             if (!advanced) break
@@ -2046,7 +2062,7 @@ class PressRepository(
             // Hors favoris : les lignes plus vieilles que la fenêtre sautent (sauf déjà
             // connues ou marquées, voir withinHistory).
             val fresh = withinHistory(page.articles, cutoff, known)
-            added += storeArticles(capByQuota(fresh, counts, known, keep))
+            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = autoReadCutoff(p.id))
             seen += page.articles.size
             onProgress?.invoke(seen)
             // Passe par flux : quota atteint sans rien de nouveau à rafraîchir — les pages
@@ -2072,9 +2088,15 @@ class PressRepository(
      * [keepRead] préserve en plus l'état lu/non-lu des articles déjà connus, pour les flux RSS
      * locaux : le fichier du flux ne porte aucune information de lecture, donc chaque
      * resynchronisation les repassait tous en non lus. Les comptes cloud gardent l'inverse —
-     * l'état distant fait foi (la file montante a déjà été poussée avant la descente).
+     * l'état distant fait foi (la file montante a déjà été poussée avant la descente) —, sauf
+     * pour les articles plus vieux que la fenêtre d'auto-lecture du service ([keepReadBeforeMs],
+     * 31 jours chez Feedly) : là, le « lu » distant ne veut plus dire « lu par l'utilisateur ».
      */
-    private suspend fun storeArticles(articles: List<ArticleEntity>, keepRead: Boolean = false): Int {
+    private suspend fun storeArticles(
+        articles: List<ArticleEntity>,
+        keepRead: Boolean = false,
+        keepReadBeforeMs: Long? = null
+    ): Int {
         if (articles.isEmpty()) return 0
         val known = HashSet<String>()
         val prev = HashMap<String, ArticleFlags>()
@@ -2093,7 +2115,7 @@ class PressRepository(
         val tagged = if (needsTitle) {
             articles.map { a -> if (a.feedTitle.isBlank()) a.copy(feedTitle = feedTitles[a.feedId].orEmpty()) else a }
         } else articles
-        val merged = tagged.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead) }
+        val merged = tagged.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs) }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
         return fresh
@@ -2183,7 +2205,10 @@ class PressRepository(
                         if (feeds.isNotEmpty()) dao.clearLater(feeds)
                         // Dernier mot au compteur (Int) : les rattrapages ci-dessous sont des
                         // instructions, le bloc doit toujours s'évaluer en nombre d'articles.
-                        val n = storeArticles(items)
+                        val n = storeArticles(
+                            items,
+                            keepReadBeforeMs = autoReadCutoff(providerFor(account.provider).id)
+                        )
                         if (keepSaved.isNotEmpty()) dao.markLaterSaved(keepSaved)
                         if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)
                         storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(items.map { it.id }.toSet()))
@@ -2994,10 +3019,18 @@ fun articleImageUrls(
  * suivi des miniatures — sans quoi chaque insertion (REPLACE) les effacerait, et tout serait
  * retéléchargé. [keepRead] ajoute l'état lu/non-lu, qui n'a de sens localement que pour un flux
  * RSS sans compte : le fichier du flux ne le porte pas, l'écraser repassait tous ses articles
- * en non lus à chaque synchronisation.
+ * en non lus à chaque synchronisation. [keepReadBeforeMs] le préserve aussi, mais seulement pour
+ * les articles publiés avant cette date : chez Feedly, un non-lu de plus de 31 jours est marqué
+ * lu par le service lui-même, donc l'état distant n'y reflète plus une lecture de l'utilisateur.
  */
-fun mergeIncomingArticle(incoming: ArticleEntity, prev: ArticleFlags?, keepRead: Boolean): ArticleEntity {
+fun mergeIncomingArticle(
+    incoming: ArticleEntity,
+    prev: ArticleFlags?,
+    keepRead: Boolean,
+    keepReadBeforeMs: Long? = null
+): ArticleEntity {
     if (prev == null) return incoming
+    val keepLocalRead = keepRead || beyondAutoRead(incoming.published, keepReadBeforeMs)
     return incoming.copy(
         starred = prev.starred,
         laterSaved = prev.laterSaved || incoming.laterSaved,
@@ -3009,8 +3042,8 @@ fun mergeIncomingArticle(incoming: ArticleEntity, prev: ArticleFlags?, keepRead:
         // Même raison pour la source : l'article garde le titre de son flux même si celui-ci a
         // été supprimé depuis (les favoris d'un flux désabonné gardent leur provenance).
         feedTitle = incoming.feedTitle.ifBlank { prev.feedTitle },
-        unread = if (keepRead) prev.unread else incoming.unread,
-        readAt = if (keepRead) prev.readAt else incoming.readAt
+        unread = if (keepLocalRead) prev.unread else incoming.unread,
+        readAt = if (keepLocalRead) prev.readAt else incoming.readAt
     )
 }
 
