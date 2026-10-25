@@ -47,6 +47,21 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.5",
+        listOf(
+            ChangelogItem(
+                "2026-10-25",
+                "Version : un incrément par évolution, pas par compilation",
+                "Le numéro de version n'avance plus à chaque compilation : tant que " +
+                    "l'évolution en cours n'est pas commitée, elle garde le numéro qu'elle a " +
+                    "reçu au premier build. Corriger puis recompiler dix fois ne fait donc " +
+                    "plus avancer de dix correctifs ; le commit suivant ouvre la version " +
+                    "suivante.",
+                time = "22:41"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.4",
         listOf(
             ChangelogItem(

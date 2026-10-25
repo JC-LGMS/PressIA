@@ -55,11 +55,22 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Version et journal des modifications
 
-- **Le numéro de version avance tout seul.** `app/build.gradle.kts` calcule l'empreinte de
-  `app/src/main` et du script, puis la compare à `sourceHash` dans `version.properties` : si elle
-  a changé, `versionName` passe au correctif suivant (`1.0.x`) et `versionCode` augmente de 1,
-  **avant** que `defaultConfig` ne les lise. Un build sans modification ne bouge rien. Modifier
-  l'application puis builder suffit donc — ne jamais retoucher les numéros à la main.
+- **Le numéro de version avance tout seul, une fois par évolution.** `app/build.gradle.kts`
+  calcule l'empreinte de `app/src/main` et du script, puis la compare à `sourceHash` dans
+  `version.properties` : si elle a changé, `versionName` passe au correctif suivant (`1.0.x`) et
+  `versionCode` augmente de 1, **avant** que `defaultConfig` ne les lise.
+  - **Un incrément = une modification terminée, pas une compilation.** Recompiler pendant qu'on
+    itère (corriger, rebuilder, vérifier) doit laisser la version en place : seul le **premier**
+    build d'une évolution l'incrémente. Le signal est le commit — le script interroge
+    `git diff --quiet HEAD -- version.properties` ; tant que ce fichier porte un incrément non
+    commité, l'évolution est en cours et la version est conservée (le log le dit :
+    « conservée (incrément en attente de commit) »). Après le commit, le fichier redevient
+    propre et la modification suivante ouvre la version suivante.
+  - L'empreinte, elle, est réécrite **à chaque build**, même sans incrément : le fichier commité
+    doit décrire exactement les sources commitées, sinon le build suivant prendrait le travail
+    déjà livré pour du nouveau et incrémenterait à tort.
+  - Un build sans modification ne bouge rien. Modifier l'application puis builder suffit donc —
+    ne jamais retoucher les numéros à la main.
 - **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
   le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
   chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,

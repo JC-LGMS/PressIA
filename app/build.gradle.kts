@@ -18,14 +18,38 @@ import java.security.MessageDigest
  * Version automatique (voir AGENTS.md, « Version et journal des modifications »).
  *
  * L'empreinte des sources de l'application (`src/main` + ce script) est comparée à celle
- * enregistrée dans `version.properties`. Si elle a changé, le correctif (1.0.x) et `versionCode`
- * sont incrémentés **avant** la lecture par `defaultConfig`, puis la nouvelle empreinte est
- * écrite. Un build sans modification ne bouge donc pas la version ; toute modification de
- * l'application, elle, la fait avancer sans intervention.
+ * enregistrée dans `version.properties` : si elle a changé, le correctif (1.0.x) et
+ * `versionCode` sont incrémentés **avant** la lecture par `defaultConfig`.
+ *
+ * Un incrément = une **évolution terminée**, pas une compilation. Pendant qu'on travaille on
+ * recompile plusieurs fois (corriger, rebuilder, revérifier) : la version ne doit avancer
+ * qu'une fois. Le signal est le commit — `version.properties` est le seul fichier qui porte la
+ * version, donc **tant que ce fichier n'est pas commité, le bump en cours est celui de
+ * l'évolution en cours** et on ne l'incrémente plus. Après le commit, le fichier redevient
+ * propre et la modification suivante ouvre la version suivante.
+ *
+ * L'empreinte est en revanche réécrite **à chaque** build, même sans incrément : le fichier
+ * commité doit décrire exactement les sources commitées, sinon le build suivant prendrait le
+ * travail déjà livré pour une nouvelle modification et incrémenterait à tort.
  */
 val versionFile = rootProject.file("version.properties")
 val versionProps = Properties().apply {
     if (versionFile.exists()) versionFile.inputStream().use { load(it) }
+}
+
+/** `version.properties` porte-t-il un incrément non commité (évolution en cours) ? */
+fun versionFileIsDirty(): Boolean = try {
+    val proc = ProcessBuilder("git", "diff", "--quiet", "HEAD", "--", versionFile.name)
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    // Vider la sortie avant d'attendre : un tampon plein bloquerait le processus.
+    proc.inputStream.readBytes()
+    proc.waitFor() == 1
+} catch (e: Exception) {
+    // Pas de git (ou pas de dépôt) : on retombe sur l'ancien comportement, un incrément par
+    // modification constatée.
+    false
 }
 val sourceHash = run {
     val md = MessageDigest.getInstance("SHA-256")
@@ -44,13 +68,22 @@ val sourceHash = run {
 val storedSourceHash = versionProps.getProperty("sourceHash", "")
 var appVersionCode = versionProps.getProperty("versionCode", "1").toIntOrNull() ?: 1
 var appVersionName = versionProps.getProperty("versionName", "1.0.0")
-if (storedSourceHash.isNotBlank() && storedSourceHash != sourceHash) {
-    appVersionCode += 1
-    val parts = appVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
-    while (parts.size < 3) parts += 0
-    parts[2] += 1
-    appVersionName = parts.take(3).joinToString(".")
-    logger.lifecycle("PressIA : sources modifiées, nouvelle version $appVersionName ($appVersionCode)")
+val sourcesChanged = storedSourceHash.isNotBlank() && storedSourceHash != sourceHash
+if (sourcesChanged) {
+    if (versionFileIsDirty()) {
+        // Évolution en cours : la version a déjà été incrémentée pour ce travail, on la garde.
+        logger.lifecycle(
+            "PressIA : sources modifiées, version $appVersionName ($appVersionCode) conservée " +
+                "(incrément en attente de commit)"
+        )
+    } else {
+        appVersionCode += 1
+        val parts = appVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
+        while (parts.size < 3) parts += 0
+        parts[2] += 1
+        appVersionName = parts.take(3).joinToString(".")
+        logger.lifecycle("PressIA : modification terminée, nouvelle version $appVersionName ($appVersionCode)")
+    }
 }
 if (storedSourceHash != sourceHash || versionProps.getProperty("versionName") != appVersionName) {
     versionFile.writeText(
