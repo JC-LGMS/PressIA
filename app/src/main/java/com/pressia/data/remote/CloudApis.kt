@@ -110,14 +110,20 @@ interface FeedlyService {
 }
 
 // ---------- Inoreader API (compatible Google Reader : /reader/api/0/...) ----------
+/**
+ * API Inoreader. L'authentification est portée par [headers] : `Authorization:
+ * GoogleLogin auth=…` pour un jeton OAuth, `Cookie: al=…; ssid=…` pour une session web
+ * capturée dans une WebView (mécanisme de l'extension officielle). Les deux formes
+ * cohabitent sur les mêmes endpoints — c'est ce qui permet de garder un seul client.
+ */
 interface InoreaderService {
     @GET("reader/api/0/subscription/list")
-    suspend fun subs(@Header("Authorization") h: String, @Query("output") o: String = "json"): InoreaderSubList
+    suspend fun subs(@HeaderMap h: Map<String, String>, @Query("output") o: String = "json"): InoreaderSubList
     @GET("reader/api/0/tag/list")
-    suspend fun tags(@Header("Authorization") h: String, @Query("output") o: String = "json"): InoreaderTagList
+    suspend fun tags(@HeaderMap h: Map<String, String>, @Query("output") o: String = "json"): InoreaderTagList
     @GET("reader/api/0/stream/contents/{stream}")
     suspend fun stream(
-        @Header("Authorization") h: String,
+        @HeaderMap h: Map<String, String>,
         @Path(value = "stream", encoded = true) stream: String,
         @Query("n") n: Int = 100,
         @Query("c") cont: String? = null,
@@ -127,29 +133,21 @@ interface InoreaderService {
     ): InoreaderStream
     @FormUrlEncoded @POST("reader/api/0/edit-tag")
     suspend fun editTag(
-        @Header("Authorization") h: String,
+        @HeaderMap h: Map<String, String>,
         @Field("i") itemId: String,
         @Field("a") add: String? = null,
         @Field("r") remove: String? = null,
         @Field("T") token: String
     ): String
     @GET("reader/api/0/token")
-    suspend fun token(@Header("Authorization") h: String): String
+    suspend fun token(@HeaderMap h: Map<String, String>): String
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
-    suspend fun userInfo(@Header("Authorization") h: String): InoreaderUserInfo
-    /** Profil du compte connecté, authentification via en-tête Cookie + AppId/AppKey en query param (mécanisme de session web de l'extension Inoreader). */
-    @GET("simple_api/")
-    suspend fun userInfoSimple(
-        @Query("AppId") appId: String,
-        @Query("AppKey") appKey: String,
-        @Query("get_user_info") getUserInfo: String = "",
-        @Header("Cookie") cookie: String
-    ): InoreaderUserInfo
+    suspend fun userInfo(@HeaderMap h: Map<String, String>): InoreaderUserInfo
     /** Compteurs de non-lus : 1 appel léger, détecteur de changement pour la réconciliation. */
     @GET("reader/api/0/unread-count")
     suspend fun unreadCount(
-        @Header("Authorization") h: String,
+        @HeaderMap h: Map<String, String>,
         @Query("output") o: String = "json",
         @Query("all") all: Boolean = true
     ): InoreaderUnreadCounts
@@ -159,7 +157,7 @@ interface InoreaderService {
      */
     @GET("reader/api/0/stream/items/ids")
     suspend fun itemsIds(
-        @Header("Authorization") h: String,
+        @HeaderMap h: Map<String, String>,
         @Query("s") stream: String,
         @Query("n") n: Int = 200,
         @Query("c") cont: String? = null,

@@ -47,6 +47,29 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.9",
+        listOf(
+            ChangelogItem(
+                "2026-10-26",
+                "YouTube : l'image revient ; lecteur natif corrigé",
+                "Le lecteur YouTube intégré affichait le son sans l'image : la page " +
+                    "d'intégration (`youtube.com/embed/…`) alimente bien le décodeur vidéo, mais " +
+                    "aucune image n'atteint l'écran — alors que la page de lecture " +
+                    "(`m.youtube.com/watch`), document de premier niveau, rend la vidéo " +
+                    "normalement dans la même WebView. C'est aussi ce que fait le tap sur le " +
+                    "titre de l'intégration, et c'est ce qui fonctionnait. Le lecteur charge " +
+                    "donc la page de lecture, habillée d'une feuille de style injectée qui " +
+                    "masque l'en-tête et les contenus annexes et fixe le lecteur en haut : le " +
+                    "bloc 16/9 ne montre que la vidéo. La lecture d'erreur lue dans la page, qui " +
+                    "faisait basculer sur l'affiche, disparaît (elle se déclenchait à tort et " +
+                    "ouvrait l'application YouTube). Enfin, le lecteur `<video>` natif " +
+                    "démarrait avant sa préparation — donc jamais : il lance la lecture dans " +
+                    "`onPrepared`, et n'est plus créé hors de la fenêtre.",
+                time = "00:55"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.8",
         listOf(
             ChangelogItem(

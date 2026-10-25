@@ -2,7 +2,6 @@ package com.pressia.ui
 
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -22,24 +21,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.pressia.data.remote.INOREADER_COOKIE_HOSTS
 import com.pressia.data.remote.INOREADER_SESSION_COOKIES
-import com.pressia.data.remote.InoreaderAppAuth
-import com.pressia.data.remote.inoreaderSessionCandidates
+import com.pressia.data.remote.inoreaderCookieCandidates
+import com.pressia.data.remote.inoreaderCookieHasSession
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
-
-class InoreaderJsInterface {
-    @Volatile
-    var callback: ((String) -> Unit)? = null
-
-    @JavascriptInterface
-    fun onSessionResult(json: String) {
-        callback?.invoke(json)
-        callback = null
-    }
-}
 
 /**
  * Page de connexion Inoreader : c'est le site officiel qui s'ouvre, l'utilisateur s'y
@@ -47,14 +34,25 @@ class InoreaderJsInterface {
  *
  * Le mécanisme est celui de l'extension Inoreader pour navigateur, transporté à une
  * application native : pas de mot de passe saisi dans PressIA, pas d'application
- * Inoreader à enregistrer au préalable. Le cookie porte l'identifiant de session, que
- * l'API accepte dans l'en-tête `Authorization` — d'où la vérification par un vrai
- * appel API avant d'enregistrer le compte.
+ * Inoreader à enregistrer au préalable. Une fois la session installée, l'API Inoreader
+ * est appelée exactement comme l'extension le fait — les cookies dans un en-tête
+ * `Cookie` (avec `AppId`/`AppKey` en paramètre d'URL), sans en-tête `Authorization`.
  *
- * La connexion OAuth reste disponible par ailleurs (écran Comptes) : les deux chemins
- * coexistent, celui-ci étant le plus simple.
+ * Le cookie porteur est `al` (posé sur `.www.inoreader.com`) : c'est lui que l'API
+ * accepte seul. La connexion OAuth reste disponible par ailleurs (écran Comptes) : les
+ * deux chemins coexistent, celui-ci étant le plus simple.
  */
 const val INOREADER_LOGIN_URL = "https://www.inoreader.com/"
+
+/**
+ * URL d'appel API servant de référence au bac à cookies.
+ *
+ * `CookieManager.getCookie(url)` rend **les cookies que le navigateur enverrait à cette
+ * URL** (domaine et chemin compris), y compris les cookies `HttpOnly` (`al`, `ssid`) que
+ * `document.cookie` ne montre pas. C'est donc la source fiable : la requête de
+ * vérification part exactement avec les mêmes cookies.
+ */
+private const val INOREADER_API_URL = "https://www.inoreader.com/reader/api/0/user-info"
 
 /**
  * La page affiche-t-elle encore un formulaire de connexion ?
@@ -80,7 +78,7 @@ private fun forgetInoreaderSession() {
     val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return
     INOREADER_COOKIE_HOSTS.forEach { host ->
         val present = runCatching { cm.getCookie(host) }.getOrNull()
-            ?.split(";")?.map { it.trim()?.substringBefore('=') }
+            ?.split(";")?.map { it.trim().substringBefore('=') }
             ?.filter { it in INOREADER_SESSION_COOKIES }.orEmpty()
         present.forEach { name ->
             runCatching { cm.setCookie(host, "$name=; Max-Age=0; Path=/") }
@@ -90,34 +88,18 @@ private fun forgetInoreaderSession() {
 }
 
 /**
- * En-tête `Cookie` de la session Inoreader, lu dans le bac natif de la WebView.
+ * Cookies de session que le navigateur enverrait à l'API Inoreader.
  *
- * Le `flush` précède la lecture : les cookies posés par la page ne sont persistés
- * qu'après, et sans lui la détection peut arriver avant l'écriture (échec au premier
- * essai).
+ * Lu sur l'URL d'appel : `al` (domaine `.www.inoreader.com`) et les autres cookies de
+ * session y sont présents quelle que soit la façon dont la page les a posés. Un en-tête
+ * `Cookie` brut est renvoyé, ou null si la page n'a encore posé aucun cookie.
  */
-private fun nativeCookieHeaders(): List<String> {
-    val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return emptyList()
+private fun sessionCookieHeader(): String? {
+    val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
     runCatching { cm.flush() }
-    // On collecte les cookies de **chaque hôte séparément**, pas concatenés :
-    // le navigateur n'enverrait que les cookies pour le domaine de l'URL.
-    // Le premier hôte de INOREADER_COOKIE_HOSTS est https://www.inoreader.com
-    // qui contient typiquement ssid/al/bsid — il sera essayé en premier.
-    return INOREADER_COOKIE_HOSTS
-        .mapNotNull { host ->
-            val c = runCatching { cm.getCookie(host) }.getOrNull()
-            android.util.Log.d("PressIA", "Inoreader cookie host $host: ${c?.takeIf { it.isNotBlank() } ?: "<aucun>"}")
-            c
-        }
-        .filter { it.isNotBlank() }
-}
-
-private fun logCookies(headers: List<String>, source: String) {
-    if (headers.isEmpty()) {
-        android.util.Log.w("PressIA", "Inoreader cookie ($source): aucun cookie trouvé sur les ${INOREADER_COOKIE_HOSTS.size} hôtes")
-    } else {
-        android.util.Log.i("PressIA", "Inoreader cookie ($source): ${headers.size} hôte(s), premier = ${headers.first().takeIf { it.isNotBlank() }?.take(60)}…")
-    }
+    val header = runCatching { cm.getCookie(INOREADER_API_URL) }.getOrNull()
+    android.util.Log.d("PressIA", "Inoreader cookie (API) : ${header?.take(80) ?: "<aucun>"}…")
+    return header?.takeIf { it.isNotBlank() }
 }
 
 /**
@@ -138,169 +120,31 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
     var manualToken by remember { mutableStateOf("") }
     /** Message de blocage déjà affiché : on ne le répète pas à chaque tour de sonde. */
     var stuckNotified by remember { mutableStateOf(false) }
-    /** Interface JavaScript pour recevoir le résultat du fetch depuis la WebView. */
-    val jsInterface = remember { InoreaderJsInterface() }
 
     /**
-     * Extrait un libellé utilisateur depuis la réponse JSON de `simple_api/?get_user_info`.
-     */
-    /** Extrait un libellé utilisateur depuis la réponse JSON de `simple_api/?get_user_info`. */
-    fun extractUserLabel(json: String): String {
-        val name = Regex("\"userName\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.getOrNull(1)
-        val email = Regex("\"userEmail\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.getOrNull(1)
-        return listOfNotNull(name, email).firstOrNull() ?: "Inoreader"
-    }
-
-    /**
-     * Lit `document.cookie` depuis la WebView via JavaScript.
+     * Vérifie la session, enregistre le compte, puis revient sur la liste des comptes.
      *
-     * `CookieManager.getInstance().getCookie()` peut manquer certains cookies (posés par
-     * JavaScript, cookies HttpOnly sur des chemins spécifiques…). `document.cookie` est
-     * la source la plus fiable pour voir tous les cookies de la page courante.
-     */
-    suspend fun webViewDocumentCookie(webView: WebView): String? = suspendCoroutine { cont ->
-        val script = "document.cookie"
-        runCatching {
-            webView.evaluateJavascript(script) { value ->
-                val v = value?.trim()?.trim('"')?.trim()
-                android.util.Log.d("PressIA", "Inoreader document.cookie: ${v ?: "<null/empty>"}")
-                cont.resume(if (v != null && v.isNotBlank()) v else null)
-            }
-        }.onFailure { cont.resume(null) }
-    }
-
-    /** Valeurs candidates tirées du cookie de session, dans l'ordre de préférence.
-     *
-     * Le premier candidat est le cookie de l'hôte https://www.inoreader.com
-     * (contient typiquement ssid/al/bsid), puis les autres hôtes, puis les tokens
-     * individuels extraits. Chaque hôte est essayé séparément : le navigateur
-     * n'enverrait que les cookies pour le domaine de l'URL, pas tous concaténés.
-     */
-    suspend fun sessionCandidates(webView: WebView? = null): List<String> {
-        val nativeHeaders = nativeCookieHeaders()
-        logCookies(nativeHeaders, "CookieManager")
-        val web = if (webView != null) webViewDocumentCookie(webView) else null
-        if (web != null && web.isNotBlank()) {
-            android.util.Log.d("PressIA", "Inoreader document.cookie: $web")
-        }
-        val candidates = mutableListOf<String>()
-        // 1. Cookie de l'hôte cible (www.inoreader.com) en premier
-        nativeHeaders.firstOrNull()?.let { candidates.add(it) }
-        // 2. Les autres hôtes
-        nativeHeaders.drop(1).forEach { candidates.add(it) }
-        // 3. document.cookie (complémentaire, peut contenir des cookies que CookieManager rate)
-        if (web != null && web.isNotBlank()) candidates.add(web)
-        // 4. Tokens individuels extraits (SID, LSID, etc.) — rétrocompatibilité
-        val allCookies = (nativeHeaders + listOfNotNull(web?.takeIf { it.isNotBlank() })).joinToString("; ")
-        val tokens = inoreaderSessionCandidates(allCookies)
-        candidates.addAll(tokens)
-        return candidates
-    }
-
-    /**
-     * Vérifie la session Inoreader depuis le contexte de la WebView via JavaScript.
-     *
-     * Contrairement à OkHttp, la WebView envoie automatiquement les cookies de session
-     * (y compris HttpOnly) avec `credentials: 'same-origin'`, ce qui reproduit exactement
-     * le comportement de l'extension Inoreader. Si le serveur accepte, cela prouve que la
-     * session est valide même si OkHttp ne peut pas réutiliser le cookie directement.
-     *
-     * Renvoie le JSON brut de la réponse `simple_api/?get_user_info`, ou null en cas
-     * d'échec.
-     */
-    suspend fun checkSessionViaJs(webView: WebView, appId: String, appKey: String): String? {
-        if (jsInterface == null) {
-            android.util.Log.w("PressIA", "Inoreader checkSessionViaJs: jsInterface null")
-            return null
-        }
-        android.util.Log.i("PressIA", "Inoreader checkSessionViaJs: appel JS simple_api/?get_user_info")
-        return withTimeoutOrNull(10000) {
-            suspendCoroutine { cont ->
-                jsInterface!!.callback = { json ->
-                    android.util.Log.i("PressIA", "Inoreader checkSessionViaJs: callback JS reçu, longueur=${json.length}")
-                    cont.resume(json)
-                }
-                val url = "https://www.inoreader.com/simple_api/?AppId=$appId&AppKey=$appKey&get_user_info"
-                val script = """
-                    (function() {
-                        fetch('$url', { credentials: 'same-origin' })
-                            .then(function(r) { return r.text(); })
-                            .then(function(text) { InoreaderJs.onSessionResult(text); })
-                            .catch(function(e) { InoreaderJs.onSessionResult('ERROR:' + e.message); });
-                    })()
-                """.trimIndent()
-                webView.evaluateJavascript(script) { result ->
-                    android.util.Log.d("PressIA", "Inoreader evaluateJavascript: résultat=$result")
-                }
-            }
-        }
-    }
-
-    /**
-     * Vérifie le jeton, enregistre le compte, puis revient sur la liste des comptes.
-     *
-     * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. Le
-     * dépôt les essaie une à une et renvoie la première acceptée — c'est lui qui
-     * connaît les schémas d'authentification du service.
+     * [cookieHeaders] : en-têtes `Cookie` candidats (voir `inoreaderCookieCandidates`).
+     * Le dépôt essaie chaque en-tête par un vrai appel API et renvoie la première session
+     * acceptée.
      *
      * Ordre impératif : retour d'abord, synchronisation ensuite. La synchronisation part
      * dans le scope du modèle (qui survit à la navigation) via [PressVM.connectAccount] —
      * lancée ici avant le retour, elle tournerait dans le scope de cet écran, annulé dès
      * sa sortie.
      */
-    suspend fun tryConnect(tokens: List<String>): Boolean {
-        android.util.Log.i("PressIA", "Inoreader tryConnect: called, candidates=${tokens.size}, busy=$busy, done=$done")
+    suspend fun tryConnect(cookieHeaders: List<String>): Boolean {
         if (busy || done) return false
-        val candidates = tokens.filter { it.isNotBlank() }
-        if (candidates.isEmpty()) {
-            android.util.Log.w("PressIA", "Inoreader tryConnect: no candidates, webView null=$webView")
-            return false
-        }
+        val candidates = cookieHeaders.filter { it.isNotBlank() }
+        if (candidates.isEmpty()) return false
         busy = true
         status = "Vérification de la session Inoreader…"
         // Les identifiants d'application (`AppId` / `AppKey`) sont exigés par l'API sur
         // chaque appel : on les publie avant de vérifier, sinon la session serait
         // refusée à tort (403).
         val hasAppAuth = vm.repo.refreshInoreaderAppAuth()
-        val session = vm.repo.verifyInoreaderWebSession(candidates)
+        val session = if (hasAppAuth) vm.repo.verifyInoreaderWebSession(candidates) else null
         if (session == null) {
-            // Fallback : appeler l'API depuis le contexte de la WebView (cookies
-            // de session automatiques du navigateur, y compris HttpOnly), ce qui
-            // reproduit exactement le comportement de l'extension Inoreader.
-            val appId = InoreaderAppAuth.appId.trim()
-            val appKey = InoreaderAppAuth.appKey.trim()
-            android.util.Log.i("PressIA", "Inoreader tryConnect: verifyWebSession=null, appId=${appId.isNotEmpty()}, appKey=${appKey.isNotEmpty()}, webView=${webView != null}, jsInterface=${jsInterface != null}")
-            var jsResult: String? = null
-            if (appId.isNotEmpty() && appKey.isNotEmpty()) {
-                status = "Vérification de la session depuis la page Inoreader…"
-                webView?.let { wv ->
-                    android.util.Log.i("PressIA", "Inoreader tryConnect: calling checkSessionViaJs")
-                    jsResult = checkSessionViaJs(wv, appId, appKey)
-                }
-                if (webView == null) {
-                    android.util.Log.w("PressIA", "Inoreader tryConnect: webView is null, cannot call JS")
-                }
-            } else {
-                android.util.Log.w("PressIA", "Inoreader tryConnect: AppAuth missing, cannot call JS")
-            }
-            if (jsResult != null && jsResult.isNotBlank() && !jsResult.startsWith("ERROR:")) {
-                android.util.Log.i("PressIA", "Inoreader JS result: ${jsResult.take(200)}")
-                android.util.Log.i("PressIA", "Inoreader JS contains userId=${jsResult.contains("userId")}, contains userName=${jsResult.contains("userName")}")
-                if (jsResult.contains("userId") || jsResult.contains("userName")) {
-                    // La session est valide depuis le navigateur. Le cookie de
-                    // session (premier candidat) est utilisé comme token.
-                    val token = candidates.firstOrNull() ?: ""
-                    val label = extractUserLabel(jsResult)
-                    vm.connectAccount("inoreader", token, label)
-                    status = "Connexion réussie — récupération de vos flux…"
-                    vm.loadAccount()
-                    busy = false
-                    done = true
-                    onDone("Connecté à Inoreader ✓")
-                    return true
-                }
-            }
-            android.util.Log.w("PressIA", "Inoreader verifyWebSession: null — ${candidates.size} candidat(s) essayé(s) — AppAuth=${if (hasAppAuth) "OK" else "MANQUANT"}")
             busy = false
             status = if (!hasAppAuth) {
                 "Session Inoreader refusée : identifiants d'application Inoreader manquants " +
@@ -322,27 +166,27 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
     }
 
     /**
-     * Surveille la session : la page reste affichée après la connexion, mais dès que le
-     * cookie de session existe on prend le relais, on valide et on revient sur les comptes.
+     * Surveille la session : dès que le cookie de session existe, on prend le relais, on
+     * valide et on revient sur les comptes. La connexion est donc automatique une fois
+     * l'utilisateur identifié sur la page ; le bouton « Je suis connecté » reste là pour
+     * forcer une vérification (cookie tardif, réseau revenu).
      *
      * Si la page a validé les identifiants (retour sur `inoreader.com`) sans qu'aucun
-     * cookie ne soit lisible en 20 s (protection anti-robot, cookies bloqués…), on le dit
-     * explicitement au lieu de tourner en rond en silence.
+     * cookie de session n'apparaisse en 20 s (cookies bloqués, protection anti-robot), on
+     * le dit explicitement au lieu de tourner en rond en silence.
      */
     LaunchedEffect(Unit) {
         forgetInoreaderSession()
-        var lastCandidates: List<String> = emptyList()
-        var lastTry = 0L
         var landedAt = 0L
+        var lastTry = 0L
         while (!done) {
             delay(1200)
             if (busy) continue
-            val candidates = if (manualToken.isNotBlank()) listOf(manualToken.trim()) else sessionCandidates(webView)
-            if (candidates.isEmpty()) {
-                // Pas de cookie lisible. Deux cas : l'utilisateur n'est pas encore
-                // connecté (formulaire de connexion affiché — rien à signaler), ou la
-                // session est installée mais illisible (cookies bloqués, protection
-                // anti-robot) : le formulaire a disparu, c'est le moment de le dire.
+            val header = if (manualToken.isNotBlank()) manualToken.trim() else sessionCookieHeader()
+            if (!inoreaderCookieHasSession(header)) {
+                // Pas encore de cookie de session. Deux cas : l'utilisateur n'est pas
+                // encore connecté (formulaire affiché — rien à signaler), ou la session
+                // est installée mais illisible : le formulaire a disparu, on le dit.
                 val waiting = webView?.loginFormVisible() ?: true
                 if (!stuckNotified && !waiting) {
                     if (landedAt == 0L) landedAt = System.currentTimeMillis()
@@ -351,7 +195,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                         showTokenField = true
                         status = "PressIA ne voit aucun cookie de session Inoreader (connexion non " +
                             "terminée, protection anti-robot ou cookies bloqués). Touchez " +
-                            "« Réessayer », ou collez un jeton ci-dessous."
+                            "« Je suis connecté », ou collez un cookie ci-dessous."
                     }
                 } else if (waiting) {
                     landedAt = 0L
@@ -359,14 +203,11 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 continue
             }
             landedAt = 0L
-            // Même jeu de candidats refusé : on réessaie au plus toutes les 5 s (le réseau
-            // peut revenir).
+            // Cookie présent : on vérifie, au plus toutes les 4 s (le réseau peut être lent).
             val now = System.currentTimeMillis()
-            if (candidates == lastCandidates && now - lastTry < 5000) continue
-            lastCandidates = candidates; lastTry = now
-            // L'utilisateur doit cliquer sur « Je suis connecté » pour déclencher
-            // la vérification : on ne tente pas automatiquement, car des cookies
-            // peuvent être présents avant que la connexion ne soit terminée.
+            if (now - lastTry < 4000) continue
+            lastTry = now
+            tryConnect(inoreaderCookieCandidates(header))
         }
     }
 
@@ -393,8 +234,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 onView = { webView = it },
                 onLoaded = {
                     if (status == "Chargement de la page Inoreader…") status = "Connectez-vous sur la page Inoreader ci-dessous."
-                },
-                jsInterface = jsInterface
+                }
             )
             Column(
                 Modifier.fillMaxWidth().padding(12.dp).verticalScroll(rememberScrollState()),
@@ -412,23 +252,30 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 if (showTokenField) {
                     OutlinedTextField(
                         manualToken, { manualToken = it },
-                        label = { Text("Jeton de session Inoreader") },
+                        label = { Text("Cookie de session Inoreader") },
+                        placeholder = { Text("al=…; ssid=…") },
                         modifier = Modifier.fillMaxWidth(),
                         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                     )
                     Button({ scope.launch { tryConnect(listOf(manualToken.trim())) } }, enabled = manualToken.isNotBlank()) {
-                        Text("Utiliser ce jeton")
+                        Text("Utiliser ce cookie")
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ scope.launch { tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
+                    OutlinedButton(
+                        { scope.launch { tryConnect(inoreaderCookieCandidates(sessionCookieHeader())) } },
+                        enabled = !busy
+                    ) {
                         Text("Réessayer")
                     }
-                    Button({ scope.launch { android.util.Log.i("PressIA", "Inoreader button: Je suis connecté clicked"); tryConnect(sessionCandidates(webView)) } }, enabled = !busy) {
+                    Button(
+                        { scope.launch { tryConnect(inoreaderCookieCandidates(sessionCookieHeader())) } },
+                        enabled = !busy
+                    ) {
                         Text("Je suis connecté sur Inoreader")
                     }
                     TextButton({ showTokenField = !showTokenField }) {
-                        Text(if (showTokenField) "Masquer la saisie manuelle" else "Connexion bloquée ? Saisir un jeton")
+                        Text(if (showTokenField) "Masquer la saisie manuelle" else "Connexion bloquée ? Coller un cookie")
                     }
                 }
             }
@@ -442,8 +289,7 @@ private fun InoreaderSignInView(
     modifier: Modifier,
     url: String,
     onView: (WebView) -> Unit,
-    onLoaded: () -> Unit,
-    jsInterface: InoreaderJsInterface?
+    onLoaded: () -> Unit
 ) {
     AndroidView(
         modifier = modifier,
@@ -452,7 +298,6 @@ private fun InoreaderSignInView(
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = settings.userAgentString.replace("; wv", "")
-                jsInterface?.let { addJavascriptInterface(it, "InoreaderJs") }
                 CookieManager.getInstance().apply {
                     setAcceptCookie(true)
                     // La connexion traverse plusieurs hôtes Inoreader (www, apex) : sans cela

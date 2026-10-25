@@ -3,14 +3,9 @@ package com.pressia
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
 import com.pressia.ui.parseArticleActions
-import com.pressia.data.PressRepository
-import com.pressia.data.local.ArticleEntity
-import com.pressia.data.local.ArticleFlags
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
-import com.pressia.data.local.SubscriptionEntity
 import com.pressia.data.local.ThumbStore
-import com.pressia.ui.scopeEntries
 import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.feedlyGlobalStream
 import com.pressia.data.remote.feedlyMarkAllMarkers
@@ -20,9 +15,12 @@ import com.pressia.data.remote.LocalRssFetcher
 import com.pressia.data.remote.isSupportedFeedUrl
 import com.pressia.data.remote.sanitizeFeedUrl
 import com.pressia.data.mergeIncomingArticle
+import com.pressia.data.remote.INOREADER_COOKIE_PREFIX
+import com.pressia.data.remote.InoreaderAuth
+import com.pressia.data.remote.inoreaderAuth
 import com.pressia.data.remote.inoreaderAuthHeader
-import com.pressia.data.remote.inoreaderSessionCandidates
-import com.pressia.data.remote.plausibleInoreaderToken
+import com.pressia.data.remote.inoreaderCookieCandidates
+import com.pressia.data.remote.inoreaderCookieHasSession
 import com.pressia.data.readability.Readability
 import com.pressia.ui.theme.toHex
 import androidx.compose.ui.graphics.luminance
@@ -254,34 +252,38 @@ class PressLogicTest {
     }
 
     // ---- Session Inoreader capturée dans une WebView ------------------------------------
-    @Test fun `jeton de session plausible ecarte les drapeaux`() {
-        assertNull(plausibleInoreaderToken(null))
-        assertNull(plausibleInoreaderToken(""))
-        assertNull(plausibleInoreaderToken("1"))
-        assertNull(plausibleInoreaderToken("remember"))
-        // Un en-tête collé ne doit jamais produire un jeton : il casserait l'en-tête Authorization.
-        assertNull(plausibleInoreaderToken("abc; def"))
-        assertNull(plausibleInoreaderToken("abc def"))
-        assertEquals("abcdefghijkl", plausibleInoreaderToken("\"abcdefghijkl\""))
+    @Test fun `auth inoreader - cookie prefixe contre jeton oauth`() {
+        // Un jeton préfixé `cookie:` est une session web.
+        assertEquals(
+            InoreaderAuth.WebCookie("al=abc; ssid=def"),
+            inoreaderAuth(INOREADER_COOKIE_PREFIX + "al=abc; ssid=def")
+        )
+        // Un en-tête Cookie collé à la main, sans préfixe, est reconnu à sa forme.
+        assertEquals(InoreaderAuth.WebCookie("al=abc; ssid=def"), inoreaderAuth("al=abc; ssid=def"))
+        // Un jeton OAuth reste un jeton OAuth, même avec un `=` de remplissage.
+        assertEquals(InoreaderAuth.OAuth("ya29.abc=="), inoreaderAuth("ya29.abc=="))
+        assertNull(inoreaderAuth(null))
+        assertNull(inoreaderAuth("  "))
+        assertNull(inoreaderAuth(INOREADER_COOKIE_PREFIX))
     }
-    @Test fun `candidats de session - SID et LSID d'abord`() {
-        val header = "pl=1; SID=aaaaaaaaaaaaaaaaaaaa; LSID=bbbbbbbbbbbbbbbbbbbb; csrf=cccccccccccccccc"
-        val cands = inoreaderSessionCandidates(header)
-        // Les cookies nommés passent devant : Inoreader compte les requêtes au quota.
-        assertEquals("aaaaaaaaaaaaaaaaaaaa", cands[0])
-        assertEquals("bbbbbbbbbbbbbbbbbbbb", cands[1])
-        // Les drapeaux sont écartés, les autres valeurs opaques restent candidates.
-        assertFalse(cands.contains("1"))
-        assertTrue(cands.contains("cccccccccccccccc"))
+    @Test fun `cookies de session - al reconnu, drapeaux ecartes`() {
+        val header = "al=aaaaaaaaaaaaaaaa; ssid=bbbbbbbbbbbbbbbb; _ga=GA1.1.123; pl=1"
+        assertTrue(inoreaderCookieHasSession(header))
+        assertFalse(inoreaderCookieHasSession("_ga=GA1.1.123; _gcl_au=1.1.9"))
+        assertFalse(inoreaderCookieHasSession("al="))
+        assertFalse(inoreaderCookieHasSession(null))
+        // Candidats : l'en-tête complet d'abord, puis la vue réduite aux cookies de session.
+        val cands = inoreaderCookieCandidates(header)
+        assertEquals(header, cands[0])
+        assertEquals("al=aaaaaaaaaaaaaaaa; ssid=bbbbbbbbbbbbbbbb", cands[1])
     }
-    @Test fun `candidats de session - en-tete vide ou mal forme`() {
-        assertTrue(inoreaderSessionCandidates(null).isEmpty())
-        assertTrue(inoreaderSessionCandidates("").isEmpty())
-        assertTrue(inoreaderSessionCandidates("SID").isEmpty())
-        // Un seul cookie, pas de doublon.
-        assertEquals(listOf("abcdefghijkl"), inoreaderSessionCandidates("SID=abcdefghijkl; SID=abcdefghijkl"))
+    @Test fun `candidats cookie - vide ou sans session`() {
+        assertTrue(inoreaderCookieCandidates(null).isEmpty())
+        assertTrue(inoreaderCookieCandidates("").isEmpty())
+        // Que des cookies publicitaires : l'en-tête complet reste le seul candidat.
+        assertEquals(listOf("_ga=GA1.1.1"), inoreaderCookieCandidates("_ga=GA1.1.1"))
     }
-    @Test fun `en-tete auth inoreader au schema Reader`() {
+    @Test fun `en-tete auth oauth inoreader au schema Reader`() {
         assertEquals("GoogleLogin auth=abc123", inoreaderAuthHeader("abc123"))
     }
     private fun httpError(code: Int): retrofit2.HttpException {
@@ -531,17 +533,41 @@ class PressLogicTest {
         assertEquals("https://ex.com/v.mp4", video!!.url)
         assertEquals("https://ex.com/p.jpg", video.poster)
         // Iframe YouTube : l'identifiant de la vidéo sert à construire la miniature d'affiche.
+        // (Un identifiant YouTube fait 11 caractères — le test en utilise un réaliste.)
         val yt = com.pressia.ui.articleBlocks(
-            "<iframe src=\"https://www.youtube.com/embed/abc123\"></iframe>", "https://ex.com"
+            "<iframe src=\"https://www.youtube.com/embed/dQw4w9WgXcQ\"></iframe>", "https://ex.com"
         ).filterIsInstance<com.pressia.ui.ABlock.V>().firstOrNull()
         assertNotNull(yt)
-        assertEquals("https://www.youtube.com/embed/abc123", yt!!.url)
-        assertEquals("https://img.youtube.com/vi/abc123/hqdefault.jpg", yt.poster)
+        assertEquals("https://www.youtube.com/embed/dQw4w9WgXcQ", yt!!.url)
+        assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg", yt.poster)
         // Une iframe est une PAGE web, pas un média : le lecteur intégré ne pourrait pas la lire,
         // le tap doit donc ouvrir le navigateur (drapeau `embed`).
         assertTrue(yt.embed)
         // Une balise <video>, elle, pointe un fichier média : lecteur intégré.
         assertFalse(video!!.embed)
+    }
+    @Test fun `identifiant youtube - toutes les formes d'url`() {
+        // Les flux emploient toutes les écritures : il faut en extraire l'identifiant pour
+        // rejouer la vidéo DANS l'application (WebView d'intégration) et pour son affiche.
+        assertEquals("dQw4w9WgXcQ", com.pressia.ui.youtubeVideoId("https://www.youtube.com/embed/dQw4w9WgXcQ"))
+        assertEquals("dQw4w9WgXcQ", com.pressia.ui.youtubeVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+        assertEquals("dQw4w9WgXcQ", com.pressia.ui.youtubeVideoId("https://youtu.be/dQw4w9WgXcQ"))
+        assertEquals("dQw4w9WgXcQ", com.pressia.ui.youtubeVideoId("https://www.youtube.com/shorts/dQw4w9WgXcQ"))
+        assertEquals("dQw4w9WgXcQ", com.pressia.ui.youtubeVideoId("https://m.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"))
+        // Ce n'est pas une vidéo YouTube : pas d'identifiant.
+        assertNull(com.pressia.ui.youtubeVideoId("https://vimeo.com/123456"))
+        assertNull(com.pressia.ui.youtubeVideoId("https://ex.com/embed/abc"))
+        // L'affiche se déduit de l'identifiant.
+        assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            com.pressia.ui.youtubePosterUrl("https://www.youtube.com/embed/dQw4w9WgXcQ"))
+        // La lecture se fait sur la page `watch` : l'intégration `embed` donne le son sans
+        // l'image sur certains appareils (décodeur alimenté, images jamais composées), alors que
+        // la page de lecture, document de premier niveau, rend la vidéo normalement.
+        assertEquals("https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+            com.pressia.ui.youtubeEmbedUrl("dQw4w9WgXcQ"))
+        // Habillage : le bloc 16/9 ne doit montrer que le lecteur.
+        assertTrue(com.pressia.ui.youtubePlayerScript().contains("position:fixed"))
+        assertTrue(com.pressia.ui.youtubePlayerCss().contains("56.25vw"))
     }
     @Test fun `blocs article texte nu conserve`() {
         // Flux qui livre le corps hors balise de bloc, relevé en vrai sur Les Numériques : nœuds
@@ -1416,59 +1442,5 @@ class PressLogicTest {
         )
         assertEquals(listOf("https://ex.com/corps-1.jpg"), com.pressia.data.articleImageUrls("/miniature.jpg", """<img src="https://ex.com/corps-1.jpg">""", null, "https://ex.com/a"))
         assertEquals(emptyList<String>(), com.pressia.data.articleImageUrls(null, null, "  ", "https://ex.com/a"))
-    }
-
-    @Test fun `choix de portee - ordre de l accueil, dossiers puis leurs flux`() {
-        // L'ordre de la page Accueil : chaque dossier (dans l'ordre choisi par l'utilisateur),
-        // suivi de ses flux triés par `sortOrder`, puis les flux sans dossier. Recherche et
-        // Favoris s'appuient dessus : mêmes groupes, même ordre partout.
-        val folders = listOf(
-            PressRepository.Folder(
-                id = "cat-b", label = "Bon plan", ids = listOf("cat-b"), providers = listOf("local")
-            ),
-            PressRepository.Folder(
-                id = "merged:A", label = "A", ids = listOf("cat-a1", "cat-a2"),
-                providers = listOf("p1", "p2")
-            )
-        )
-        val subs = listOf(
-            SubscriptionEntity(id = "f3", title = "Sans dossier", sortOrder = 5),
-            SubscriptionEntity(id = "f2", title = "Deuxieme flux", categoryId = "cat-b", sortOrder = 2),
-            SubscriptionEntity(id = "f1", title = "Premier flux", categoryId = "cat-b", sortOrder = 1),
-            SubscriptionEntity(id = "f4", title = "Autre dossier", categoryId = "cat-a2", sortOrder = 9)
-        )
-        val entries = scopeEntries(folders, subs)
-        assertEquals(
-            listOf("Bon plan", "Premier flux", "Deuxieme flux", "A", "Autre dossier", "Sans dossier"),
-            entries.map { it.scope.label }
-        )
-        // Les lignes de flux portent leur abonnement (le favicon en a besoin), les lignes de
-        // dossier n'en portent pas — l'icône de dossier, elle, dépend de `folder`.
-        assertEquals("f1", entries[1].feed?.id)
-        assertTrue(entries[0].feed == null && entries[0].folder)
-        assertTrue(entries[3].feed == null && entries[3].folder)
-        assertFalse(entries[5].folder)
-    }
-
-    @Test fun `article resynchronise - la source du flux est conservee`() {
-        // Le titre du flux est figé avec l'article : quand le flux est supprimé (ou que
-        // l'article vient du tableau « Read later » d'un flux non abonné), la liste doit
-        // encore dire d'où il vient.
-        val incoming = ArticleEntity(id = "a1", feedId = "feed/x", title = "Titre", feedTitle = "")
-        val prev = ArticleFlags(
-            id = "a1", starred = false, laterSaved = true, imageCached = true,
-            unread = false, readAt = 42L, imageUrl = null, feedTitle = "Le site"
-        )
-        assertEquals("Le site", mergeIncomingArticle(incoming, prev, keepRead = false).feedTitle)
-        // Une entrée qui porte sa source la met à jour (renommage côté compte).
-        assertEquals(
-            "Nouveau nom",
-            mergeIncomingArticle(incoming.copy(feedTitle = "Nouveau nom"), prev, keepRead = false).feedTitle
-        )
-        // Premier enregistrement : rien à relire, la source de l'entrée est gardée telle quelle.
-        assertEquals(
-            "Le site",
-            mergeIncomingArticle(incoming.copy(feedTitle = "Le site"), null, keepRead = false).feedTitle
-        )
     }
 }

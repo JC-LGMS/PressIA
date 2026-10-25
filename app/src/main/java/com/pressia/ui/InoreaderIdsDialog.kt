@@ -13,18 +13,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.pressia.data.remote.InoreaderAuth
+import com.pressia.data.remote.inoreaderAuth
 
 /**
  * Identifiants Inoreader employés par l'application : **App ID**, **App Key** et
- * **AUTH** (l'en-tête d'authentification du compte connecté).
+ * **AUTH** (l'authentification du compte connecté — jeton d'accès OAuth ou cookie de
+ * session web).
  *
  * Les trois sont modifiables : l'App ID et l'App Key servent à l'« authentification
  * applicative » (exigée par l'API sur chaque appel), l'AUTH porte le jeton de session du
  * compte. Les valeurs secrètes sont masquées par défaut — un coup d'œil sur l'écran
  * d'un autre ne doit pas suffire à lire un jeton.
  *
- * L'en-tête réellement envoyé est rappelé sous le champ : c'est lui qui compte, le champ
- * ne portant que le jeton nu.
+ * L'en-tête réellement envoyé est rappelé sous le champ : c'est lui qui compte, et sa
+ * forme dépend du type de compte (`Authorization: GoogleLogin auth=…` pour un jeton
+ * OAuth, `Cookie: al=…` pour une session capturée dans la WebView).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +45,10 @@ fun InoreaderIdsDialog(
     var token by remember { mutableStateOf(auth) }
     var showKey by remember { mutableStateOf(false) }
     var showToken by remember { mutableStateOf(false) }
+    // Forme d'authentification déduite du champ : le rappel de l'en-tête envoyé et le
+    // libellé s'y adaptent (jeton OAuth ou cookie de session web).
+    val cred = inoreaderAuth(token)
+    val isCookie = cred is InoreaderAuth.WebCookie
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -88,7 +96,7 @@ fun InoreaderIdsDialog(
                     OutlinedTextField(
                         value = token,
                         onValueChange = { token = it },
-                        label = { Text("AUTH — jeton de session") },
+                        label = { Text(if (isCookie) "AUTH — cookie de session" else "AUTH — jeton d'accès") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
@@ -104,8 +112,7 @@ fun InoreaderIdsDialog(
                             }
                         }
                     )
-                    // L'en-tête réellement envoyé : c'est lui qui compte, le champ ne portant
-                    // que le jeton nu.
+                    // L'en-tête réellement envoyé : c'est lui qui compte.
                     Text(
                         "En-tête envoyé :",
                         style = MaterialTheme.typography.labelMedium,
@@ -113,7 +120,11 @@ fun InoreaderIdsDialog(
                     )
                     SelectionContainer {
                         Text(
-                            "GoogleLogin auth=" + token.ifBlank { "…" },
+                            when (cred) {
+                                is InoreaderAuth.WebCookie -> "Cookie: " + cred.cookie
+                                is InoreaderAuth.OAuth -> "Authorization: GoogleLogin auth=" + cred.token
+                                null -> "…"
+                            },
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

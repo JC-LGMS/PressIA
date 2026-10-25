@@ -655,12 +655,7 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
         }
         // Détecte une URL YouTube embed et en extrait l'identifiant de vidéo pour une miniature
         // d'affiche (poster) si aucune n'est fournie.
-        fun youtubePoster(url: String): String? {
-            val id = url.substringAfter("youtube.com/embed/").takeIf { it.length != url.length }
-                ?: url.substringAfter("youtu.be/").takeIf { it.length != url.length }
-                ?: url.substringAfter("youtube.com/v/").takeIf { it.length != url.length }
-            return id?.let { "https://img.youtube.com/vi/$it/hqdefault.jpg" }
-        }
+        fun youtubePoster(url: String): String? = youtubePosterUrl(url)
         // Les éléments de bloc (p, li, h…) sont traités dans l'ordre du document. Leurs enfants
         // texte, liens (<a>) et images (<img>) produisent les blocs correspondants, préservant
         // l'ordre d'apparition. Les vidéos (<video>, <iframe>) créent un bloc ABlock.V.
@@ -736,6 +731,101 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
     } catch (_: Exception) { listOf(ABlock.T(stripHtml(html))) }
 }
 
+/**
+ * Identifiant d'une vidéo YouTube, quelle que soit la forme de l'URL.
+ *
+ * Les flux emploient toutes les écritures : `youtube.com/embed/<id>` (iframe),
+ * `youtu.be/<id>`, `youtube.com/watch?v=<id>`, `youtube.com/shorts/<id>`,
+ * `youtube.com/v/<id>`. L'identifiant suffit à reconstruire l'intégration et l'affiche.
+ */
+fun youtubeVideoId(url: String): String? {
+    val u = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return null
+    val host = (u.host ?: "").removePrefix("www.").removePrefix("m.").removePrefix("music.")
+    val path = u.path.orEmpty()
+    val id = when {
+        host == "youtu.be" -> path.trimStart('/').substringBefore('/')
+        host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com") -> {
+            val p = path
+            val fromPath = p.substringAfter("/embed/").takeIf { it.length != p.length }
+                ?: p.substringAfter("/shorts/").takeIf { it.length != p.length }
+                ?: p.substringAfter("/v/").takeIf { it.length != p.length }
+            fromPath?.substringBefore('?')?.substringBefore('/')
+                ?: u.query?.substringAfter("v=")?.substringBefore('&')
+        }
+        else -> null
+    }
+    // Un identifiant YouTube fait 11 caractères ; on écarte les reliquats (URL de chaîne, etc.).
+    return id?.takeIf { it.length == 11 }
+}
+
+/**
+ * URL de lecture YouTube, prête pour une WebView.
+ *
+ * C'est la page `m.youtube.com/watch` — et **non** la page d'intégration
+ * (`youtube.com/embed/…`) : sur l'émulateur, l'intégration affiche le son sans jamais
+ * composer l'image (le décodeur reçoit une surface, les images n'atteignent pas l'écran),
+ * alors que la page de lecture d'un document de premier niveau rend la vidéo normalement.
+ * C'est aussi ce que fait le tap sur le titre de l'intégration, et cela fonctionne.
+ */
+fun youtubeEmbedUrl(videoId: String): String =
+    "https://m.youtube.com/watch?v=$videoId"
+
+/**
+ * En-tête `Referer` de la page de lecture YouTube.
+ *
+ * YouTube refuse l'intégration quand la requête ne porte pas de référent (« Erreur 152 » pour
+ * un référent absent, « Erreur 153 » pour un référent invalide). Or un `loadUrl` **sans en-tête**
+ * n'envoie aucun Referer (requête de premier niveau, sans page référente), et
+ * `loadDataWithBaseURL` donne une **origine** mais pas de référent — la balise
+ * `<meta name="referrer">` ne peut pas en inventer un. D'où `loadUrl(url, headers)` avec un
+ * Referer explicite, cohérent avec l'hôte demandé.
+ */
+fun youtubeReferer(): String = "https://m.youtube.com/"
+
+/**
+ * Habillage de la page de lecture : on ne garde que le lecteur.
+ *
+ * La page `m.youtube.com/watch` est un site complet (en-tête, titre, commentaires, vidéos
+ * suggérées). Dans le bloc 16/9 de l'article, on masque tout cela et on fixe le lecteur en
+ * haut, à la largeur de la vue. Les sélecteurs couvrent les conteneurs connus ; s'ils changent,
+ * la page reste utilisable, simplement plus bavarde.
+ */
+internal fun youtubePlayerCss(): String = listOf(
+    "html,body{margin:0!important;padding:0!important;overflow:hidden!important;" +
+        "background:#000!important}",
+    "ytm-header-renderer,ytm-app-header,ytm-mobile-topbar-renderer,#header,header," +
+        "ytm-slim-video-metadata-section-renderer,ytm-watch-metadata," +
+        "ytm-comment-section-renderer,.watch-below-the-player{display:none!important}",
+    "#player-container-id,.player-container,ytm-player,.html5-video-player{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}",
+).joinToString("")
+
+/**
+ * Script injecté après le chargement de la page de lecture (voir [youtubePlayerCss]).
+ *
+ * Rejoué plusieurs fois : YouTube remplace une partie du document après coup (rendu progressif
+ * des composants), et une feuille de style posée trop tôt se retrouve détachée.
+ */
+internal fun youtubePlayerScript(): String =
+    "(function(){" +
+        "var css=" + jsSingleQuoted(youtubePlayerCss()) + ";" +
+        "var apply=function(){" +
+        "var s=document.getElementById('pressia-yt');" +
+        "if(!s){s=document.createElement('style');s.id='pressia-yt';" +
+        "(document.head||document.documentElement).appendChild(s);}" +
+        "s.textContent=css;};" +
+        "apply();setTimeout(apply,700);setTimeout(apply,2200);setTimeout(apply,5000);" +
+        "})()"
+
+/** Chaîne Kotlin -> littéral JavaScript entre apostrophes. */
+private fun jsSingleQuoted(value: String): String =
+    "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+/** Image d'affiche d'une vidéo YouTube (hqdefault), ou null si l'URL n'en est pas une. */
+fun youtubePosterUrl(url: String): String? =
+    youtubeVideoId(url)?.let { "https://img.youtube.com/vi/$it/hqdefault.jpg" }
+
 fun openUrl(ctx: android.content.Context, url: String) {
     try {
         val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
@@ -783,30 +873,34 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
  *    [android.widget.VideoView] piloté par le cycle de vie Compose — pause sur ON_STOP/ON_DESTROY,
  *    arrêt complet à la sortie de la composition. La vidéo ne démarre jamais en autoplay
  *    (économie de données, respect du lecteur) ;
- *  - **page d'intégration** (balise <iframe> YouTube/Vimeo) : ce n'est pas un média, le lecteur
- *    intégré ne pourrait pas la lire — la miniature s'affiche et le tap ouvre la vidéo dans le
+ *  - **page d'intégration** (balise <iframe>) : ce n'est pas un média, le lecteur intégré ne
+ *    pourrait pas la lire. Pour **YouTube**, la vidéo est rejouée **dans l'application**, via une
+ *    petite WebView qui charge la page d'intégration (`youtube-nocookie.com`) ; pour les autres
+ *    services (Vimeo, Dailymotion…), la miniature s'affiche et le tap ouvre la vidéo dans le
  *    navigateur externe.
  */
 @Composable
 fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val videoView = remember { android.widget.VideoView(context) }
+    var videoView by remember { mutableStateOf<android.widget.VideoView?>(null) }
     val playing = remember { mutableStateOf(false) }
+
+    // Intégration YouTube : lue dans l'application, via la WebView d'intégration.
+    val youtubeId = remember(url) { if (embed) youtubeVideoId(url) else null }
 
     // Intégration (iframe) : la vignette ouvre la vidéo dans le navigateur, pas le lecteur.
     val onTap: () -> Unit = if (embed) {
         { openUrl(context, url) }
     } else {
-        {
-            videoView.setVideoURI(android.net.Uri.parse(url))
-            videoView.start()
-            playing.value = true
-        }
+        { playing.value = true }
     }
 
     Column(modifier = modifier) {
-        if (!playing.value) {
+        if (youtubeId != null) {
+            // Lecteur YouTube intégré : la WebView charge le lecteur officiel.
+            YoutubePlayer(videoId = youtubeId, poster = poster)
+        } else if (!playing.value) {
             // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
             Box(
                 modifier = Modifier
@@ -834,32 +928,166 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
             }
         } else {
             AndroidView(
-                factory = { videoView },
+                factory = { ctx ->
+                    // La lecture démarre dans `onPrepared`, jamais juste après `setVideoURI` :
+                    // avant la préparation, `start()` ne fait rien (ni son ni image) et la
+                    // lecture ne revient jamais.
+                    android.widget.VideoView(ctx).apply {
+                        setOnPreparedListener { mp ->
+                            mp.isLooping = false
+                            start()
+                        }
+                        setVideoURI(android.net.Uri.parse(url))
+                        videoView = this
+                    }
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .aspectRatio(16f / 9f)
                     .background(androidx.compose.ui.graphics.Color.Black)
-            ) { view: android.widget.VideoView ->
-                if (!playing.value) {
-                    view.setVideoURI(android.net.Uri.parse(url))
-                    playing.value = true
-                }
-            }
+            )
             // Cycle de vie : pause quand l'écran est quitté, arrêt complet à la destruction.
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
                         androidx.lifecycle.Lifecycle.Event.ON_STOP,
-                        androidx.lifecycle.Lifecycle.Event.ON_DESTROY -> videoView.pause()
+                        androidx.lifecycle.Lifecycle.Event.ON_DESTROY -> videoView?.pause()
                         else -> Unit
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
-                    videoView.stopPlayback()
+                    videoView?.stopPlayback()
+                    videoView = null
                 }
             }
         }
+    }
+}
+
+/**
+ * Lecteur YouTube **dans l'application** : une WebView charge la page de lecture
+ * (`m.youtube.com/watch?v=<id>`), qui affiche le lecteur officiel — contrôles, qualité,
+ * reprise, plein écran, compte de l'utilisateur.
+ *
+ * Pourquoi la page de lecture et non l'intégration `embed` : sur l'émulateur, l'intégration
+ * affiche le son sans jamais composer l'image (le décodeur reçoit bien une surface, aucune
+ * image n'atteint l'écran), alors que la page de lecture — un document de premier niveau —
+ * rend la vidéo normalement. C'est aussi le chemin qu'emprunte le tap sur le titre de
+ * l'intégration, et celui qui fonctionne.
+ *
+ * Points d'attention :
+ *  - JavaScript et le stockage local sont nécessaires au lecteur YouTube ;
+ *  - `mediaPlaybackRequiresUserGesture = false` : sans cela, Chromium refuse de démarrer la
+ *    lecture d'une vidéo déclenchée par la page ;
+ *  - la page est chargée par `loadUrl(url, headers)` avec un **Referer** explicite (voir
+ *    [youtubeReferer]) : un chargement sans en-tête n'en envoie aucun ;
+ *  - la page du site est **habillée** par [youtubePlayerScript] : en-tête et contenus
+ *    annexes masqués, lecteur fixé en haut — le bloc 16/9 ne montre que la vidéo ;
+ *  - la WebView est **détruite** à la sortie (`onRelease`) : une WebView non détruite garde un
+ *    contexte, un moteur de rendu et des cookies — une par article s'accumulerait ;
+ *  - le zoom et le scroll horizontal sont désactivés : la WebView est dans une colonne
+ *    défilable et les gestes de l'écran article (balayage vers l'article précédent/suivant)
+ *    doivent rester disponibles.
+ */
+@Composable
+fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var failed by remember(videoId) { mutableStateOf(false) }
+    var loaded by remember(videoId) { mutableStateOf(false) }
+    var webView by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    val playerUrl = remember(videoId) { youtubeEmbedUrl(videoId) }
+
+    // Filet de sécurité : si la page n'a pas fini de charger (réseau coupé, WebView muette), on
+    // propose l'ouverture dans le navigateur au lieu d'un écran noir.
+    LaunchedEffect(videoId) {
+        kotlinx.coroutines.delay(20_000)
+        if (!loaded) failed = true
+    }
+
+    if (failed) {
+        // Repli : l'affiche de la vidéo, un tap l'ouvre dans YouTube (navigateur externe).
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .clickable { openUrl(context, "https://www.youtube.com/watch?v=$videoId") },
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            if (poster != null) {
+                coil.compose.AsyncImage(
+                    thumbModel(context, poster),
+                    null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.PlayCircleFilled,
+                contentDescription = "Ouvrir la vidéo sur YouTube",
+                tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.size(56.dp)
+            )
+        }
+        return
+    }
+
+    AndroidView(
+        factory = { ctx ->
+            android.webkit.WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.setSupportZoom(false)
+                settings.builtInZoomControls = false
+                settings.displayZoomControls = false
+                isHorizontalScrollBarEnabled = false
+                isVerticalScrollBarEnabled = false
+                setBackgroundColor(android.graphics.Color.BLACK)
+                webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                        view.post {
+                            loaded = true
+                            // La page est un site complet : on n'en garde que le lecteur.
+                            view.evaluateJavascript(youtubePlayerScript(), null)
+                        }
+                    }
+                }
+                webView = this
+                // En-tête Referer explicite : un chargement de premier niveau n'en envoie aucun.
+                loadUrl(playerUrl, mapOf("Referer" to youtubeReferer()))
+            }
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .background(androidx.compose.ui.graphics.Color.Black),
+        onRelease = { wv ->
+            // `about:blank` d'abord : la WebView est dans une colonne défilable, la stopper
+            // avant sa destruction évite qu'elle continue de charger en arrière-plan.
+            wv.stopLoading()
+            wv.loadUrl("about:blank")
+            wv.destroy()
+            webView = null
+        }
+    )
+
+    // Cycle de vie : la lecture YouTube se met en pause quand l'écran est quitté, et reprend
+    // au retour — sans cela, le son continuait après avoir changé d'article.
+    DisposableEffect(lifecycleOwner, webView) {
+        val wv = webView
+        val observer = LifecycleEventObserver { _, event ->
+            if (wv == null) return@LifecycleEventObserver
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> wv.onPause()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> wv.onResume()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 }

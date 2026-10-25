@@ -223,13 +223,30 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
     `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur
     `ON_STOP`/`ON_DESTROY`, arrêt à la sortie. Jamais d'autoplay (forfait, respect du lecteur).
-  - `<iframe src="…/embed/…">` = **page web**, pas un média → `ABlock.V(embed = true)` : le
-    lecteur intégré ne pourrait pas la lire, le tap ouvre donc la vidéo dans le navigateur.
-    L'affiche est l'image YouTube déduite de l'identifiant
-    (`img.youtube.com/vi/<id>/hqdefault.jpg`).
+    **La lecture démarre dans `onPrepared`, jamais juste après `setVideoURI`** : avant la
+    préparation, `start()` ne fait rien et la lecture ne revient plus (constaté : bloc noir, ni
+    son ni image, aucun journal `MediaPlayer`). Le `VideoView` doit aussi être créé **dans** la
+    fenêtre (`factory` d'`AndroidView`), pas par un `remember` détaché.
+  - `<iframe src="…/embed/…">` = **page web**, pas un média → `ABlock.V(embed = true)`. Pour
+    **YouTube**, la vidéo est lue **dans l'application** (`YoutubePlayer`) : la WebView charge la
+    page de **lecture** (`m.youtube.com/watch?v=<id>`), pas la page d'intégration. Raison
+    mesurée sur l'émulateur : `youtube.com/embed/…` crée bien le décodeur (`c2.goldfish.vp9`),
+    l'audio passe, mais **aucune image n'est composée** (0 % de mouvement sur la zone, alors que
+    Chrome joue la même vidéo) — tandis que la page de lecture, document de premier niveau, rend
+    la vidéo normalement (60 % de mouvement). C'est aussi le chemin du tap sur le titre de
+    l'intégration, seul geste qui affichait l'image. La page du site est **habillée** par
+    `youtubePlayerScript()` / `youtubePlayerCss()` (en-tête et contenus annexes masqués, lecteur
+    fixé en haut, `height:56.25vw`) : le bloc 16/9 ne montre que la vidéo. Ne pas réintroduire de
+    détection d'erreur par lecture du texte de la page : elle se déclenchait à tort, basculait
+    sur l'affiche et le tap ouvrait l'application YouTube installée. Les autres services
+    d'intégration (Vimeo, Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image
+    YouTube déduite de l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
 - Une image **AOSP** d'émulateur n'a **aucun décodeur vidéo** (« no video decoder », « OMX service
   is not available ») : la lecture y échoue alors que le code est correct. L'AVD `Pixel_10` est une
-  image `google_apis_playstore` ; en cas de doute, tester sur un appareil réel.
+  image `google_apis_playstore` ; en cas de doute, tester sur un appareil réel. L'image peut y
+  manquer alors que le son passe : mesurer par **statistiques de pixels** (`shot.py` : moyenne,
+  écart-type, mouvement sur deux captures) plutôt qu'en lisant une capture — un lecteur noir donne
+  0 % de mouvement, une vidéo qui joue en donne plusieurs dizaines.
 
 ## Images / miniatures (non intuitif, tout est là)
 

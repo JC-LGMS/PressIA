@@ -298,7 +298,21 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
  */
 class InoreaderProvider(private val api: InoreaderService = InoreaderService.create()) : FeedProvider {
     override val id = "inoreader"
-    private fun auth(t: String?) = "GoogleLogin auth=${t.orEmpty()}"
+
+    /**
+     * En-têtes d'authentification d'un compte Inoreader.
+     *
+     * Un compte connecté par OAuth porte un jeton d'accès → `Authorization: GoogleLogin
+     * auth=…`. Un compte connecté par la page Inoreader (WebView) porte l'en-tête `Cookie`
+     * de la session web → `Cookie: al=…` (+ `ssid`…), **sans** `Authorization` : c'est
+     * exactement ce que fait l'extension officielle du navigateur, et l'API l'accepte tel
+     * quel sur tous les endpoints `reader/api/0/`.
+     */
+    private fun headers(token: String?): Map<String, String> = when (val a = inoreaderAuth(token)) {
+        is InoreaderAuth.OAuth -> mapOf("Authorization" to inoreaderAuthHeader(a.token))
+        is InoreaderAuth.WebCookie -> mapOf("Cookie" to a.cookie)
+        null -> emptyMap()
+    }
 
     /**
      * Renouvellement du jeton d'accès expiré.
@@ -319,16 +333,18 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
      * déclaré « session expirée » alors qu'un simple renouvellement le ranime. Un seul
      * essai de renouvellement : au-delà, c'est que le compte est vraiment mort.
      */
-    private suspend fun <T> call(token: String?, block: suspend (String) -> T): T {
-        val header = auth(token)
+    private suspend fun <T> call(token: String?, block: suspend (Map<String, String>) -> T): T {
+        val h = headers(token)
         return try {
-            block(header)
+            block(h)
         } catch (e: CancellationException) {
             throw e   // une annulation ne doit jamais passer pour un jeton à renouveler
         } catch (e: Exception) {
             if (!isAuthFailure(e)) throw e
+            // Seul un compte OAuth sait se renouveler (il a un refresh_token) : une
+            // session web n'en a pas, `renewInoreaderToken` rend null et le 401 remonte.
             val fresh = renewToken?.invoke(token.orEmpty()) ?: throw e
-            block(auth(fresh))
+            block(headers(fresh))
         }
     }
 
@@ -370,40 +386,37 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     /**
      * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
      *
-     * Le cookie porte l'identifiant de session d'Inoreader — le `SID` historique du
-     * protocole `ClientLogin` — que l'API Reader attend dans l'en-tête
-     * `Authorization: GoogleLogin auth=…`, exactement comme le jeton OAuth déjà
-     * utilisé par l'application : même schéma pour les deux sources, donc rien à
-     * distinguer côté appels.
+     * [cookieHeaders] : en-têtes `Cookie` candidats, dans l'ordre de préférence (voir
+     * `inoreaderCookieCandidates`). Chacun est essayé en en-tête `Cookie` sur un vrai
+     * appel `user-info` — **jamais sur une simple ressemblance** : c'est l'API qui dit
+     * si la session est exploitable. On s'arrête au premier profil qui répond
+     * (Inoreader compte les requêtes au quota, inutile d'insister).
      *
-     * Chaque valeur candidate est essayée à son tour ; la **vérification est un vrai
-     * appel API** (`user-info`), jamais une simple ressemblance : c'est elle qui dit
-     * si la session est exploitable. On s'arrête au premier profil qui répond — Inoreader
-     * compte les requêtes au quota, inutile d'insister.
+     * Le jeton stocké est préfixé `cookie:` : le fournisseur saura, à chaque appel
+     * ultérieur, envoyer un en-tête `Cookie` plutôt qu'un `Authorization`.
      */
-    override suspend fun verifyWebSession(tokens: List<String>): WebSession? {
+    override suspend fun verifyWebSession(cookieHeaders: List<String>): WebSession? {
         val appId = InoreaderAppAuth.appId.trim()
         val appKey = InoreaderAppAuth.appKey.trim()
         if (appId.isEmpty() || appKey.isEmpty()) return null
-        for (t in tokens) {
-            if (t.isBlank()) continue
-            // L'extension Inoreader passe AppId/AppKey en paramètre d'URL (pas en en-tête),
-            // utilise l'endpoint simple_api/ (pas reader/api/0/), et s'authentifie via
-            // le cookie de session (credentials: same-origin), PAS via
-            // Authorization: GoogleLogin auth=.
-            val label = try {
-                api.userInfoSimple(appId, appKey, "get_user_info", t).let { u ->
-                    listOfNotNull(
-                        u.userName?.takeIf { it.isNotBlank() },
-                        u.userEmail?.takeIf { it.isNotBlank() }
-                    ).joinToString(" · ")
+        for (raw in cookieHeaders) {
+            for (cookie in inoreaderCookieCandidates(raw)) {
+                val label = try {
+                    api.userInfo(mapOf("Cookie" to cookie)).let { u ->
+                        listOfNotNull(
+                            u.userName?.takeIf { it.isNotBlank() },
+                            u.userEmail?.takeIf { it.isNotBlank() }
+                        ).joinToString(" · ")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    ""
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                ""
+                if (label.isNotBlank()) {
+                    return WebSession(token = INOREADER_COOKIE_PREFIX + cookie, label = label)
+                }
             }
-            if (label.isNotBlank()) return WebSession(token = t, label = label)
         }
         return null
     }
