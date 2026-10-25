@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.8",
+        listOf(
+            ChangelogItem(
+                "2026-10-26",
+                "Article : barre de défilement ; journal : barre plus fine",
+                "L'écran article dessine enfin une barre de défilement au bord droit : un curseur " +
+                    "dont la longueur est la part visible de l'article et la position " +
+                    "l'avancement (calculés dans la phase de dessin, un défilement ne " +
+                    "recompose rien). Largeur 3 dp, dans la marge de 16 dp du texte ; longueur " +
+                    "minimale 36 dp pour rester visible sur un très long article ; rien n'est " +
+                    "dessiné quand le texte tient à l'écran, ni pendant un balayage (l'icône du " +
+                    "geste occupe ce bord). Celle du journal passe de 6 dp à 3 dp, pour le même " +
+                    "repère discret.",
+                time = "00:32"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.7",
         listOf(
             ChangelogItem(
@@ -239,12 +257,14 @@ fun ChangelogScreen() {
                 }
             }
             // Barre de défilement : posée au bord droit, sur la marge de fin (20 dp) du contenu.
+            // 3 dp de large, comme celle de l'écran article : un repère de position, pas un
+            // élément de décor.
             ChangelogScrollBar(
                 listState,
                 Modifier.align(Alignment.TopEnd)
                     .fillMaxHeight()
                     .padding(top = 14.dp, bottom = 32.dp, end = 5.dp)
-                    .width(6.dp)
+                    .width(3.dp)
             )
         }
     }

@@ -1,5 +1,6 @@
 package com.pressia.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,8 +20,12 @@ import androidx.compose.material3.*
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,6 +107,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     // Le défilement repart du haut à chaque article : sans clé, le voisin ouvert par balayage
     // s'affichait à la position de l'article quitté.
     val scrollState = remember(articleId) { ScrollState(0) }
+    // Hauteur visible de l'article, en pixels : la barre de défilement en déduit la longueur du
+    // curseur (part visible du contenu). Mesurée après la marge, donc c'est bien la fenêtre de
+    // défilement. Zéro tant que la mise en page n'a pas eu lieu : aucune barre dessinée.
+    var viewportPx by remember { mutableIntStateOf(0) }
 
     /**
      * Extraction de l'article complet (voir `ensureFull`). En ouverture automatique (mode
@@ -325,7 +334,12 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                 }
         ) {
         Column(
-            Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)
+            Modifier.fillMaxSize().padding(16.dp)
+                // Taille de la fenêtre de défilement, relevée là où la colonne est mesurée
+                // (après la marge de page, avant `verticalScroll` qui, lui, voit le contenu
+                // entier) : c'est l'échelle de la barre de défilement.
+                .onSizeChanged { viewportPx = it.height }
+                .verticalScroll(scrollState)
                 .graphicsLayer { translationX = offsetX }
                 .pointerInput(doubleTap) {
                     detectTapGestures(onDoubleTap = { fireArticleAction(doubleTap) })
@@ -457,6 +471,21 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             val bannerLift = LocalBannerLift.current
             if (bannerLift > 0.dp) Spacer(Modifier.height(bannerLift + 20.dp))
         }
+        // Barre de défilement : au bord droit, dans la marge de 16 dp que le texte laisse libre.
+        // Elle vit hors de la colonne défilante pour deux raisons — ne pas partir avec le
+        // contenu quand le balayage horizontal translate la page, et ne pas suivre le
+        // défilement lui-même (elle le résume). Pendant un balayage, l'icône du geste occupe ce
+        // bord : la barre s'efface pour ne pas se superposer à elle.
+        if (!dragging) {
+            ArticleScrollBar(
+                scrollState,
+                viewportPx = viewportPx,
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(top = 16.dp, bottom = 16.dp, end = 5.dp)
+                    .width(3.dp)
+            )
+        }
         // Icône du geste pendant le balayage : flèche si le sens est la navigation (voisin
         // visé), sinon l'icône de l'action réglée dans ce sens — mêmes visuels que la bande
         // de balayage des listes. Rien n'est annoncé si le sens ne fait rien (voisin absent
@@ -509,6 +538,46 @@ private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): P
     "star" -> (if (starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
         (if (starred) "Retirer des favoris" else "Ajouter aux favoris")
     else -> null
+}
+
+/**
+ * Barre de défilement verticale de l'écran article (une `Column` n'en dessine pas).
+ *
+ * Tout est calculé dans la phase de dessin : un défilement ne redessine que la barre, la page
+ * n'est pas recomposée (`ScrollState.value` est lu dans `Canvas`).
+ *
+ * - `viewportPx` est la hauteur visible de l'article, `state.maxValue` le débordement. Le contenu
+ *   complet vaut donc `viewport + max`, ce qui donne la longueur du curseur (part visible) et sa
+ *   position (avancement). Rien ne dépasse l'écran : aucune barre.
+ * - Curseur de 36 dp minimum : sur un très long article, la proportion seule le réduirait à un
+ *   trait invisible. Même gabarit que la barre du journal (`ChangelogScrollBar`), en plus fin
+ *   (3 dp) pour ne pas peser sur la lecture : le texte garde sa marge de 16 dp.
+ */
+@Composable
+private fun ArticleScrollBar(state: ScrollState, viewportPx: Int, modifier: Modifier = Modifier) {
+    val thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+    val trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    Canvas(modifier) {
+        val max = state.maxValue
+        if (max <= 0 || viewportPx <= 0) return@Canvas
+        val content = viewportPx + max
+        val radius = size.width / 2f
+        drawRoundRect(
+            color = trackColor,
+            size = size,
+            cornerRadius = CornerRadius(radius, radius)
+        )
+        val thumbHeight = (size.height * viewportPx / content)
+            .coerceIn(36.dp.toPx().coerceAtMost(size.height), size.height)
+        val maxTop = (size.height - thumbHeight).coerceAtLeast(0f)
+        val progress = (state.value.toFloat() / max).coerceIn(0f, 1f)
+        drawRoundRect(
+            color = thumbColor,
+            topLeft = Offset(0f, maxTop * progress),
+            size = Size(size.width, thumbHeight),
+            cornerRadius = CornerRadius(radius, radius)
+        )
+    }
 }
 
 /** Visionneuse plein écran : tap pour fermer, pincement pour zoomer. */
