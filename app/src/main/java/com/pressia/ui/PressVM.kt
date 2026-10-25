@@ -290,7 +290,24 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         .map { it.ifBlank { null } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /**
+     * Filtre « non-lus seuls » du périmètre courant : chaque flux rouvre avec son dernier
+     * choix d'œil ([Prefs.UNREAD_ONLY_BY_FEED]) ; un périmètre jamais réglé repart sur
+     * « non-lus seuls ». L'écran Favoris garde son propre filtre local, hors persistance.
+     *
+     * **Déclaré avant `init`** : `refreshUnreadOnly()` y est appelé, et un `launch` sur
+     * `Dispatchers.Main.immediate` peut s'exécuter *pendant* la construction (DataStore répond
+     * sans suspendre quand ses préférences sont déjà lues dans ce processus). Déclaré plus bas,
+     * son délégué `mutableStateOf` était encore nul et l'application plantait au démarrage
+     * (NullPointerException dans `setUnreadOnly`).
+     */
+    var unreadOnly by mutableStateOf(true)
+
     init {
+        // Tout ce qui est appelé ici s'exécute pendant la construction : `viewModelScope` est
+        // `Dispatchers.Main.immediate`, donc un `launch` dont le corps ne suspend pas (DataStore
+        // déjà chargé, `MutableStateFlow` avec valeur) tourne dans la foulée. Les propriétés
+        // qu'il assigne doivent donc être déclarées **plus haut** que ce bloc.
         viewModelScope.launch { migrateAppearance() }
         // Identifiants d'application Inoreader (`AppId` / `AppKey`) : l'API les exige sur
         // chaque appel, en plus de l'authentification utilisateur. Ils sont publiés au
@@ -383,13 +400,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun clearKept() {
         keepIds.value = emptySet()
     }
-
-    /**
-     * Filtre « non-lus seuls » du périmètre courant : chaque flux rouvre avec son dernier
-     * choix d'œil ([Prefs.UNREAD_ONLY_BY_FEED]) ; un périmètre jamais réglé repart sur
-     * « non-lus seuls ». L'écran Favoris garde son propre filtre local, hors persistance.
-     */
-    var unreadOnly by mutableStateOf(true)
 
     private fun unreadScopeKey(s: Scope): String = when {
         s.feedId != null -> "feed:${s.feedId}"

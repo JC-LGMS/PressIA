@@ -431,6 +431,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 
 ## Pièges connus — interface, navigation et gestes
 
+- **`PressVM` : une propriété assignée depuis `init` doit être déclarée avant lui.** Ce qui est
+  appelé dans le bloc s'exécute **pendant** la construction : `viewModelScope` est
+  `Dispatchers.Main.immediate`, et un corps qui ne suspend pas (DataStore répond sans suspendre
+  quand ses préférences sont déjà chargées dans le processus, `MutableStateFlow` avec valeur)
+  s'exécute dans la foulée. `unreadOnly`, déclaré bien plus bas, était ainsi affecté alors
+  que son délégué `mutableStateOf` était encore nul : plantage au démarrage
+  (`NullPointerException` dans `setUnreadOnly`).
+
 - Modifier une vue article = toucher `ArticleRow` dans `Components.kt`. Le `MetaLine` (source +
   étoile + heure) est partagé par les 4 vues ; lui donner un paramètre `modifier` plutôt que d'en
   dupliquer une variante.

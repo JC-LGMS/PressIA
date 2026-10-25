@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.7",
+        listOf(
+            ChangelogItem(
+                "2026-10-26",
+                "Démarrage : plus de plantage du filtre « non-lus seuls »",
+                "Le ViewModel affectait le filtre lu/non-lu avant que son état Compose ne " +
+                    "soit créé : quand les préférences étaient déjà en mémoire (processus " +
+                    "réveillé par la synchronisation, activité recréée), l'affectation se " +
+                    "faisait pendant la construction et l'application plantait " +
+                    "(NullPointerException). La propriété est désormais déclarée avant le " +
+                    "bloc d'initialisation, avec la règle en commentaire.",
+                time = "00:16"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.6",
         listOf(
             ChangelogItem(
