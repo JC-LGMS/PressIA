@@ -550,6 +550,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 
 ## Commit automatique
 
-`.opencode/plugins/autocommit.js` commit + push tout seul (`git add -A`, message
-`Auto-commit <date>`) à chaque `session.idle`. Un commit manuel avec un vrai message reste
-préférable quand l'utilisateur le demande.
+`.opencode/plugins/autocommit.js` (API des plugins OpenCode 2.x) sait commit + push tout seul
+(`git add -A`, message `Auto-commit <date>`) à chaque `session.idle`, mais il est **désactivé** :
+`ENABLED = false` en tête du fichier, et `setup()` rend la main sans rien écouter. Repasser la
+constante à `true` (puis redémarrer OpenCode) pour le réactiver. Un commit manuel avec un vrai
+message reste préférable quand l'utilisateur le demande.
