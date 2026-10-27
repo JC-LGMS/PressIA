@@ -458,7 +458,11 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   quand ses préférences sont déjà chargées dans le processus, `MutableStateFlow` avec valeur)
   s'exécute dans la foulée. `unreadOnly`, déclaré bien plus bas, était ainsi affecté alors
   que son délégué `mutableStateOf` était encore nul : plantage au démarrage
-  (`NullPointerException` dans `setUnreadOnly`).
+  (`NullPointerException` dans `setUnreadOnly`). Deux garde-fous depuis : la propriété est
+  déclarée avant `init`, et l'appel du démarrage passe par `launch(Dispatchers.Main)` — **sans**
+  `.immediate`, donc planifié après le constructeur. Un plantage qui revient sur ce chemin vient
+  d'un APK antérieur au correctif, pas du code : la trace mentionne alors
+  `refreshUnreadOnly` → `setUnreadOnly`, enchaînement qui n'existe plus.
 
 - Modifier une vue article = toucher `ArticleRow` dans `Components.kt`. Le `MetaLine` (source +
   étoile + heure) est partagé par les 4 vues ; lui donner un paramètre `modifier` plutôt que d'en

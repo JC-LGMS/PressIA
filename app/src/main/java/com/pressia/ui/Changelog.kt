@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.11",
+        listOf(
+            ChangelogItem(
+                "2026-10-27",
+                "Démarrage : le filtre « non-lus seuls » ne peut plus planter",
+                "Le réglage du filtre était lu dans le constructeur du ViewModel : quand " +
+                    "DataStore répond sans suspendre (préférences déjà en mémoire), " +
+                    "l'affectation tombait pendant la construction, avant que l'état Compose " +
+                    "n'existe — NullPointerException au démarrage. La propriété est déclarée " +
+                    "avant le bloc d'initialisation, et la lecture de démarrage est désormais " +
+                    "planifiée sur `Dispatchers.Main` sans `.immediate` : elle s'exécute après " +
+                    "le constructeur, quel que soit l'ordre des déclarations. `loaded`, affecté " +
+                    "par le premier remplissage, est remonté de la même façon.",
+                time = "12:45"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.10",
         listOf(
             ChangelogItem(

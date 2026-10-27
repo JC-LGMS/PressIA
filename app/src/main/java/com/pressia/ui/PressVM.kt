@@ -15,6 +15,7 @@ import com.pressia.data.local.*
 import com.pressia.data.statsRange
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -303,6 +304,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     var unreadOnly by mutableStateOf(true)
 
+    /** Vrai une fois le premier remplissage terminé : avant, vide = « pas encore chargé ». */
+    var loaded by mutableStateOf(false)
+        private set
+
     init {
         // Tout ce qui est appelé ici s'exécute pendant la construction : `viewModelScope` est
         // `Dispatchers.Main.immediate`, donc un `launch` dont le corps ne suspend pas (DataStore
@@ -339,7 +344,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             provider.drop(1).collect { p -> if (isLocalProvider(p)) repo.purgeQueue() }
         }
         // Filtre du périmètre de démarrage : sans cela l'œil partirait du défaut global.
-        refreshUnreadOnly()
+        //
+        // `Dispatchers.Main` **sans** `.immediate` : la tâche est planifiée pour la boucle
+        // suivante, donc après la fin du constructeur. `viewModelScope` étant en
+        // `Main.immediate`, un corps qui ne suspend pas (DataStore répond sans suspendre
+        // quand ses préférences sont déjà lues dans ce processus) s'exécutait *pendant* la
+        // construction et affectait `unreadOnly` avant que son délégué `mutableStateOf` ne
+        // soit créé : plantage au démarrage (NullPointerException dans `setUnreadOnly`),
+        // constaté sur téléphone. L'ordre des déclarations est désormais correct ; ce
+        // décalage garantit en plus qu'aucun autre réglage lu ici ne puisse être pris en
+        // défaut de la même façon.
+        viewModelScope.launch(Dispatchers.Main) { refreshUnreadOnly() }
     }
 
     /** Apparence choisie dans le drawer : auto / jour / nuit. */
@@ -449,10 +464,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     private fun unlockSync() { syncJobs = (syncJobs - 1).coerceAtLeast(0) }
 
     fun refresh() = viewModelScope.launch { refreshNow() }
-
-    /** Vrai une fois le premier remplissage terminé : avant, vide = « pas encore chargé ». */
-    var loaded by mutableStateOf(false)
-        private set
 
     /** Remplit l'état local depuis la base (version suspendable de [refresh]). */
     private suspend fun refreshNow() {
