@@ -812,6 +812,11 @@ internal fun youtubePlayerCss(): String = listOf(
     "#player-container-id,.player-container,ytm-player,.html5-video-player{" +
         "position:fixed!important;top:0!important;left:0!important;" +
         "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}" +
+        // L'image, elle, est dimensionnée en pixels par le script du site : elle reste petite au
+        // centre du bloc une dizaine de secondes, le temps que YouTube recalcule sa mise en page.
+        // On la fixe donc au bloc, `object-fit:contain` gardant ses proportions (bandes noires).
+        "video.video-stream{position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important;object-fit:contain!important}" +
         // `touch-action:none` : sans cela, Chromium prend le glissement horizontal pour un
         // défilement et envoie un `pointercancel` au bout de quelques pixels, ce qui annule le
         // geste en cours (constaté sur le lecteur : plus aucun `pointermove` après ~15 px).
@@ -841,24 +846,33 @@ private fun jsSingleQuoted(value: String): String =
     "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 /**
- * Barre d'avancée propre au lecteur, injectée dans la page.
+ * Contrôles du lecteur, injectés dans la page.
  *
- * Celle du lecteur mobile YouTube ne répond pas : sur l'émulateur, la barre est **peinte sur un
- * canevas** (le document ne contient ni `.ytp-progress-bar` ni `.ytp-chrome-bottom`), et un
- * appui ou un glissement dessus ne produit aucun `seeking` — au mieux l'image d'aperçu du temps
- * visé, la lecture reprenant ensuite au temps précédent. Aucune retouche de style ne peut donc
- * la rendre utilisable.
+ * Ceux du lecteur mobile YouTube **ne répondent pas** dans une WebView : leurs boutons sont
+ * peints sur un canevas (le document ne contient ni `.ytp-progress-bar`, ni `.ytp-chrome-bottom`,
+ * ni bouton atteignable) et aucun appui dessus n'a d'effet — ni pause, ni avance, ni la roue des
+ * réglages (constaté un par un sur l'émulateur, y compris après `touch-action:none`). Vouloir
+ * s'en servir, c'est n'avoir aucun contrôle du tout.
  *
- * On pose donc notre propre barre, fixée en bas de la vue (donc en bas du bloc vidéo) : c'est un
- * vrai élément du document, qui reçoit les gestes directement (`touch-action:none` +
- * `preventDefault`, ce qui évite le `pointercancel` de Chromium) et déplace `video.currentTime`.
- * Elle est réinjectée plusieurs fois : YouTube remplace une partie du document en cours de route.
+ * On pose donc les nôtres, en éléments réels du document, au-dessus du lecteur :
+ *  - une surface transparente sur toute la vidéo : un appui met en pause ou reprend, un double
+ *    appui à gauche/droite recule/avance de 10 s. Elle intercepte aussi les appuis destinés au
+ *    canevas, si bien que les contrôles morts de YouTube ne s'affichent plus ;
+ *  - une barre en bas : lecture/pause, temps écoulé et durée, barre d'avancée (appui et
+ *    glissement, `video.currentTime`), son, et roue des réglages ;
+ *  - un menu de réglages : vitesse de lecture et lecture en boucle.
+ *
+ * `touch-action:none` et `preventDefault`/`stopPropagation` sont indispensables : sans eux
+ * Chromium prend le glissement horizontal pour un défilement et l'annule (`pointercancel` au bout
+ * de ~15 px). Le script est rejoué plusieurs fois, YouTube remplaçant une partie du document.
  */
-internal fun youtubeSeekScript(): String = """
+internal fun youtubeControlsScript(): String = """
 (function () {
-  if (window.pressiaSeek) { window.pressiaSeek(); return; }
+  if (window.pressiaControls) { window.pressiaControls(); return; }
   var dragging = false;
-  var bar = null, track = null, fill = null, dot = null, label = null;
+  var userMuted = false;
+  var el = {};
+  var speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
   function video() { return document.querySelector('video'); }
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
@@ -867,77 +881,246 @@ internal fun youtubeSeekScript(): String = """
   }
   function paint() {
     var v = video();
-    if (!v || !fill) return;
+    if (!v || !el.fill) return;
+    // Le son est rétabli à chaque passe tant que l'utilisateur ne l'a pas coupé lui-même :
+    // YouTube coupe le son d'une vidéo qui n'a pas été lancée par un geste dans la page, et le
+    // recoupe en cours de lecture (changement de segment, reprise). Ici la lecture vient d'un
+    // appui franc sur l'affiche, donc le son est légitime.
+    if (!userMuted && (v.muted || v.volume < 0.05)) {
+      v.muted = false;
+      try { v.volume = 1; } catch (err) {}
+    }
     var d = v.duration;
     var p = (isFinite(d) && d > 0) ? Math.min(1, v.currentTime / d) : 0;
-    fill.style.width = (p * 100) + '%';
-    dot.style.left = (p * 100) + '%';
-    label.textContent = (isFinite(d) && d > 0) ? fmt(v.currentTime) + ' / ' + fmt(d) : '';
+    el.fill.style.width = (p * 100) + '%';
+    el.dot.style.left = (p * 100) + '%';
+    el.time.textContent = fmt(v.currentTime) + ' / ' + fmt(d);
+    if (v.paused) { el.play.className = ''; } else { el.play.className = 'on'; }
+    el.mute.textContent = userMuted ? '🔇' : '🔊';
   }
   function seek(x) {
     var v = video();
     if (!v || !isFinite(v.duration) || v.duration <= 0) return;
-    var r = track.getBoundingClientRect();
+    var r = el.track.getBoundingClientRect();
     var p = Math.min(1, Math.max(0, (x - r.left) / r.width));
     v.currentTime = p * v.duration;
     paint();
   }
+  function toggle() {
+    var v = video();
+    if (!v) return;
+    if (v.paused) { v.play(); } else { v.pause(); }
+    paint();
+  }
+  function nudge(d) {
+    var v = video();
+    if (!v || !isFinite(v.duration)) return;
+    v.currentTime = Math.min(v.duration, Math.max(0, v.currentTime + d));
+    paint();
+  }
   function stop(e) { e.preventDefault(); e.stopPropagation(); }
+  function speedItem(label, value) {
+    var b = document.createElement('div');
+    b.className = 'pressia-chip';
+    b.textContent = label;
+    b.dataset.value = value;
+    b.addEventListener('pointerdown', function (e) { stop(e); pickSpeed(value); }, true);
+    el.speedBox.appendChild(b);
+  }
+  function pickSpeed(value) {
+    var v = video();
+    if (!v) return;
+    v.playbackRate = parseFloat(value);
+    var items = el.speedBox.children;
+    for (var i = 0; i < items.length; i++) {
+      items[i].className = 'pressia-chip' +
+        (items[i].dataset.value === value ? ' pressia-on' : '');
+    }
+    el.menu.style.display = 'none';
+  }
   function build() {
     var v = video();
     if (!v) return false;
-    if (!document.getElementById('pressia-seek-css')) {
+    if (!document.getElementById('pressia-css')) {
       var st = document.createElement('style');
-      st.id = 'pressia-seek-css';
+      st.id = 'pressia-css';
       st.textContent = `
-#pressia-seek{position:fixed;left:0;right:0;bottom:0;height:34px;z-index:2147483647;
-  background:linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.78) 42%,rgba(0,0,0,.92) 100%);
-  touch-action:none;-webkit-user-select:none;user-select:none;font-family:Roboto,Arial,sans-serif}
-#pressia-seek-track{position:absolute;left:12px;right:12px;top:8px;height:4px;border-radius:2px;
+#pressia-shade{position:fixed;left:0;top:0;width:100vw;height:56.25vw;z-index:2147483640;
+  background:transparent;touch-action:none}
+#pressia-bar{position:fixed;left:0;right:0;bottom:0;height:50px;z-index:2147483641;
+  display:flex;flex-direction:column;color:#fff;touch-action:none;-webkit-user-select:none;
+  user-select:none;font-family:Roboto,Arial,sans-serif;-webkit-tap-highlight-color:transparent;
+  background:linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.55) 40%,rgba(0,0,0,.9) 100%)}
+#pressia-row{display:flex;align-items:center;height:34px;padding:0 10px;box-sizing:border-box}
+#pressia-play{position:relative;width:34px;height:34px;flex:0 0 auto;margin-right:6px}
+#pressia-play::before{content:'';position:absolute;left:11px;top:9px;border-left:13px solid #fff;
+  border-top:8px solid transparent;border-bottom:8px solid transparent}
+#pressia-play.on::before{display:none}
+#pressia-play.on::after{content:'';position:absolute;left:10px;top:9px;width:5px;height:16px;
+  background:#fff;box-shadow:9px 0 0 #fff}
+#pressia-time{font-size:11px;opacity:.92;white-space:nowrap;flex:0 0 auto}
+#pressia-gap{flex:1 1 auto}
+#pressia-mute{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
+#pressia-gear{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
+#pressia-line{position:relative;height:16px;margin:0 12px;flex:0 0 auto}
+#pressia-track{position:absolute;left:0;right:0;top:6px;height:4px;border-radius:2px;
   background:rgba(255,255,255,.35)}
-#pressia-seek-fill{position:absolute;left:0;top:0;height:100%;width:0;background:#f44;border-radius:2px}
-#pressia-seek-dot{position:absolute;top:50%;left:0;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+#pressia-fill{position:absolute;left:0;top:0;height:100%;width:0;background:#f44;border-radius:2px}
+#pressia-dot{position:absolute;top:50%;left:0;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
   border-radius:50%;background:#f44}
-#pressia-seek-time{position:absolute;right:12px;bottom:1px;font-size:10px;
-  color:rgba(255,255,255,.85)}
+#pressia-menu{position:fixed;right:8px;bottom:54px;z-index:2147483642;display:none;
+  padding:8px 10px;border-radius:8px;background:rgba(26,26,26,.97);color:#fff;
+  font-family:Roboto,Arial,sans-serif;font-size:11px;touch-action:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.55)}
+#pressia-menu .pressia-head{font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+  color:rgba(255,255,255,.55);margin-bottom:3px}
+#pressia-speeds{display:flex;gap:4px}
+#pressia-speeds .pressia-chip{padding:5px 6px;border-radius:5px;font-size:11px;
+  background:rgba(255,255,255,.14)}
+#pressia-speeds .pressia-on{background:rgba(244,68,68,.9)}
+#pressia-loop{display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;
+  border-top:1px solid rgba(255,255,255,.15)}
+#pressia-loop.pressia-on{color:#f66}
+.ytp-unmute{display:none!important}
 `;
       (document.head || document.documentElement).appendChild(st);
     }
-    if (!document.getElementById('pressia-seek')) {
-      bar = document.createElement('div');
-      bar.id = 'pressia-seek';
-      track = document.createElement('div');
-      track.id = 'pressia-seek-track';
-      fill = document.createElement('div');
-      fill.id = 'pressia-seek-fill';
-      dot = document.createElement('div');
-      dot.id = 'pressia-seek-dot';
-      label = document.createElement('div');
-      label.id = 'pressia-seek-time';
+    if (!document.getElementById('pressia-bar')) {
+      var shade = document.createElement('div');
+      shade.id = 'pressia-shade';
+      var bar = document.createElement('div');
+      bar.id = 'pressia-bar';
+      var row = document.createElement('div');
+      row.id = 'pressia-row';
+      var play = document.createElement('div');
+      play.id = 'pressia-play';
+      var time = document.createElement('div');
+      time.id = 'pressia-time';
+      var gap = document.createElement('div');
+      gap.id = 'pressia-gap';
+      var mute = document.createElement('div');
+      mute.id = 'pressia-mute';
+      var gear = document.createElement('div');
+      gear.id = 'pressia-gear';
+      gear.textContent = '⚙';
+      var line = document.createElement('div');
+      line.id = 'pressia-line';
+      var track = document.createElement('div');
+      track.id = 'pressia-track';
+      var fill = document.createElement('div');
+      fill.id = 'pressia-fill';
+      var dot = document.createElement('div');
+      dot.id = 'pressia-dot';
       track.appendChild(fill);
       track.appendChild(dot);
-      bar.appendChild(track);
-      bar.appendChild(label);
-      bar.addEventListener('touchstart', stop, { passive: false });
-      bar.addEventListener('touchmove', stop, { passive: false });
-      bar.addEventListener('pointerdown', function (e) { dragging = true; seek(e.clientX); stop(e); }, true);
-      bar.addEventListener('pointermove', function (e) { if (dragging) seek(e.clientX); stop(e); }, true);
-      bar.addEventListener('pointerup', function (e) { dragging = false; seek(e.clientX); stop(e); }, true);
-      bar.addEventListener('pointercancel', function (e) { dragging = false; stop(e); }, true);
+      line.appendChild(track);
+      row.appendChild(play);
+      row.appendChild(time);
+      row.appendChild(gap);
+      row.appendChild(mute);
+      row.appendChild(gear);
+      bar.appendChild(row);
+      bar.appendChild(line);
+      var menu = document.createElement('div');
+      menu.id = 'pressia-menu';
+      var head = document.createElement('div');
+      head.className = 'pressia-head';
+      head.textContent = 'Vitesse';
+      menu.appendChild(head);
+      var speedBox = document.createElement('div');
+      speedBox.id = 'pressia-speeds';
+      menu.appendChild(speedBox);
+      var loop = document.createElement('div');
+      loop.id = 'pressia-loop';
+      loop.textContent = 'Lecture en boucle';
+      menu.appendChild(loop);
+
+      el.shade = shade; el.bar = bar; el.play = play; el.time = time; el.mute = mute;
+      el.gear = gear; el.line = line; el.track = track; el.fill = fill; el.dot = dot;
+      el.menu = menu; el.speedBox = speedBox; el.loop = loop;
+
+      // Appui simple : lecture/pause. Double appui : -10 s à gauche, +10 s à droite.
+      var downX = 0, downY = 0, downT = 0, lastTap = 0, tapTimer = null;
+      shade.addEventListener('pointerdown', function (e) {
+        downX = e.clientX; downY = e.clientY; downT = Date.now(); stop(e);
+      }, true);
+      shade.addEventListener('pointermove', function (e) { stop(e); }, true);
+      shade.addEventListener('pointerup', function (e) {
+        stop(e);
+        // Un appui à côté du menu le referme, sans toucher à la lecture.
+        if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+        if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 12) return;
+        if (Date.now() - downT > 700) return;
+        var now = Date.now();
+        if (now - lastTap < 320) {
+          clearTimeout(tapTimer);
+          lastTap = 0;
+          nudge(e.clientX < window.innerWidth / 2 ? -10 : 10);
+          return;
+        }
+        lastTap = now;
+        tapTimer = setTimeout(toggle, 320);
+      }, true);
+      shade.addEventListener('pointercancel', function (e) { stop(e); }, true);
+
+      play.addEventListener('pointerdown', function (e) { stop(e); toggle(); }, true);
+      mute.addEventListener('pointerdown', function (e) {
+        stop(e);
+        var v2 = video();
+        if (!v2) return;
+        userMuted = !userMuted;
+        v2.muted = userMuted;
+        paint();
+      }, true);
+      gear.addEventListener('pointerdown', function (e) {
+        stop(e);
+        menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
+      }, true);
+      loop.addEventListener('pointerdown', function (e) {
+        stop(e);
+        var v3 = video();
+        if (!v3) return;
+        v3.loop = !v3.loop;
+        loop.className = (v3.loop ? 'pressia-on' : '');
+        menu.style.display = 'none';
+      }, true);
+
+      track.addEventListener('touchstart', stop, { passive: false });
+      track.addEventListener('touchmove', stop, { passive: false });
+      track.addEventListener('pointerdown', function (e) {
+        dragging = true; seek(e.clientX); stop(e);
+      }, true);
+      track.addEventListener('pointermove', function (e) {
+        if (dragging) seek(e.clientX);
+        stop(e);
+      }, true);
+      track.addEventListener('pointerup', function (e) {
+        dragging = false; seek(e.clientX); stop(e);
+      }, true);
+      track.addEventListener('pointercancel', function (e) { dragging = false; stop(e); }, true);
+
+      for (var i = 0; i < speeds.length; i++) {
+        speedItem(speeds[i] + '×', String(speeds[i]));
+      }
+
+      document.body.appendChild(shade);
       document.body.appendChild(bar);
+      document.body.appendChild(menu);
       v.addEventListener('timeupdate', paint);
+      v.addEventListener('play', paint);
+      v.addEventListener('pause', paint);
+      v.addEventListener('volumechange', paint);
       v.addEventListener('loadedmetadata', paint);
       setInterval(paint, 500);
     }
     paint();
     return true;
   }
-  window.pressiaSeek = function () { if (!build()) setTimeout(build, 700); };
-  window.pressiaSeek();
-  for (var i = 1; i <= 10; i++) setTimeout(build, i * 900);
+  window.pressiaControls = function () { if (!build()) setTimeout(build, 700); };
+  window.pressiaControls();
+  for (var k = 1; k <= 10; k++) setTimeout(build, k * 900);
 })()
 """
-
 /** Image d'affiche d'une vidéo YouTube (hqdefault), ou null si l'URL n'en est pas une. */
 fun youtubePosterUrl(url: String): String? =
     youtubeVideoId(url)?.let { "https://img.youtube.com/vi/$it/hqdefault.jpg" }
@@ -1286,7 +1469,7 @@ fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifie
                                 loaded = true
                                 // La page est un site complet : on n'en garde que le lecteur.
                                 view.evaluateJavascript(youtubePlayerScript(), null)
-                                view.evaluateJavascript(youtubeSeekScript(), null)
+                                view.evaluateJavascript(youtubeControlsScript(), null)
                             }
                         }
                     }

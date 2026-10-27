@@ -245,18 +245,34 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     chargée, si bien que la WebView créée à l'affichage de l'article jouait toute seule. Le bloc
     montre l'affiche (`VideoPoster`), et le tap seul crée la WebView ; le délai de secours de
     20 s ne court qu'à partir de là.
-  - **Barre d'avancée : la sienne, injectée dans la page** (`youtubeSeekScript`). Celle du
-    lecteur mobile est **peinte sur un canevas** : le document ne contient ni `.ytp-progress-bar`
-    ni `.ytp-chrome-bottom`, et un appui ou un glissement dessus ne produit **aucun** `seeking`
-    (au mieux l'image d'aperçu du temps visé, la lecture reprenant au temps précédent). Aucun
-    style ne peut donc la rendre utilisable. La nôtre est un vrai élément du document, fixé en
-    bas de la vue (bas du bloc 16/9), qui reçoit les gestes lui-même (`touch-action:none`,
-    `preventDefault`, `stopPropagation`) et écrit `video.currentTime` ; son remplissage suit
-    `timeupdate`. Deux autres mesures, à ne pas défaire : `touch-action:none` sur la page évite
-    que Chromium prenne un glissement horizontal pour un défilement et l'annule par un
-    `pointercancel` au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage
-    d'article (`detectArticleSwipe`, repère `playerGesture`) — sinon tirer la barre changeait
-    d'article.
+  - **Contrôles : les nôtres, injectés dans la page** (`youtubeControlsScript`). Ceux du lecteur
+    mobile sont **peints sur un canevas** : le document ne contient ni `.ytp-progress-bar`, ni
+    `.ytp-chrome-bottom`, ni bouton atteignable, et aucun appui dessus n'a d'effet — ni la pause,
+    ni la roue des réglages, ni la barre d'avancée (au mieux l'image d'aperçu du temps visé, la
+    lecture reprenant au temps précédent), y compris après `touch-action:none` et avec le décalage
+    de ~90 px des appuis dans une WebView (constaté un par un sur l'émulateur). Aucun style ne peut
+    donc les rendre utilisables : s'en servir, c'est n'avoir aucun contrôle du tout. Les nôtres
+    sont de vrais éléments du document, au-dessus du lecteur :
+    - une surface transparente sur toute la vidéo (`#pressia-shade`) : appui simple = lecture/pause,
+      double appui à gauche/droite = ∓10 s. Elle intercepte les appuis destinés au canevas, si
+      bien que les contrôles morts de YouTube ne s'affichent plus ; un appui à côté du menu ouvert
+      le referme sans toucher à la lecture ;
+    - une barre en bas (`#pressia-bar`, 50 px) : lecture/pause, temps écoulé / durée, barre
+      d'avancée, son, roue ;
+    - un menu (`#pressia-menu`) : vitesses 0,5× à 2× (`video.playbackRate`) et « Lecture en
+      boucle » (`video.loop`). Il tient dans le bloc (la vue ne fait que 213 px de haut) : rester
+      compact, un menu qui déborde sort de l'écran.
+    Deux mesures, à ne pas défaire : `touch-action:none` (page, surface et barre) évite que
+    Chromium prenne un glissement horizontal pour un défilement et l'annule par un `pointercancel`
+    au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage d'article
+    (`detectArticleSwipe`, repère `playerGesture`) — sinon tirer la barre changeait d'article.
+  - **Le son est tenu par l'application** : le lecteur démarre muet (politique de lecture
+    automatique) et le recoupe parfois en cours de lecture (changement de segment, reprise). Comme
+    la lecture vient d'un appui franc sur l'affiche, `paint()` (appelé toutes les 500 ms et sur les
+    événements du média) **rétablit `muted = false` et `volume = 1`** tant que l'utilisateur n'a pas
+    coupé le son lui-même — le bouton 🔊 de la barre tient ce drapeau (`userMuted`) et l'icône
+    affichée le suit, pas l'état du média. Un simple écouteur `playing` ne suffisait pas : le son
+    revenait puis se recoupait seul.
   - **Écran noir à l'appui** : la WebView était peinte en noir (`setBackgroundColor(BLACK)`)
     avant d'avoir la taille de son bloc, ce qui noircissait **tout** l'écran une seconde. Fond
     transparent, noir dû à la boîte qui l'entoure (`clipToBounds`) et à la page.

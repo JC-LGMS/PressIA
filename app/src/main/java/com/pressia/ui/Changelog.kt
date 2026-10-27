@@ -47,6 +47,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.13",
+        listOf(
+            ChangelogItem(
+                "2026-10-27",
+                "Vidéo YouTube : des contrôles qui répondent",
+                "Les contrôles du lecteur mobile YouTube sont peints sur un canevas : pause, " +
+                    "réglages et barre d'avancée restaient sans effet, quel que soit l'endroit " +
+                    "où l'on appuyait. Le lecteur reçoit désormais ses propres contrôles, en " +
+                    "éléments réels de la page : un appui sur l'image met en pause ou reprend, " +
+                    "un double appui à gauche/droite recule ou avance de 10 s, et une barre en " +
+                    "bas donne lecture/pause, temps écoulé et durée, avancée (appui et " +
+                    "glissement), son et réglages. Le menu des réglages propose la vitesse de " +
+                    "lecture (0,5× à 2×) et la lecture en boucle. Le son reste actif même " +
+                    "lorsque le lecteur le coupe de lui-même, sauf si on le coupe depuis la " +
+                    "barre.",
+                time = "20:50"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.12",
         listOf(
             ChangelogItem(
