@@ -1,6 +1,6 @@
 # PressIA — successeur moderne de Press (lecteur Feedly/offline)
 
-UI et fonctions reprises de **Press 1.5.4** (APK d'origine, package `com.twentyfivesquares.press`, non distribué avec ce code) :
+UI et fonctions inspirés de **Press 1.5.4** :
 - Drawer catégories / abonnements, flux stream, lu/non-lu, favoris, thèmes clair/sombre (+AMOLED), partage système, hors-ligne complet, sync planifiée, Wi-Fi only, taille max du cache, images offline, taille police, vues liste/carte/magazine, article complet via double-tap (Readability maison).
 - Non dépendant de Feedly Pro : fonctionne avec le niveau gratuit Feedly Cloud v3, **Inoreader** (`https://www.inoreader.com/`), ou **100 % local RSS/Atom** sans compte.
 
@@ -20,7 +20,7 @@ Ajouts demandés :
 - `di` : `Locator` (instanciation manuelle du repository, partagée UI et WorkManager).
 - `ui` : Compose Material3 façon Press (drawer, stream, abonnements, article, recherche, doublons, stats, réglages, comptes) autour du `PressVM` ; `Components.kt` et `ExtraScreens.kt` regroupent les écrans secondaires.
 - Vues articles : liste / carte / magazine / **compacte** (favicon ou initiale, petits titres/dates).
-- Accueil au choix : **Abonnements** (dossiers + compteurs non-lus, façon Press) ou **Tous les flux**.
+- Accueil au choix : **Abonnements** (dossiers + compteurs non-lus) ou **Tous les flux**.
 - Bouton de raccourci par ligne au choix : favori / lu-non-lu / partage.
 - Article : bouton marquer non-lu, site d'origine, drawer accessible, pas de titre redondant.
 - Réglages : tailles de police titres/dates/textes, thème aussi dans le drawer, cache jusqu'à 10 000 articles/flux, fréquence de sync séparée.
@@ -35,8 +35,7 @@ l'utilisateur y saisit ses identifiants habituels (e-mail/mot de passe, Google, 
 puis PressIA récupère automatiquement le jeton de session (stockage web, cookies en filet),
 le vérifie, enregistre le compte et revient. Pas de `FEEDLY_CLIENT_ID` à créer : ce flux
 utilise le `client_id=feedly` public (+ PKCE).
-**Inoreader et variante OAuth générique** (`OAuthWebViewScreen`, comme le `FeedlyOAuthActivity`
-du Press d'origine) : la WebView charge la page d'autorisation, intercepte le retour
+**Inoreader et variante OAuth générique** : la WebView charge la page d'autorisation, intercepte le retour
 `pressia://oauth/…`, échange le code contre un jeton (`OAuth.feedlyToken` / `inoreaderToken`)
 et enregistre le compte. Ce flux-ci exige des identifiants d'application, renseignez :
 ```
@@ -56,14 +55,3 @@ $env:FEEDLY_CLIENT_ID="..."
 ```
 
 Min SDK 26, target/compile 34, Kotlin 2.0, Compose BOM 2024.10, Material3 1.3, Room 2.6.1, Paging 3.3, DataStore 1.1, WorkManager 2.9, Coil 2.6, Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.
-
-## Correspondance Press → PressIA
-| Press (APK) | PressIA |
-|---|---|
-| `HomeActivity` + drawer labels | `PressDrawer` + `StreamScaffold` |
-| `FeedActivity` / WebView article | `ArticleScreen` (double-tap Readability, partage) |
-| `SearchActivity` | `SearchScreen` (périmètre) |
-| Readability toggle | `Readability.fetchFullResult` : `Ok` / `Blocked` (anti-robot, paywall, page JS — notice en français, extrait RSS conservé) / `Failed` |
-| `SyncService` + `SyncBroadcastReceiver` | `SyncWorker` + `pushQueue`/`syncDown` |
-| Provider SQLite `PressProvider` | Room `PressDatabase` |
-| Prefs (font, theme, wifi, cache) | DataStore `Prefs` + `SettingsScreen` |
