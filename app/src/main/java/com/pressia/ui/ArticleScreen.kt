@@ -5,7 +5,8 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -20,11 +21,14 @@ import androidx.compose.material3.*
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -85,6 +89,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val doubleTap by vm.doubleTapAction.collectAsState()
     val swipeLeft by vm.articleSwipeLeft.collectAsState()
     val swipeRight by vm.articleSwipeRight.collectAsState()
+    // Un doigt posé sur un lecteur (barre d'avancée, pincer, plein écran) lui appartient : le
+    // balayage d'article ne doit pas le confisquer, sinon tirer la barre de la vidéo change
+    // d'article au lieu d'avancer dans la vidéo.
+    val inPlayer = remember { mutableStateOf(false) }
 
     // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
     // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
@@ -301,9 +309,13 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             Modifier.padding(pad).fillMaxSize()
                 .pointerInput(prevId, nextId, swipeLeft, swipeRight) {
                     if (prevId != null || nextId != null || swipeLeft != "none" || swipeRight != "none") {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragging = true; dragX = 0f },
-                        onHorizontalDrag = { change, amount ->
+                    detectArticleSwipe(
+                        // Un doigt posé sur un lecteur ne déclenche pas le balayage : sans cette
+                        // exception, le moindre déplacement horizontal lui envoyait un
+                        // `pointercancel` et la barre d'avancée de la vidéo ne répondait plus.
+                        onPlayer = { inPlayer.value },
+                        onStart = { dragging = true; dragX = 0f },
+                        onDrag = { change, amount ->
                             change.consume()
                             // Course brute du doigt : sert au relâchement, même quand le contenu ne
                             // suit pas (voir `dragX`).
@@ -313,7 +325,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                             // Le contenu ne suit le doigt que si le geste aboutit à quelque chose.
                             offsetX = if (go) dragX else 0f
                         },
-                        onDragEnd = {
+                        onEnd = {
                             dragging = false
                             when {
                                 dragX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
@@ -328,7 +340,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                             offsetX = 0f
                             dragX = 0f
                         },
-                        onDragCancel = { dragging = false; offsetX = 0f; dragX = 0f }
+                        onCancel = { dragging = false; offsetX = 0f; dragX = 0f }
                     )
                     }
                 }
@@ -450,6 +462,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         poster = b.poster,
                         embed = b.embed,
                         modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+                            .playerGesture(inPlayer)
                     )
                 }
             }
@@ -792,13 +805,18 @@ fun youtubeReferer(): String = "https://m.youtube.com/"
  */
 internal fun youtubePlayerCss(): String = listOf(
     "html,body{margin:0!important;padding:0!important;overflow:hidden!important;" +
-        "background:#000!important}",
+        "background:#000!important;touch-action:none!important}",
     "ytm-header-renderer,ytm-app-header,ytm-mobile-topbar-renderer,#header,header," +
         "ytm-slim-video-metadata-section-renderer,ytm-watch-metadata," +
         "ytm-comment-section-renderer,.watch-below-the-player{display:none!important}",
     "#player-container-id,.player-container,ytm-player,.html5-video-player{" +
         "position:fixed!important;top:0!important;left:0!important;" +
-        "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}",
+        "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}" +
+        // `touch-action:none` : sans cela, Chromium prend le glissement horizontal pour un
+        // défilement et envoie un `pointercancel` au bout de quelques pixels, ce qui annule le
+        // geste en cours (constaté sur le lecteur : plus aucun `pointermove` après ~15 px).
+        ".html5-video-player,.ytp-chrome-bottom,.ytp-progress-bar-container," +
+        ".ytp-progress-bar,video{touch-action:none!important}",
 ).joinToString("")
 
 /**
@@ -821,6 +839,104 @@ internal fun youtubePlayerScript(): String =
 /** Chaîne Kotlin -> littéral JavaScript entre apostrophes. */
 private fun jsSingleQuoted(value: String): String =
     "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+/**
+ * Barre d'avancée propre au lecteur, injectée dans la page.
+ *
+ * Celle du lecteur mobile YouTube ne répond pas : sur l'émulateur, la barre est **peinte sur un
+ * canevas** (le document ne contient ni `.ytp-progress-bar` ni `.ytp-chrome-bottom`), et un
+ * appui ou un glissement dessus ne produit aucun `seeking` — au mieux l'image d'aperçu du temps
+ * visé, la lecture reprenant ensuite au temps précédent. Aucune retouche de style ne peut donc
+ * la rendre utilisable.
+ *
+ * On pose donc notre propre barre, fixée en bas de la vue (donc en bas du bloc vidéo) : c'est un
+ * vrai élément du document, qui reçoit les gestes directement (`touch-action:none` +
+ * `preventDefault`, ce qui évite le `pointercancel` de Chromium) et déplace `video.currentTime`.
+ * Elle est réinjectée plusieurs fois : YouTube remplace une partie du document en cours de route.
+ */
+internal fun youtubeSeekScript(): String = """
+(function () {
+  if (window.pressiaSeek) { window.pressiaSeek(); return; }
+  var dragging = false;
+  var bar = null, track = null, fill = null, dot = null, label = null;
+  function video() { return document.querySelector('video'); }
+  function fmt(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    var m = Math.floor(s / 60), r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+  function paint() {
+    var v = video();
+    if (!v || !fill) return;
+    var d = v.duration;
+    var p = (isFinite(d) && d > 0) ? Math.min(1, v.currentTime / d) : 0;
+    fill.style.width = (p * 100) + '%';
+    dot.style.left = (p * 100) + '%';
+    label.textContent = (isFinite(d) && d > 0) ? fmt(v.currentTime) + ' / ' + fmt(d) : '';
+  }
+  function seek(x) {
+    var v = video();
+    if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+    var r = track.getBoundingClientRect();
+    var p = Math.min(1, Math.max(0, (x - r.left) / r.width));
+    v.currentTime = p * v.duration;
+    paint();
+  }
+  function stop(e) { e.preventDefault(); e.stopPropagation(); }
+  function build() {
+    var v = video();
+    if (!v) return false;
+    if (!document.getElementById('pressia-seek-css')) {
+      var st = document.createElement('style');
+      st.id = 'pressia-seek-css';
+      st.textContent = `
+#pressia-seek{position:fixed;left:0;right:0;bottom:0;height:34px;z-index:2147483647;
+  background:linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.78) 42%,rgba(0,0,0,.92) 100%);
+  touch-action:none;-webkit-user-select:none;user-select:none;font-family:Roboto,Arial,sans-serif}
+#pressia-seek-track{position:absolute;left:12px;right:12px;top:8px;height:4px;border-radius:2px;
+  background:rgba(255,255,255,.35)}
+#pressia-seek-fill{position:absolute;left:0;top:0;height:100%;width:0;background:#f44;border-radius:2px}
+#pressia-seek-dot{position:absolute;top:50%;left:0;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+  border-radius:50%;background:#f44}
+#pressia-seek-time{position:absolute;right:12px;bottom:1px;font-size:10px;
+  color:rgba(255,255,255,.85)}
+`;
+      (document.head || document.documentElement).appendChild(st);
+    }
+    if (!document.getElementById('pressia-seek')) {
+      bar = document.createElement('div');
+      bar.id = 'pressia-seek';
+      track = document.createElement('div');
+      track.id = 'pressia-seek-track';
+      fill = document.createElement('div');
+      fill.id = 'pressia-seek-fill';
+      dot = document.createElement('div');
+      dot.id = 'pressia-seek-dot';
+      label = document.createElement('div');
+      label.id = 'pressia-seek-time';
+      track.appendChild(fill);
+      track.appendChild(dot);
+      bar.appendChild(track);
+      bar.appendChild(label);
+      bar.addEventListener('touchstart', stop, { passive: false });
+      bar.addEventListener('touchmove', stop, { passive: false });
+      bar.addEventListener('pointerdown', function (e) { dragging = true; seek(e.clientX); stop(e); }, true);
+      bar.addEventListener('pointermove', function (e) { if (dragging) seek(e.clientX); stop(e); }, true);
+      bar.addEventListener('pointerup', function (e) { dragging = false; seek(e.clientX); stop(e); }, true);
+      bar.addEventListener('pointercancel', function (e) { dragging = false; stop(e); }, true);
+      document.body.appendChild(bar);
+      v.addEventListener('timeupdate', paint);
+      v.addEventListener('loadedmetadata', paint);
+      setInterval(paint, 500);
+    }
+    paint();
+    return true;
+  }
+  window.pressiaSeek = function () { if (!build()) setTimeout(build, 700); };
+  window.pressiaSeek();
+  for (var i = 1; i <= 10; i++) setTimeout(build, i * 900);
+})()
+"""
 
 /** Image d'affiche d'une vidéo YouTube (hqdefault), ou null si l'URL n'en est pas une. */
 fun youtubePosterUrl(url: String): String? =
@@ -951,6 +1067,84 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
 }
 
 /**
+ * Balayage horizontal de l'écran article, avec une exception : le geste qui commence sur un
+ * lecteur appartient au lecteur.
+ *
+ * `detectHorizontalDragGestures` consomme le geste dès que la course horizontale dépasse le
+ * seuil : tirer la barre d'avancée d'une vidéo faisait alors passer à l'article suivant, et le
+ * lecteur ne voyait jamais la fin de son geste. Ici, un geste né sur un lecteur est suivi
+ * jusqu'au relâchement sans rien consommer ; les autres sont traités comme avant (seuil
+ * horizontal, la course verticale reste au défilement).
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectArticleSwipe(
+    onPlayer: () -> Boolean,
+    onStart: () -> Unit,
+    onDrag: (androidx.compose.ui.input.pointer.PointerInputChange, Float) -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        if (onPlayer()) {
+            // Doigt sur un lecteur : on laisse filer le flux tel quel.
+            do {
+                val event = awaitPointerEvent()
+            } while (event.changes.any { it.pressed })
+            return@awaitEachGesture
+        }
+        val slop = viewConfiguration.touchSlop
+        var totalX = 0f
+        var totalY = 0f
+        var started = false
+        while (true) {
+            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+            val dx = change.positionChange().x
+            if (!started) {
+                totalX += dx
+                totalY += change.positionChange().y
+                when {
+                    // Course verticale : c'est le défilement de l'article, on rend la main.
+                    kotlin.math.abs(totalY) > slop && kotlin.math.abs(totalY) > kotlin.math.abs(totalX) -> break
+                    kotlin.math.abs(totalX) > slop -> {
+                        started = true
+                        change.consume()
+                        onStart()
+                        onDrag(change, totalX)
+                        // La course d'amorçage est déjà comptée : ne pas la rejouer image par image.
+                        totalX = 0f
+                    }
+                }
+            } else {
+                change.consume()
+                onDrag(change, dx)
+            }
+        }
+        if (started) onEnd() else onCancel()
+    }
+}
+
+/**
+ * Signale « un doigt est posé sur le lecteur » pendant toute la durée du geste.
+ *
+ * Le balayage horizontal de l'écran article enveloppe la colonne entière : sans ce repère,
+ * tirer la barre d'avancée de la vidéo faisait passer à l'article suivant (constaté sur
+ * l'émulateur) et le lecteur ne voyait jamais la fin de son geste. On observe la passe
+ * [PointerEventPass.Initial] : l'événement arrive avant que la WebView ou le `MediaController`
+ * ne le consomme, et rien n'est intercepté — le lecteur reste maître du geste.
+ */
+private fun Modifier.playerGesture(active: MutableState<Boolean>) =
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val pressed = event.changes.any { it.pressed }
+                if (pressed != active.value) active.value = pressed
+            }
+        }
+    }
+
+/**
  * Affiche d'une vidéo, en attendant un appui.
  *
  * Rien ne doit se lire sans geste : ce bloc montre l'image et le bouton de lecture, et c'est
@@ -1062,45 +1256,56 @@ fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifie
         return
     }
 
-    AndroidView(
-        factory = { ctx ->
-            android.webkit.WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                settings.setSupportZoom(false)
-                settings.builtInZoomControls = false
-                settings.displayZoomControls = false
-                isHorizontalScrollBarEnabled = false
-                isVerticalScrollBarEnabled = false
-                setBackgroundColor(android.graphics.Color.BLACK)
-                webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView, url: String) {
-                        view.post {
-                            loaded = true
-                            // La page est un site complet : on n'en garde que le lecteur.
-                            view.evaluateJavascript(youtubePlayerScript(), null)
-                        }
-                    }
-                }
-                webView = this
-                // En-tête Referer explicite : un chargement de premier niveau n'en envoie aucun.
-                loadUrl(playerUrl, mapOf("Referer" to youtubeReferer()))
-            }
-        },
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(16f / 9f)
-            .background(androidx.compose.ui.graphics.Color.Black),
-        onRelease = { wv ->
-            // `about:blank` d'abord : la WebView est dans une colonne défilable, la stopper
-            // avant sa destruction évite qu'elle continue de charger en arrière-plan.
-            wv.stopLoading()
-            wv.loadUrl("about:blank")
-            wv.destroy()
-            webView = null
-        }
-    )
+            .background(androidx.compose.ui.graphics.Color.Black)
+            .clipToBounds()
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                android.webkit.WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    settings.setSupportZoom(false)
+                    settings.builtInZoomControls = false
+                    settings.displayZoomControls = false
+                    isHorizontalScrollBarEnabled = false
+                    isVerticalScrollBarEnabled = false
+                    // Fond **transparent**, pas noir : au moment où elle est créée, la WebView
+                    // n'a pas encore la taille de son bloc et peint alors tout l'écran en noir
+                    // (constaté : une image entièrement noire à l'appui). Le noir vient de la
+                    // boîte qui l'entoure, et de la page elle-même (`background:#000`, voir
+                    // [youtubePlayerCss]).
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    webViewClient = object : android.webkit.WebViewClient() {
+                        override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                            view.post {
+                                loaded = true
+                                // La page est un site complet : on n'en garde que le lecteur.
+                                view.evaluateJavascript(youtubePlayerScript(), null)
+                                view.evaluateJavascript(youtubeSeekScript(), null)
+                            }
+                        }
+                    }
+                    webView = this
+                    // En-tête Referer explicite : un chargement de premier niveau n'en envoie aucun.
+                    loadUrl(playerUrl, mapOf("Referer" to youtubeReferer()))
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+            onRelease = { wv ->
+                // `about:blank` d'abord : la WebView est dans une colonne défilable, la stopper
+                // avant sa destruction évite qu'elle continue de charger en arrière-plan.
+                wv.stopLoading()
+                wv.loadUrl("about:blank")
+                wv.destroy()
+                webView = null
+            }
+        )
+    }
 
     // Cycle de vie : la lecture YouTube se met en pause quand l'écran est quitté, et reprend
     // au retour — sans cela, le son continuait après avoir changé d'article.

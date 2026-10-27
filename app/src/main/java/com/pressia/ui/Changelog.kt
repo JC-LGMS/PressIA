@@ -47,6 +47,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.12",
+        listOf(
+            ChangelogItem(
+                "2026-10-27",
+                "Vidéo YouTube : la barre d'avancée avance vraiment",
+                "Sur le lecteur mobile, la barre d'avancée est peinte sur un canevas : " +
+                    "aucun appui ni glissement ne produisait de recherche (au mieux l'image du " +
+                    "temps visé, puis la lecture reprenait au temps précédent), et le document " +
+                    "ne contient aucun élément de barre à rendre cliquable. Une barre propre au " +
+                    "lecteur est donc injectée dans la page : elle reçoit les gestes directement " +
+                    "(et non le navigateur, qui annulait le geste par un `pointercancel` dès " +
+                    "quelques pixels de course) et déplace `video.currentTime`. Le bloc vidéo " +
+                    "n'est plus peint en noir avant d'avoir sa taille — plus de trame noire sur " +
+                    "tout l'écran à l'appui — et un doigt posé sur un lecteur n'est plus pris " +
+                    "pour un balayage d'article.",
+                time = "19:56"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.11",
         listOf(
             ChangelogItem(

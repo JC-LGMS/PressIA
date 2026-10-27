@@ -245,6 +245,21 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     chargée, si bien que la WebView créée à l'affichage de l'article jouait toute seule. Le bloc
     montre l'affiche (`VideoPoster`), et le tap seul crée la WebView ; le délai de secours de
     20 s ne court qu'à partir de là.
+  - **Barre d'avancée : la sienne, injectée dans la page** (`youtubeSeekScript`). Celle du
+    lecteur mobile est **peinte sur un canevas** : le document ne contient ni `.ytp-progress-bar`
+    ni `.ytp-chrome-bottom`, et un appui ou un glissement dessus ne produit **aucun** `seeking`
+    (au mieux l'image d'aperçu du temps visé, la lecture reprenant au temps précédent). Aucun
+    style ne peut donc la rendre utilisable. La nôtre est un vrai élément du document, fixé en
+    bas de la vue (bas du bloc 16/9), qui reçoit les gestes lui-même (`touch-action:none`,
+    `preventDefault`, `stopPropagation`) et écrit `video.currentTime` ; son remplissage suit
+    `timeupdate`. Deux autres mesures, à ne pas défaire : `touch-action:none` sur la page évite
+    que Chromium prenne un glissement horizontal pour un défilement et l'annule par un
+    `pointercancel` au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage
+    d'article (`detectArticleSwipe`, repère `playerGesture`) — sinon tirer la barre changeait
+    d'article.
+  - **Écran noir à l'appui** : la WebView était peinte en noir (`setBackgroundColor(BLACK)`)
+    avant d'avoir la taille de son bloc, ce qui noircissait **tout** l'écran une seconde. Fond
+    transparent, noir dû à la boîte qui l'entoure (`clipToBounds`) et à la page.
 - Une image **AOSP** d'émulateur n'a **aucun décodeur vidéo** (« no video decoder », « OMX service
   is not available ») : la lecture y échoue alors que le code est correct. L'AVD `Pixel_10` est une
   image `google_apis_playstore` ; en cas de doute, tester sur un appareil réel. L'image peut y
