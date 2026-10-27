@@ -902,30 +902,14 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
             YoutubePlayer(videoId = youtubeId, poster = poster)
         } else if (!playing.value) {
             // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
-            Box(
+            VideoPoster(
+                poster = poster,
+                label = if (embed) "Ouvrir la vidéo" else "Lancer la vidéo",
+                onTap = onTap,
                 modifier = Modifier
                     .fillMaxSize()
                     .aspectRatio(16f / 9f)
-                    .background(androidx.compose.ui.graphics.Color.Black)
-                    .clickable { onTap() }
-            ) {
-                if (poster != null) {
-                    coil.compose.AsyncImage(
-                        thumbModel(context, poster),
-                        null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Filled.PlayCircleFilled,
-                    contentDescription = if (embed) "Ouvrir la vidéo" else "Lancer la vidéo",
-                    tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier
-                        .size(56.dp)
-                        .align(androidx.compose.ui.Alignment.Center)
-                )
-            }
+            )
         } else {
             AndroidView(
                 factory = { ctx ->
@@ -967,6 +951,43 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
 }
 
 /**
+ * Affiche d'une vidéo, en attendant un appui.
+ *
+ * Rien ne doit se lire sans geste : ce bloc montre l'image et le bouton de lecture, et c'est
+ * l'appui qui décide de la suite (charger le lecteur, ou ouvrir la vidéo ailleurs).
+ */
+@Composable
+private fun VideoPoster(
+    poster: String?,
+    label: String,
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    Box(
+        modifier = modifier
+            .background(androidx.compose.ui.graphics.Color.Black)
+            .clickable { onTap() },
+        contentAlignment = androidx.compose.ui.Alignment.Center
+    ) {
+        if (poster != null) {
+            coil.compose.AsyncImage(
+                thumbModel(context, poster),
+                null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+            )
+        }
+        Icon(
+            imageVector = Icons.Filled.PlayCircleFilled,
+            contentDescription = label,
+            tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
+            modifier = Modifier.size(56.dp)
+        )
+    }
+}
+
+/**
  * Lecteur YouTube **dans l'application** : une WebView charge la page de lecture
  * (`m.youtube.com/watch?v=<id>`), qui affiche le lecteur officiel — contrôles, qualité,
  * reprise, plein écran, compte de l'utilisateur.
@@ -978,6 +999,9 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
  * l'intégration, et celui qui fonctionne.
  *
  * Points d'attention :
+ *  - **rien n'est chargé avant un appui** : l'affiche occupe le bloc, et la page de lecture
+ *    n'est demandée qu'au tap. La page démarre d'elle-même une fois chargée : sans cette
+ *    barrière, ouvrir un article suffisait à lancer la vidéo ;
  *  - JavaScript et le stockage local sont nécessaires au lecteur YouTube ;
  *  - `mediaPlaybackRequiresUserGesture = false` : sans cela, Chromium refuse de démarrer la
  *    lecture d'une vidéo déclenchée par la page ;
@@ -995,43 +1019,46 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
 fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    // Rien ne se lit avant un appui : la page de lecture démarre d'elle-même dès qu'elle est
+    // chargée (son et image), et un article qui s'ouvre ne doit pas se mettre à jouer.
+    var started by remember(videoId) { mutableStateOf(false) }
     var failed by remember(videoId) { mutableStateOf(false) }
     var loaded by remember(videoId) { mutableStateOf(false) }
     var webView by remember { mutableStateOf<android.webkit.WebView?>(null) }
     val playerUrl = remember(videoId) { youtubeEmbedUrl(videoId) }
 
+    // Affiche seule tant que l'utilisateur n'a pas appuyé : aucune WebView, aucun réseau.
+    if (!started) {
+        VideoPoster(
+            poster = poster,
+            label = "Lire la vidéo",
+            onTap = { started = true },
+            modifier = modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+        )
+        return
+    }
+
     // Filet de sécurité : si la page n'a pas fini de charger (réseau coupé, WebView muette), on
-    // propose l'ouverture dans le navigateur au lieu d'un écran noir.
-    LaunchedEffect(videoId) {
+    // propose l'ouverture dans le navigateur au lieu d'un écran noir. Le délai ne court qu'à
+    // partir du tap — avant, il n'y a rien à charger.
+    LaunchedEffect(videoId, started) {
+        if (!started) return@LaunchedEffect
         kotlinx.coroutines.delay(20_000)
         if (!loaded) failed = true
     }
 
     if (failed) {
         // Repli : l'affiche de la vidéo, un tap l'ouvre dans YouTube (navigateur externe).
-        Box(
+        VideoPoster(
+            poster = poster,
+            label = "Ouvrir la vidéo sur YouTube",
+            onTap = { openUrl(context, "https://www.youtube.com/watch?v=$videoId") },
             modifier = modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .background(androidx.compose.ui.graphics.Color.Black)
-                .clickable { openUrl(context, "https://www.youtube.com/watch?v=$videoId") },
-            contentAlignment = androidx.compose.ui.Alignment.Center
-        ) {
-            if (poster != null) {
-                coil.compose.AsyncImage(
-                    thumbModel(context, poster),
-                    null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                )
-            }
-            Icon(
-                imageVector = Icons.Filled.PlayCircleFilled,
-                contentDescription = "Ouvrir la vidéo sur YouTube",
-                tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.size(56.dp)
-            )
-        }
+        )
         return
     }
 

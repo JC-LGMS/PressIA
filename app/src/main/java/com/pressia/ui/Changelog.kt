@@ -47,6 +47,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.10",
+        listOf(
+            ChangelogItem(
+                "2026-10-27",
+                "Vidéo : plus de lecture à l'ouverture de l'article",
+                "Le lecteur YouTube intégré démarrait tout seul : la page de lecture se lance " +
+                    "d'elle-même une fois chargée, et la WebView était créée dès l'affichage de " +
+                    "l'article — le son partait avant tout geste. Rien n'est désormais chargé " +
+                    "sans appui : le bloc montre l'affiche de la vidéo, et c'est le tap qui " +
+                    "ouvre le lecteur. Le délai de secours (20 s) ne court plus qu'à partir de " +
+                    "ce tap, sinon il aurait déclaré l'échec pendant que l'affiche était encore " +
+                    "affichée. L'affiche et le bouton sont maintenant un seul composant, " +
+                    "partagé par le lecteur YouTube, la vidéo `<video>` et le repli « ouvrir " +
+                    "sur YouTube ».",
+                time = "08:39"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.9",
         listOf(
             ChangelogItem(

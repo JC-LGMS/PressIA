@@ -241,6 +241,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     sur l'affiche et le tap ouvrait l'application YouTube installée. Les autres services
     d'intégration (Vimeo, Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image
     YouTube déduite de l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
+    **Rien ne se charge avant un appui** : la page de lecture démarre d'elle-même une fois
+    chargée, si bien que la WebView créée à l'affichage de l'article jouait toute seule. Le bloc
+    montre l'affiche (`VideoPoster`), et le tap seul crée la WebView ; le délai de secours de
+    20 s ne court qu'à partir de là.
 - Une image **AOSP** d'émulateur n'a **aucun décodeur vidéo** (« no video decoder », « OMX service
   is not available ») : la lecture y échoue alors que le code est correct. L'AVD `Pixel_10` est une
   image `google_apis_playstore` ; en cas de doute, tester sur un appareil réel. L'image peut y
