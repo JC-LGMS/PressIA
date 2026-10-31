@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Text
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -34,8 +35,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -345,6 +349,10 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                     }
                 }
         ) {
+        // Texte sélectionnable (appui long, puis poignées ou « Tout sélectionner ») : la
+        // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
+        // défilement comme les badges de balayage restent en dehors.
+        SelectionContainer {
         Column(
             Modifier.fillMaxSize().padding(16.dp)
                 // Taille de la fenêtre de défilement, relevée là où la colonne est mesurée
@@ -429,7 +437,9 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             blocks.forEach { b ->
                 when (b) {
                     is ABlock.T -> Text(
-                        text = b.text,
+                        // Les liens du paragraphe sont dans le texte (annotations de lien) : la
+                        // phrase reste d'un seul tenant, le lien ne passe plus à la ligne.
+                        text = blockText(b, MaterialTheme.colorScheme.primary),
                         fontSize = fontSize.sp,
                         lineHeight = (fontSize + 6).sp,
                         style = MaterialTheme.typography.bodyLarge,
@@ -484,6 +494,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
             val bannerLift = LocalBannerLift.current
             if (bannerLift > 0.dp) Spacer(Modifier.height(bannerLift + 20.dp))
         }
+        }  // fin de SelectionContainer
         // Barre de défilement : au bord droit, dans la marge de 16 dp que le texte laisse libre.
         // Elle vit hors de la colonne défilante pour deux raisons — ne pas partir avec le
         // contenu quand le balayage horizontal translate la page, et ne pas suivre le
@@ -639,12 +650,55 @@ fun stripHtml(html: String): String {
 
 /** Blocs de contenu ordonnés (texte / images / liens / vidéos) pour un rendu fidèle. */
 sealed interface ABlock {
-    data class T(val text: String) : ABlock
+    /**
+     * Texte d'un bloc. Les liens qu'il contient sont **dans le flux** du texte : [links] donne
+     * leurs plages (index dans [text]) et leur cible, au lieu d'un bloc à part qui ferait passer
+     * le lien à la ligne au milieu de la phrase.
+     */
+    data class T(val text: String, val links: List<Link> = emptyList()) : ABlock
     data class I(val url: String) : ABlock
-    /** Lien hypertexte : le texte à afficher et l'URL cible (ouvre le navigateur externe). */
+    /** Lien isolé, hors de tout paragraphe : bloc à part entière, faute de texte où le couler. */
     data class L(val text: String, val url: String) : ABlock
     /** Vidéo embarquée (balise <video> ou <iframe> YouTube/Vimeo…). */
     data class V(val url: String, val poster: String?, val embed: Boolean = false) : ABlock
+
+    /** Plage cliquable d'un texte : [start] inclus, [end] exclu, et l'URL qu'elle ouvre. */
+    data class Link(val start: Int, val end: Int, val url: String)
+}
+
+/** Tags qui font un bloc de texte : chacun est coulé d'un seul tenant, liens compris. */
+private val ARTICLE_BLOCK_TAGS = setOf("p", "li", "h1", "h2", "h3", "pre", "blockquote")
+
+/**
+ * Texte d'un bloc avec ses liens : chaque plage ([ABlock.Link]) devient une **annotation de
+ * lien** — couleur dominante et soulignée, comme les autres liens de l'application — que Compose
+ * ouvre au tap par le gestionnaire d'URI du système (le même `ACTION_VIEW` que [openUrl]). Le
+ * texte reste d'un seul tenant : c'est ce qui garde le lien dans la phrase au lieu de le faire
+ * passer à la ligne. Construit une fois par texte ; la couleur du thème en fait partie.
+ */
+@Composable
+private fun blockText(b: ABlock.T, linkColor: Color): AnnotatedString = remember(b, linkColor) {
+    buildAnnotatedString {
+        val text = b.text
+        var at = 0
+        b.links.sortedBy { it.start }.forEach { l ->
+            val start = l.start.coerceIn(at, text.length)
+            val end = l.end.coerceIn(start, text.length)
+            if (start > at) append(text.substring(at, start))
+            if (end > start) {
+                withLink(
+                    LinkAnnotation.Url(
+                        url = l.url,
+                        styles = TextLinkStyles(
+                            style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
+                        )
+                    )
+                ) { append(text.substring(start, end)) }
+            }
+            at = end
+        }
+        if (at < text.length) append(text.substring(at))
+    }
 }
 
 fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
@@ -669,9 +723,112 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
         // Détecte une URL YouTube embed et en extrait l'identifiant de vidéo pour une miniature
         // d'affiche (poster) si aucune n'est fournie.
         fun youtubePoster(url: String): String? = youtubePosterUrl(url)
-        // Les éléments de bloc (p, li, h…) sont traités dans l'ordre du document. Leurs enfants
-        // texte, liens (<a>) et images (<img>) produisent les blocs correspondants, préservant
-        // l'ordre d'apparition. Les vidéos (<video>, <iframe>) créent un bloc ABlock.V.
+        // Espaces (retours et tabulations compris) ramenés à un seul : le texte d'un flux arrive
+        // indenté, et deux espaces de suite se verraient au milieu d'une ligne.
+        val ws = Regex("\\s+")
+        // L'URL d'un lien, absolue et exploitable dans un navigateur. Elle n'entre pas dans `seen`
+        // (contrairement aux médias) : le même lien revient légitimement dans le texte, et le
+        // dédoublonner amputerait la phrase.
+        fun linkUrl(u: String): String? {
+            var x = u.trim()
+            if (x.startsWith("//")) x = "https:$x"
+            return x.takeIf { it.startsWith("http") }
+        }
+        // Un conteneur de texte (p, li, h…, blockquote) est coulé **d'un seul tenant** : le texte
+        // et ses liens forment un unique bloc, un lien n'étant qu'une plage cliquable — un bloc à
+        // part le ferait passer à la ligne au milieu d'une phrase. Les médias rencontrés (img,
+        // video, iframe) coupent le texte : ce qui précède est publié, le média prend sa place, la
+        // suite reprend. La mise en forme en ligne (strong, em, span…) ne coupe rien.
+        fun processFlow(root: org.jsoup.nodes.Element) {
+            val sb = StringBuilder()
+            val links = mutableListOf<ABlock.Link>()
+            // Publie le texte accumulé. Les plages sont recalculées après rognage : celles
+            // enregistrées valent pour la chaîne brute, espaces de tête compris.
+            fun flush() {
+                val raw = sb.toString()
+                val start = raw.indexOfFirst { !it.isWhitespace() }
+                if (start < 0) { sb.clear(); links.clear(); return }
+                val text = raw.trim()
+                val kept = links.mapNotNull { l ->
+                    val s = (l.start - start).coerceIn(0, text.length)
+                    val e = (l.end - start).coerceIn(0, text.length)
+                    if (e > s) ABlock.Link(s, e, l.url) else null
+                }
+                out += ABlock.T(text, kept)
+                sb.clear(); links.clear()
+            }
+            // Texte d'un élément en ligne, espaces compris : `wholeText` (et non `text`, que jsoup
+            // rogne des deux côtés) permet de recoller le texte de part et d'autre d'un lien sans
+            // souder les mots — « Voir notre article pour la suite. » garde ses espaces.
+            fun inlineText(el: org.jsoup.nodes.Element): String {
+                val raw = StringBuilder()
+                el.childNodes().forEach { n ->
+                    when {
+                        n is org.jsoup.nodes.TextNode -> raw.append(n.wholeText)
+                        n is org.jsoup.nodes.Element -> raw.append(inlineText(n))
+                    }
+                }
+                return ws.replace(raw, " ")
+            }
+            /**
+             * Ajoute un morceau de texte et rend la plage qu'il occupe, blancs de bord exclus.
+             * Un seul blanc au raccord : les morceaux voisins en portent chacun un (« Voir » +
+             * « notre article » + « pour la suite. » ne doit pas donner de double espace).
+             */
+            fun appendText(s: String): Pair<Int, Int> {
+                var t = ws.replace(s, " ")
+                if (t.isNotEmpty() && t.first().isWhitespace() && (sb.isEmpty() || sb.last().isWhitespace())) {
+                    t = t.trimStart()
+                }
+                val at = sb.length
+                sb.append(t)
+                var lo = at
+                var hi = sb.length
+                while (lo < hi && sb[lo].isWhitespace()) lo++
+                while (hi > lo && sb[hi - 1].isWhitespace()) hi--
+                return lo to hi
+            }
+            fun walk(el: org.jsoup.nodes.Element) {
+                el.childNodes().forEach { node ->
+                    when {
+                        node is org.jsoup.nodes.TextNode -> appendText(node.wholeText)
+                        node is org.jsoup.nodes.Element -> when (node.tagName()) {
+                            "br" -> sb.append('\n')
+                            "a" -> {
+                                val t = inlineText(node)
+                                if (t.isNotBlank()) {
+                                    val (lo, hi) = appendText(t)
+                                    if (hi > lo) {
+                                        linkUrl(node.absUrl("href").ifBlank { node.attr("href") })
+                                            ?.let { links += ABlock.Link(lo, hi, it) }
+                                    }
+                                }
+                            }
+                            "img" -> {
+                                flush()
+                                abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.I(it) }
+                            }
+                            "video" -> {
+                                flush()
+                                val poster = node.attr("poster").takeIf { it.isNotBlank() }
+                                abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.V(it, poster) }
+                            }
+                            "iframe" -> {
+                                flush()
+                                abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.V(it, youtubePoster(it), embed = true) }
+                            }
+                            // Sous-bloc (un <p> dans un <li>, deux <p> dans une citation) : chacun
+                            // reste un bloc de texte à part, sans être recollé au précédent.
+                            in ARTICLE_BLOCK_TAGS -> { flush(); walk(node); flush() }
+                            else -> walk(node)
+                        }
+                    }
+                }
+            }
+            walk(root)
+            flush()
+        }
+        // Médias et liens isolés (hors conteneur de texte) : leur propre bloc.
         fun processBlock(el: org.jsoup.nodes.Element) {
             when (el.tagName()) {
                 "img" -> {
@@ -681,7 +838,7 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 "a" -> {
                     val t = el.text().trim()
                     val href = el.absUrl("href").ifBlank { el.attr("href") }
-                    if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
+                    if (t.length >= 2) linkUrl(href)?.let { out += ABlock.L(t, it) }
                 }
                 "video" -> {
                     // Affiche : attribut `poster` uniquement (une <source> est le média, pas une image).
@@ -699,40 +856,17 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                         out += ABlock.V(it, youtubePoster(it), embed = true)
                     }
                 }
-                else -> {
-                    el.childNodes().forEach { node ->
-                        when (node) {
-                            is org.jsoup.nodes.TextNode -> {
-                                val t = node.text().trim()
-                                if (t.length >= 2) out += ABlock.T(t)
-                            }
-                            is org.jsoup.nodes.Element -> {
-                                when (node.tagName()) {
-                                    "a" -> {
-                                        val t = node.text().trim()
-                                        val href = node.absUrl("href").ifBlank { node.attr("href") }
-                                        if (t.length >= 2) abs(href)?.let { out += ABlock.L(t, it) }
-                                    }
-                                    "img" -> {
-                                        val u = node.absUrl("src").ifBlank { node.attr("src") }
-                                        abs(u)?.let { out += ABlock.I(it) }
-                                    }
-                                    "video" -> {
-                                        val poster = node.attr("poster").takeIf { it.isNotBlank() }
-                                        val src = node.absUrl("src").ifBlank { node.attr("src") }
-                                        abs(src)?.let { out += ABlock.V(it, poster) }
-                                    }                                    "iframe" -> {
-                                        val src = node.absUrl("src").ifBlank { node.attr("src") }
-                                        abs(src)?.let { out += ABlock.V(it, youtubePoster(it), embed = true) }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // Conteneur de texte : coulé d'un seul tenant, liens compris.
+                else -> processFlow(el)
             }
         }
-        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img, video, iframe")?.forEach { processBlock(it) }
+        // Un conteneur de texte imbriqué dans un autre (un <p> dans un <li>) est déjà pris par son
+        // parent : le sélectionner en plus dupliquerait son texte.
+        fun isNestedBlock(el: org.jsoup.nodes.Element): Boolean =
+            el.parents().any { it.tagName() in ARTICLE_BLOCK_TAGS }
+        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img, video, iframe")?.forEach { el ->
+            if (el.tagName() !in ARTICLE_BLOCK_TAGS || !isNestedBlock(el)) processBlock(el)
+        }
         // Les <a>, <img>, <video>, <iframe> isolés au niveau du corps (hors conteneur de bloc)
         // sont aussi pris en compte.
         doc.body()?.children()?.filterIsInstance<org.jsoup.nodes.Element>()?.forEach { el ->

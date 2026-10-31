@@ -514,15 +514,43 @@ class PressLogicTest {
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.T && (it as com.pressia.ui.ABlock.T).text.contains("Intro") })
         assertTrue(blocks.any { it is com.pressia.ui.ABlock.I && (it as com.pressia.ui.ABlock.I).url == "https://ex.com/a.jpg" })
     }
-    @Test fun `blocs article - liens cliquables`() {
-        // Un lien du flux (YouTube, article lié…) doit devenir un bloc cliquable, pas du texte
-        // plat : sans cela, le contenu HTML n'était qu'une suite de blocs de texte.
+    @Test fun `blocs article - liens dans le flux du texte`() {
+        // Un lien du flux (YouTube, article lié…) reste DANS le paragraphe : c'est une plage
+        // cliquable du texte, pas un bloc à part — un bloc à part le ferait passer à la ligne au
+        // milieu de la phrase.
         val html = "<p>Voir <a href=\"https://ex.com/article\">notre article</a> pour la suite.</p>"
         val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
-        val link = blocks.filterIsInstance<com.pressia.ui.ABlock.L>().firstOrNull()
-        assertNotNull(link)
-        assertEquals("notre article", link!!.text)
-        assertEquals("https://ex.com/article", link.url)
+        assertEquals(1, blocks.size)
+        val t = blocks.filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        assertEquals("Voir notre article pour la suite.", t.text)
+        assertEquals(1, t.links.size)
+        val l = t.links.first()
+        assertEquals("notre article", t.text.substring(l.start, l.end))
+        assertEquals("https://ex.com/article", l.url)
+        // Un lien hors de tout paragraphe, lui, n'a pas de texte où se couler : bloc à part.
+        val lonely = com.pressia.ui.articleBlocks(
+            "<a href=\"https://ex.com/seul\">un lien seul</a>", "https://ex.com"
+        )
+        assertEquals("https://ex.com/seul", lonely.filterIsInstance<com.pressia.ui.ABlock.L>().first().url)
+    }
+    @Test fun `blocs article - texte en ligne et sous-blocs`() {
+        // La mise en forme en ligne ne coupe pas le texte (son contenu était perdu : un <strong>
+        // dans un paragraphe n'était ni texte, ni lien, ni média).
+        val html = "<p>Un <strong>mot gras</strong>, un <em>mot italique</em> et " +
+            "<span>une <a href=\"https://ex.com/x\">adresse</a></span>.</p>"
+        val inline = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        assertEquals(1, inline.size)
+        val t = inline.filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        assertEquals("Un mot gras, un mot italique et une adresse.", t.text)
+        assertEquals("adresse", t.text.substring(t.links.first().start, t.links.first().end))
+        // Un paragraphe dans un élément de liste est déjà pris par son parent : il ne doit pas
+        // être compté deux fois.
+        val nested = com.pressia.ui.articleBlocks("<ul><li><p>Un seul</p></li></ul>", "https://ex.com")
+        assertEquals(1, nested.size)
+        assertEquals("Un seul", nested.filterIsInstance<com.pressia.ui.ABlock.T>().first().text)
+        // Deux paragraphes dans une citation restent deux blocs.
+        val quoted = com.pressia.ui.articleBlocks("<blockquote><p>Un</p><p>Deux</p></blockquote>", "https://ex.com")
+        assertEquals(2, quoted.size)
     }
     @Test fun `blocs article - video et iframe youtube`() {
         // Balise <video> : l'URL est celle de la vidéo, le poster est l'affiche.

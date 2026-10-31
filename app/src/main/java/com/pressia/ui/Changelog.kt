@@ -47,6 +47,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.14",
+        listOf(
+            ChangelogItem(
+                "2026-10-31",
+                "Article : liens dans le texte, texte sélectionnable",
+                "Un lien du corps de l'article passait à la ligne : il formait un bloc à part au " +
+                    "milieu d'une phrase. Un conteneur (p, li, titre, citation) est maintenant " +
+                    "coulé d'un seul tenant, ses liens n'étant que des plages cliquables — " +
+                    "couleur dominante, soulignées — dont le tap ouvre le navigateur. Seul un " +
+                    "lien hors de tout paragraphe reste un bloc à part. Au passage, le texte en " +
+                    "ligne (gras, italique, span) n'est plus perdu : il n'était ni texte, ni " +
+                    "lien, ni média, et disparaissait du paragraphe. Le texte de l'article est " +
+                    "par ailleurs sélectionnable (appui long) : poignées et « Copier / Tout " +
+                    "sélectionner », sans gêner le balayage d'un article à l'autre.",
+                time = "04:17"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.13",
         listOf(
             ChangelogItem(

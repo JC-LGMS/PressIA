@@ -214,11 +214,26 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 
 - Le contenu affiché vient de `feedHtml(article)` (résumé/contenu du flux, ou copie Readability)
   puis de `articleBlocks(html, baseUrl)` (`ui/ArticleScreen.kt`), qui le découpe en `ABlock` :
-  `T` texte, `I` image, `L` lien, `V` vidéo. **Le HTML du flux n'est pas rendu tel quel** : les
-  balises sont interprétées bloc par bloc (sélecteur `p, li, h1..h3, pre, blockquote, img, video,
-  iframe` + les enfants `a`/`img`/`video`/`iframe` de chaque bloc).
-- **Liens** : un `<a href>` devient un bloc `ABlock.L` — texte souligné, couleur primaire, tap →
-  `openUrl` (navigateur externe). Le texte du lien est celui de la balise, pas l'URL.
+  `T` texte, `I` image, `L` lien isolé, `V` vidéo. **Le HTML du flux n'est pas rendu tel quel** :
+  les balises sont interprétées bloc par bloc (sélecteur `p, li, h1..h3, pre, blockquote, img,
+  video, iframe`).
+- **Les liens restent dans le flux du texte.** Un conteneur (`p`, `li`, `h1..h3`, `pre`,
+  `blockquote`) est coulé **d'un seul tenant** : ses liens ne sont pas des blocs à part (ils
+  passaient à la ligne au milieu d'une phrase) mais des plages cliquables d'un `ABlock.T`
+  (`ABlock.Link(start, end, url)`), rendues par `blockText` en annotations de lien — couleur
+  primaire, soulignées — dont le tap ouvre le navigateur externe. Seul un lien **hors** de tout
+  conteneur reste un `ABlock.L`. Pièges de la construction : le texte vient de `wholeText` (et non
+  de `text`, que jsoup rogne et qui souderait les mots de part et d'autre d'un lien) ; un seul
+  blanc au raccord entre morceaux ; les éléments en ligne (`strong`, `em`, `span`…) sont parcourus
+  récursivement (leur texte était perdu) mais un **sous-bloc** (`p` dans `li`, deux `p` dans une
+  citation) reste un bloc à part ; un conteneur imbriqué dans un autre n'est pas sélectionné deux
+  fois (`isNestedBlock`) ; les médias coupent le texte (ce qui précède est publié, le média prend
+  sa place, la suite reprend) ; l'URL d'un lien n'entre pas dans `seen`, sinon le second passage
+  du même lien amputerait la phrase.
+- **Texte sélectionnable** : la colonne défilante de l'écran article est enveloppée dans un
+  `SelectionContainer` (appui long, poignées, « Copier / Tout sélectionner »). Le balayage
+  horizontal d'article continue de fonctionner : c'est le geste immédiat, la sélection demandant
+  un appui long.
 - **Vidéos** : deux cas distincts, à ne pas confondre :
   - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
     `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur
