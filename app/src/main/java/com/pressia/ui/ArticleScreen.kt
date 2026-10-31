@@ -93,6 +93,8 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
     val doubleTap by vm.doubleTapAction.collectAsState()
     val swipeLeft by vm.articleSwipeLeft.collectAsState()
     val swipeRight by vm.articleSwipeRight.collectAsState()
+    // Lecteur des vidéos YouTube : contrôles de PressIA (défaut) ou interface du site.
+    val youtubeUi by vm.youtubeUi.collectAsState()
     // Un doigt posé sur un lecteur (barre d'avancée, pincer, plein écran) lui appartient : le
     // balayage d'article ne doit pas le confisquer, sinon tirer la barre de la vidéo change
     // d'article au lieu d'avancer dans la vidéo.
@@ -471,6 +473,7 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         url = b.url,
                         poster = b.poster,
                         embed = b.embed,
+                        youtubeUi = youtubeUi,
                         modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
                             .playerGesture(inPlayer)
                     )
@@ -906,37 +909,165 @@ fun youtubeVideoId(url: String): String? {
 }
 
 /**
- * URL de lecture YouTube, prête pour une WebView.
+ * URL de la page **d'intégration** YouTube : celle du mode « interface YouTube ».
  *
- * C'est la page `m.youtube.com/watch` — et **non** la page d'intégration
- * (`youtube.com/embed/…`) : sur l'émulateur, l'intégration affiche le son sans jamais
- * composer l'image (le décodeur reçoit une surface, les images n'atteignent pas l'écran),
- * alors que la page de lecture d'un document de premier niveau rend la vidéo normalement.
- * C'est aussi ce que fait le tap sur le titre de l'intégration, et cela fonctionne.
+ * C'est le document que le site destine à être embarqué — pas d'en-tête, pas de commentaires, un
+ * lecteur qui occupe la vue —, et ses contrôles (titre, son, sous-titres, réglages, ⤢, barre
+ * d'avancée, temps) sont de **vrais éléments du document**, donc utilisables.
+ *
+ * La page `m.youtube.com/watch` ne convient pas à ce mode : présentée avec un User-Agent de
+ * navigateur, elle se met en pause ~0,5 s après chaque `play()` — le lecteur se croit non visible
+ * (`onVideoProgress` → `visibility.Xj()` → `pauseVideo`, pile relevée dans le player), et cela
+ * même sans feuille de style de l'application et avec `backgroundable` forcé. La page
+ * d'intégration, elle, joue normalement (vérifié en direct).
  */
 fun youtubeEmbedUrl(videoId: String): String =
+    "https://www.youtube.com/embed/$videoId"
+
+/**
+ * URL de la page de **lecture** YouTube : celle du mode « contrôles PressIA ».
+ *
+ * Document de premier niveau, chargé avec l'User-Agent de la WebView : YouTube y livre un lecteur
+ * **sans commandes**, à charge pour l'application de poser les siennes ([youtubeControlsScript]).
+ * C'est aussi la page où l'image est composée de façon fiable sur toutes les configurations.
+ */
+fun youtubeWatchUrl(videoId: String): String =
     "https://m.youtube.com/watch?v=$videoId"
 
 /**
- * En-tête `Referer` de la page de lecture YouTube.
+ * En-tête `Referer` du chargement, identique pour les deux modes.
  *
  * YouTube refuse l'intégration quand la requête ne porte pas de référent (« Erreur 152 » pour
  * un référent absent, « Erreur 153 » pour un référent invalide). Or un `loadUrl` **sans en-tête**
  * n'envoie aucun Referer (requête de premier niveau, sans page référente), et
  * `loadDataWithBaseURL` donne une **origine** mais pas de référent — la balise
  * `<meta name="referrer">` ne peut pas en inventer un. D'où `loadUrl(url, headers)` avec un
- * Referer explicite, cohérent avec l'hôte demandé.
+ * Referer explicite.
  */
-fun youtubeReferer(): String = "https://m.youtube.com/"
+fun youtubeReferer(siteUi: Boolean = false): String =
+    // YouTube refuse `www.youtube.com` comme référent d'une intégration (« Erreur 152 » : une page
+    // YouTube ne peut pas intégrer une page YouTube), alors qu'il l'accepte depuis `m.youtube.com`
+    // — vérifié en direct dans la WebView. Les deux modes gardent donc ce référent.
+    "https://m.youtube.com/"
 
 /**
- * Habillage de la page de lecture : on ne garde que le lecteur.
+ * User-Agent présenté à YouTube quand on veut **son** interface.
  *
- * La page `m.youtube.com/watch` est un site complet (en-tête, titre, commentaires, vidéos
- * suggérées). Dans le bloc 16/9 de l'article, on masque tout cela et on fixe le lecteur en
- * haut, à la largeur de la vue. Les sélecteurs couvrent les conteneurs connus ; s'ils changent,
- * la page reste utilisable, simplement plus bavarde.
+ * Avec l'User-Agent de la WebView — que Chromium marque `wv`, comme tous les navigateurs
+ * embarqués — YouTube livre une page réduite (202 nœuds, aucun `ytp-chrome-bottom`, aucun
+ * bouton) : le lecteur, sans commandes, à charge pour l'application hôte de les poser. Avec un
+ * User-Agent de navigateur, c'est la vraie page mobile (1493 nœuds, 28 boutons, roue, barre) —
+ * mesuré sur le même appareil, la même URL. C'est ce que choisit le réglage « Interface
+ * YouTube ».
  */
+fun youtubeBrowserUserAgent(): String =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/128.0.0.0 Mobile Safari/537.36"
+
+/**
+ * Script du mode « interface YouTube » : démarre la lecture demandée par l'appui sur l'affiche.
+ *
+ * La page d'intégration n'a pas d'autoplay : elle attend un geste dans la page. Ici, la lecture est
+ * décidée par l'appui sur l'affiche — un geste de l'utilisateur —, et
+ * `mediaPlaybackRequiresUserGesture = false` autorise la page à démarrer sans attendre un second
+ * appui. On rétablit aussi le son, que YouTube coupe par défaut quand il n'a pas vu de geste. Le
+ * lecteur n'existe qu'après le rendu progressif de la page : on réessaie tant qu'il ne joue pas.
+ */
+internal fun youtubeSiteScript(): String = """
+(function () {
+  var tries = 0;
+  function start() {
+    var pl = document.getElementById('movie_player');
+    var v = document.querySelector('video');
+    if (!v && !pl) { if (tries++ < 60) setTimeout(start, 500); return; }
+    try { if (pl && pl.unMute) pl.unMute(); } catch (e) {}
+    try { if (pl && pl.playVideo) pl.playVideo(); } catch (e) {}
+    if (v) {
+      v.muted = false;
+      try { v.volume = 1; } catch (e) {}
+      if (v.paused) {
+        try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+      }
+    }
+    if ((!v || v.paused) && tries++ < 60) setTimeout(start, 500);
+  }
+  window.pressiaSite = start;
+  // Plein écran : la WebView est déplacée par l'application (voir `PlayerFullscreen`), ce qui met
+  // la page en pause. On retient l'état de lecture avant le déplacement, et `pressiaResume` la
+  // relance une fois la vue en place.
+  window.pressiaWant = false;
+  window.pressiaToggleFull = function () {
+    var v = document.querySelector('video');
+    window.pressiaWant = !!(v && !v.paused && !v.ended);
+    if (window.PressIAHost && window.PressIAHost.fullscreen) window.PressIAHost.fullscreen();
+  };
+  window.pressiaResume = function () {
+    var v = document.querySelector('video');
+    if (!v || !window.pressiaWant || v.ended) return;
+    if (v.paused) start();
+  };
+  // YouTube a mesuré la page avant notre feuille de style : il se croit minuscule et reste en
+  // « tiny mode » (aucun contrôle rendu). Un `resize` lui fait reprendre sa mise en page — un
+  // seul ne suffit pas toujours, le lecteur étant monté progressivement.
+  [0, 300, 1000, 2500, 5000].forEach(function (ms) {
+    setTimeout(function () { window.dispatchEvent(new Event('resize')); }, ms);
+  });
+  // Le bouton ⤢ du site demande le plein écran au navigateur, refusé dans une WebView
+  // (« Permissions check failed », constaté : il ne se passait rien). On le détourne vers
+  // l'application, qui pose la vue en plein écran — le même chemin que le bouton de la barre.
+  if (!window.pressiaSiteHooked) {
+    window.pressiaSiteHooked = true;
+    document.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('.fullscreen-icon') : null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        if (window.pressiaToggleFull) window.pressiaToggleFull();
+        else if (window.PressIAHost && window.PressIAHost.fullscreen) {
+          window.PressIAHost.fullscreen();
+        }
+      } catch (err) {}
+    }, true);
+  }
+  start();
+})()
+""".trimIndent()
+
+/**
+ * Habillage du mode « interface YouTube » : le lecteur prend la place du bloc 16/9.
+ *
+ * La page chargée est la page d'intégration ([youtubeEmbedUrl]) : elle ne contient que le lecteur,
+ * ses contrôles sont les siens, et rien n'est à masquer. On lui impose seulement la géométrie du
+ * bloc, le fond noir et l'absence de gestes de défilement (un glissement horizontal est un appui
+ * sur la barre d'avancée, pas un défilement).
+ *
+ * La géométrie n'est pas facultative : laissé à la hauteur de son conteneur, le lecteur peut se
+ * croire minuscule et passer en « tiny mode » — il **ne rend alors aucun contrôle** (`ytp-tiny-mode`
+ * dans le DOM, ni `.ytp-chrome-bottom` ni `#player-control-overlay` rempli : constaté sur la page
+ * `watch`, une vidéo muette qu'on ne peut ni mettre en pause ni avancer). À la taille du bloc, ses
+ * contrôles mobiles s'affichent et se placent d'eux-mêmes en bas de l'image. Changer la taille par
+ * CSS ne suffit pas à le faire sortir du « tiny mode » : un `resize` est dispatché ensuite (voir
+ * [youtubeSiteScript]).
+ */
+internal fun youtubeSiteCss(): String = listOf(
+    "html,body{margin:0!important;padding:0!important;overflow:hidden!important;" +
+        "background:#000!important;touch-action:none!important}",
+    "#player-container-id,#player,#movie_player,.html5-video-player{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}",
+    "video.video-stream{position:absolute!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important;object-fit:contain!important}",
+    // Plein écran : la WebView est déplacée dans une vue plein écran (voir `PlayerFullscreen`) et
+    // la page reçoit la classe `pressia-full`. Le lecteur couvre alors tout l'écran ; ses
+    // contrôles, posés sur la fenêtre, suivent d'eux-mêmes.
+    "html.pressia-full #player-container-id,html.pressia-full #player," +
+        "html.pressia-full #movie_player,html.pressia-full .html5-video-player{" +
+        "width:100vw!important;height:100vh!important}",
+    "html.pressia-full video.video-stream{" +
+        "width:100vw!important;height:100vh!important;object-fit:contain!important}",
+).joinToString("")
+
 internal fun youtubePlayerCss(): String = listOf(
     "html,body{margin:0!important;padding:0!important;overflow:hidden!important;" +
         "background:#000!important;touch-action:none!important}",
@@ -956,6 +1087,20 @@ internal fun youtubePlayerCss(): String = listOf(
         // geste en cours (constaté sur le lecteur : plus aucun `pointermove` après ~15 px).
         ".html5-video-player,.ytp-chrome-bottom,.ytp-progress-bar-container," +
         ".ytp-progress-bar,video{touch-action:none!important}",
+        // Plein écran : la WebView est déplacée dans une vue plein écran (voir `PlayerFullscreen`)
+        // et la page reçoit la classe `pressia-full`. 100vw × 56.25vw n'y couvrirait que le haut
+        // de l'écran : on donne toute la hauteur à l'image, la barre restant en bas. La classe
+        // vient de l'application et non du `:fullscreen` du navigateur, car l'API Fullscreen est
+        // refusée dans une WebView (`requestFullscreen` → « Permissions check failed »).
+        "html.pressia-full,html.pressia-full body{" +
+        "overflow:hidden!important;background:#000!important}",
+        "html.pressia-full .html5-video-player{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:100vh!important}",
+        "html.pressia-full video.video-stream{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:100vh!important;object-fit:contain!important}",
+        "html.pressia-full #pressia-shade{height:100vh!important}",
 ).joinToString("")
 
 /**
@@ -964,9 +1109,9 @@ internal fun youtubePlayerCss(): String = listOf(
  * Rejoué plusieurs fois : YouTube remplace une partie du document après coup (rendu progressif
  * des composants), et une feuille de style posée trop tôt se retrouve détachée.
  */
-internal fun youtubePlayerScript(): String =
+internal fun youtubePlayerScript(css: String = youtubePlayerCss()): String =
     "(function(){" +
-        "var css=" + jsSingleQuoted(youtubePlayerCss()) + ";" +
+        "var css=" + jsSingleQuoted(css) + ";" +
         "var apply=function(){" +
         "var s=document.getElementById('pressia-yt');" +
         "if(!s){s=document.createElement('style');s.id='pressia-yt';" +
@@ -1031,6 +1176,7 @@ internal fun youtubeControlsScript(): String = """
     el.time.textContent = fmt(v.currentTime) + ' / ' + fmt(d);
     if (v.paused) { el.play.className = ''; } else { el.play.className = 'on'; }
     el.mute.textContent = userMuted ? '🔇' : '🔊';
+    if (el.fs) el.fs.className = window.pressiaFull ? 'on' : '';
   }
   function seek(x) {
     var v = video();
@@ -1043,7 +1189,18 @@ internal fun youtubeControlsScript(): String = """
   function toggle() {
     var v = video();
     if (!v) return;
-    if (v.paused) { v.play(); } else { v.pause(); }
+    if (v.paused) {
+      window.pressiaWant = true;
+      try {
+        var pr = v.play();
+        if (pr && pr.catch) pr.catch(function () {});
+      } catch (e) {}
+    } else {
+      // La pause est demandée : le drapeau tombe **avant** l'appel, sinon le garde-fou de
+      // `pressiaPause` (voir plus haut) l'ignorerait.
+      window.pressiaWant = false;
+      v.pause();
+    }
     paint();
   }
   function nudge(d) {
@@ -1052,6 +1209,44 @@ internal fun youtubeControlsScript(): String = """
     v.currentTime = Math.min(v.duration, Math.max(0, v.currentTime + d));
     paint();
   }
+  // Plein écran : c'est l'application qui l'exécute (elle déplace la WebView), l'API Fullscreen du
+  // navigateur étant refusée dans une WebView. La page ne fait que demander le basculement ; son
+  // état lui est renvoyé par `window.pressiaFull` (voir `PlayerJsBridge`).
+  function toggleFull() {
+    var v0 = video();
+    window.pressiaWant = !!(v0 && !v0.paused && !v0.ended);
+    if (window.PressIAHost && window.PressIAHost.fullscreen) {
+      window.PressIAHost.fullscreen();
+    }
+  }
+  window.pressiaWant = false;
+  // YouTube (page de lecture, lecteur **nu**) se met en pause dès que son heuristique le croit
+  // invisible — et, après un passage en plein écran, il le croit pour de bon : chaque reprise
+  // était aussitôt annulée (`onVideoProgress` → contrôle de visibilité → `pauseVideo`), la vidéo
+  // restant bloquée en pause quoi qu'on fasse. Les commandes étant les nôtres, une pause que
+  // l'utilisateur n'a pas demandée est ignorée tant que la lecture est voulue.
+  if (!window.pressiaPauseHook) {
+    window.pressiaPauseHook = true;
+    var nativePause = HTMLMediaElement.prototype.pause;
+    HTMLMediaElement.prototype.pause = function () {
+      if (window.pressiaWant && !this.ended) return;
+      return nativePause.apply(this, arguments);
+    };
+  }
+  window.pressiaToggleFull = toggleFull;
+  // Reprise après le déplacement de la WebView (plein écran) : détacher la vue coupe le média, et
+  // YouTube le laisse en pause. On ne relance que si la lecture était en cours au moment du geste.
+  window.pressiaResume = function () {
+    var v = video();
+    if (!v) return;
+    if (window.pressiaWant && v.paused && !v.ended) {
+      try {
+        var p = v.play();
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    }
+    paint();
+  };
   function stop(e) { e.preventDefault(); e.stopPropagation(); }
   function speedItem(label, value) {
     var b = document.createElement('div');
@@ -1096,6 +1291,10 @@ internal fun youtubeControlsScript(): String = """
 #pressia-gap{flex:1 1 auto}
 #pressia-mute{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
 #pressia-gear{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
+#pressia-fs{position:relative;width:34px;height:34px;flex:0 0 auto}
+#pressia-fs::before{content:'';position:absolute;left:9px;top:10px;width:12px;height:12px;
+  border:2px solid #fff;border-radius:2px;box-sizing:border-box}
+#pressia-fs.on::before{background:rgba(255,255,255,.45)}
 #pressia-line{position:relative;height:16px;margin:0 12px;flex:0 0 auto}
 #pressia-track{position:absolute;left:0;right:0;top:6px;height:4px;border-radius:2px;
   background:rgba(255,255,255,.35)}
@@ -1137,6 +1336,8 @@ internal fun youtubeControlsScript(): String = """
       var gear = document.createElement('div');
       gear.id = 'pressia-gear';
       gear.textContent = '⚙';
+      var fsBtn = document.createElement('div');
+      fsBtn.id = 'pressia-fs';
       var line = document.createElement('div');
       line.id = 'pressia-line';
       var track = document.createElement('div');
@@ -1153,6 +1354,7 @@ internal fun youtubeControlsScript(): String = """
       row.appendChild(gap);
       row.appendChild(mute);
       row.appendChild(gear);
+      row.appendChild(fsBtn);
       bar.appendChild(row);
       bar.appendChild(line);
       var menu = document.createElement('div');
@@ -1172,6 +1374,7 @@ internal fun youtubeControlsScript(): String = """
       el.shade = shade; el.bar = bar; el.play = play; el.time = time; el.mute = mute;
       el.gear = gear; el.line = line; el.track = track; el.fill = fill; el.dot = dot;
       el.menu = menu; el.speedBox = speedBox; el.loop = loop;
+      el.fs = fsBtn;
 
       // Appui simple : lecture/pause. Double appui : -10 s à gauche, +10 s à droite.
       var downX = 0, downY = 0, downT = 0, lastTap = 0, tapTimer = null;
@@ -1210,6 +1413,9 @@ internal fun youtubeControlsScript(): String = """
         stop(e);
         menu.style.display = (menu.style.display === 'block') ? 'none' : 'block';
       }, true);
+      fsBtn.addEventListener('pointerdown', function (e) { stop(e); toggleFull(); }, true);
+      document.addEventListener('fullscreenchange', paint);
+      document.addEventListener('webkitfullscreenchange', paint);
       loop.addEventListener('pointerdown', function (e) {
         stop(e);
         var v3 = video();
@@ -1241,8 +1447,10 @@ internal fun youtubeControlsScript(): String = """
       document.body.appendChild(bar);
       document.body.appendChild(menu);
       v.addEventListener('timeupdate', paint);
-      v.addEventListener('play', paint);
+      // La lecture en cours est voulue : c'est ce que teste le garde-fou de `pressiaPause`.
+      v.addEventListener('play', function () { window.pressiaWant = true; paint(); });
       v.addEventListener('pause', paint);
+      v.addEventListener('ended', function () { window.pressiaWant = false; paint(); });
       v.addEventListener('volumechange', paint);
       v.addEventListener('loadedmetadata', paint);
       setInterval(paint, 500);
@@ -1313,7 +1521,13 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
  *    navigateur externe.
  */
 @Composable
-fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: Modifier = Modifier) {
+fun VideoPlayer(
+    url: String,
+    poster: String?,
+    embed: Boolean = false,
+    youtubeUi: String = com.pressia.data.local.Prefs.YOUTUBE_UI_DEFAULT,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var videoView by remember { mutableStateOf<android.widget.VideoView?>(null) }
@@ -1332,7 +1546,7 @@ fun VideoPlayer(url: String, poster: String?, embed: Boolean = false, modifier: 
     Column(modifier = modifier) {
         if (youtubeId != null) {
             // Lecteur YouTube intégré : la WebView charge le lecteur officiel.
-            YoutubePlayer(videoId = youtubeId, poster = poster)
+            YoutubePlayer(videoId = youtubeId, poster = poster, ui = youtubeUi)
         } else if (!playing.value) {
             // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
             VideoPoster(
@@ -1498,20 +1712,254 @@ private fun VideoPoster(
     }
 }
 
+/** Activité qui héberge un contexte Compose (pour l'orientation et les barres système). */
+private fun android.content.Context.activityOrNull(): android.app.Activity? {
+    var c: android.content.Context? = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
+}
+
 /**
- * Lecteur YouTube **dans l'application** : une WebView charge la page de lecture
- * (`m.youtube.com/watch?v=<id>`), qui affiche le lecteur officiel — contrôles, qualité,
- * reprise, plein écran, compte de l'utilisateur.
+ * Pont entre la page du lecteur et l'application : c'est par lui que le bouton plein écran de
+ * nos contrôles demande le basculement.
  *
- * Pourquoi la page de lecture et non l'intégration `embed` : sur l'émulateur, l'intégration
- * affiche le son sans jamais composer l'image (le décodeur reçoit bien une surface, aucune
- * image n'atteint l'écran), alors que la page de lecture — un document de premier niveau —
- * rend la vidéo normalement. C'est aussi le chemin qu'emprunte le tap sur le titre de
- * l'intégration, et celui qui fonctionne.
+ * L'appeler depuis JavaScript est indispensable : l'API Fullscreen du navigateur est **refusée**
+ * dans une WebView (« Permissions check failed », même sur un vrai geste et avec
+ * `onShowCustomView` en place). Le plein écran est donc l'affaire de l'application — voir
+ * [PlayerFullscreen].
+ */
+class PlayerJsBridge(private val onFullscreen: () -> Unit) {
+    @android.webkit.JavascriptInterface
+    fun fullscreen() = onFullscreen()
+}
+
+/**
+ * Plein écran du lecteur : la **WebView elle-même** est déplacée dans une vue posée sur la
+ * fenêtre, puis remise à sa place.
+ *
+ * Pourquoi déplacer la vue et non en créer une autre : recharger la page relancerait la vidéo au
+ * début, avec un nouveau tampon. Ici, c'est la même page, au même instant de lecture ; la vue
+ * change seulement de parent. Compose ne s'en aperçoit pas — le bloc garde sa place, vide, et
+ * reprend la vue en sortant.
+ */
+private class PlayerFullscreen {
+    private var frame: android.widget.FrameLayout? = null
+    private var target: android.view.View? = null
+    private var holder: android.view.ViewGroup? = null
+    private var holderParams: android.view.ViewGroup.LayoutParams? = null
+    private var onExit: () -> Unit = {}
+
+    val active: Boolean get() = frame != null
+
+    fun enter(
+        ctx: android.content.Context,
+        root: android.view.ViewGroup?,
+        view: android.view.View,
+        exit: () -> Unit
+    ) {
+        if (active || root == null) return
+        val parent = view.parent as? android.view.ViewGroup ?: return
+        holder = parent
+        holderParams = view.layoutParams
+        target = view
+        onExit = exit
+        parent.removeView(view)
+        val d = ctx.resources.displayMetrics.density
+        val screen = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            addView(
+                view,
+                android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+            // Sortie visible : les barres système sont masquées, et la barre du lecteur n'est pas
+            // toujours là (mode « interface YouTube », page en chargement). En haut **à gauche** :
+            // les contrôles du site occupent le coin droit (son, sous-titres, réglages), et la
+            // croix y recouvrait la roue des réglages.
+            addView(
+                android.widget.TextView(ctx).apply {
+                    text = "✕"
+                    contentDescription = "quitter le plein écran"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 20f
+                    gravity = android.view.Gravity.CENTER
+                    setBackgroundColor(0x99000000.toInt())
+                    setOnClickListener { onExit() }
+                },
+                android.widget.FrameLayout.LayoutParams(
+                    (44 * d).toInt(), (44 * d).toInt(),
+                    android.view.Gravity.TOP or android.view.Gravity.START
+                ).apply {
+                    topMargin = (10 * d).toInt()
+                    leftMargin = (10 * d).toInt()
+                }
+            )
+        }
+        root.addView(
+            screen,
+            android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        frame = screen
+    }
+
+    /** Revient au bloc de l'article (la vue retrouve son parent Compose). */
+    fun exit() {
+        if (!active) return
+        val screen = frame ?: return
+        val view = target
+        val parent = holder
+        val params = holderParams
+        frame = null
+        target = null
+        holder = null
+        holderParams = null
+        onExit = {}
+        if (view != null) screen.removeView(view)
+        (screen.parent as? android.view.ViewGroup)?.removeView(screen)
+        if (view != null && parent != null) {
+            parent.addView(
+                view, params ?: android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+    }
+
+    /**
+     * Sortie sans remise en place : l'écran article se ferme, la WebView va être détruite et ne
+     * doit pas rester posée sur la fenêtre.
+     */
+    fun release() {
+        val screen = frame
+        frame = null
+        holder = null
+        holderParams = null
+        onExit = {}
+        val view = target
+        target = null
+        if (view != null) screen?.removeView(view)
+        (screen?.parent as? android.view.ViewGroup)?.removeView(screen)
+    }
+}
+
+/** Titres déjà obtenus (oEmbed) : une vidéo vue une fois ne redemande rien. */
+private val youtubeTitles = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+/**
+ * Titre d'une vidéo YouTube, par oEmbed — la seule source publique qui ne réclame pas de clé
+ * d'API. Silencieux en cas d'échec (hors-ligne, vidéo retirée) : le bloc garde alors un lien
+ * générique, et la lecture se comporte comme avant.
+ */
+private suspend fun youtubeTitle(videoId: String): String? {
+    youtubeTitles[videoId]?.let { return it }
+    val fetched = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val embed = java.net.URLEncoder.encode(
+                "https://www.youtube.com/watch?v=$videoId", "UTF-8"
+            )
+            val conn = java.net.URL("https://www.youtube.com/oembed?url=$embed&format=json")
+                .openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("User-Agent", youtubeBrowserUserAgent())
+            try {
+                if (conn.responseCode !in 200..299) return@runCatching null
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                org.json.JSONObject(body).optString("title").trim().takeIf { it.isNotEmpty() }
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+    if (fetched != null) youtubeTitles[videoId] = fetched
+    return fetched
+}
+
+/**
+ * Titre de la vidéo, sous le lecteur : un appui l'ouvre dans YouTube.
+ *
+ * Le titre vient d'oEmbed ; tant qu'il n'est pas là (ou s'il est introuvable), la ligne porte un
+ * libellé générique — elle reste le chemin vers YouTube, et le bloc ne saute pas de hauteur
+ * quand le titre arrive.
+ */
+@Composable
+private fun YoutubeTitleRow(title: String?, watchUrl: String, modifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
+    val color = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { openUrl(ctx, watchUrl) }
+            .padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.OpenInNew,
+            "ouvrir dans YouTube",
+            tint = color,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            title ?: "Ouvrir la vidéo sur YouTube",
+            style = MaterialTheme.typography.bodySmall,
+            color = color,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Bouton plein écran, à côté du titre (masqué pendant le plein écran, où la page en affiche un). */
+@Composable
+private fun FullscreenToggle(on: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(30.dp).clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            if (on) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+            if (on) "quitter le plein écran" else "plein écran",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/**
+ * Lecteur YouTube **dans l'application** : une WebView charge une page YouTube, dans laquelle joue
+ * le lecteur officiel.
+ *
+ * Deux présentations, au choix dans les Réglages ([com.pressia.data.local.Prefs.YOUTUBE_UI]) :
+ *  - **`pressia`** (défaut) : la page de **lecture** ([youtubeWatchUrl], chargée avec l'User-Agent
+ *    de la WebView), où YouTube livre un lecteur **sans commandes** (202 nœuds, aucune
+ *    `.ytp-chrome-bottom`, aucun bouton ; les appuis atteignent bien `video`, il n'y a simplement
+ *    rien à activer). [youtubeControlsScript] pose donc les nôtres : lecture/pause, double appui
+ *    ±10 s, barre d'avancée, son, vitesse, boucle, plein écran. C'est aussi la page où l'image est
+ *    composée de façon fiable sur toutes les configurations ;
+ *  - **`youtube`** : la page d'**intégration** ([youtubeEmbedUrl]), chargée avec un User-Agent de
+ *    navigateur ([youtubeBrowserUserAgent]), qui affiche le lecteur avec **ses** contrôles (titre,
+ *    son, sous-titres, réglages, ⤢, barre d'avancée, temps). La page n'ayant pas d'autoplay,
+ *    [youtubeSiteScript] démarre la lecture décidée par l'appui sur l'affiche. C'est l'intégration
+ *    — et non `m.youtube.com/watch` —, parce que cette dernière se met en pause ~0,5 s après
+ *    chaque `play()` en WebView mode navigateur (voir [youtubeEmbedUrl]).
+ *
+ * Dans les deux cas : le titre de la vidéo est affiché sous le lecteur et l'ouvre dans YouTube,
+ * et le plein écran place réellement le lecteur sur tout l'écran ([PlayerFullscreen]) — l'API
+ * Fullscreen de la page, elle, est refusée par la WebView.
  *
  * Points d'attention :
- *  - **rien n'est chargé avant un appui** : l'affiche occupe le bloc, et la page de lecture
- *    n'est demandée qu'au tap. La page démarre d'elle-même une fois chargée : sans cette
+ *  - **rien n'est chargé avant un appui** : l'affiche occupe le bloc, et la page n'est demandée
+ *    qu'au tap. La page démarre d'elle-même une fois chargée (mode `pressia`) : sans cette
  *    barrière, ouvrir un article suffisait à lancer la vidéo ;
  *  - JavaScript et le stockage local sont nécessaires au lecteur YouTube ;
  *  - `mediaPlaybackRequiresUserGesture = false` : sans cela, Chromium refuse de démarrer la
@@ -1527,30 +1975,38 @@ private fun VideoPoster(
  *    doivent rester disponibles.
  */
 @Composable
-fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifier) {
+fun YoutubePlayer(
+    videoId: String,
+    poster: String?,
+    modifier: Modifier = Modifier,
+    ui: String = com.pressia.data.local.Prefs.YOUTUBE_UI_DEFAULT
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    // Racine de la fenêtre : c'est là que se pose la vue plein écran.
+    val rootView = androidx.compose.ui.platform.LocalView.current.rootView
+        as? android.view.ViewGroup
+    val siteUi = ui == "youtube"
     // Rien ne se lit avant un appui : la page de lecture démarre d'elle-même dès qu'elle est
     // chargée (son et image), et un article qui s'ouvre ne doit pas se mettre à jouer.
     var started by remember(videoId) { mutableStateOf(false) }
     var failed by remember(videoId) { mutableStateOf(false) }
     var loaded by remember(videoId) { mutableStateOf(false) }
+    var fullscreen by remember(videoId) { mutableStateOf(false) }
     var webView by remember { mutableStateOf<android.webkit.WebView?>(null) }
-    val playerUrl = remember(videoId) { youtubeEmbedUrl(videoId) }
-
-    // Affiche seule tant que l'utilisateur n'a pas appuyé : aucune WebView, aucun réseau.
-    if (!started) {
-        VideoPoster(
-            poster = poster,
-            label = "Lire la vidéo",
-            onTap = { started = true },
-            modifier = modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-        )
-        return
+    val playerUrl = remember(videoId, siteUi) {
+        if (siteUi) youtubeEmbedUrl(videoId) else youtubeWatchUrl(videoId)
     }
+    val watchUrl = remember(videoId) { "https://www.youtube.com/watch?v=$videoId" }
+    val screen = remember { PlayerFullscreen() }
+    var title by remember(videoId) { mutableStateOf(youtubeTitles[videoId]) }
 
+    // Le titre est demandé à l'ouverture du bloc, pas à la lecture : il sert aussi d'indication
+    // avant tout appui.
+    LaunchedEffect(videoId) {
+        if (title == null) title = youtubeTitle(videoId)
+    }
     // Filet de sécurité : si la page n'a pas fini de charger (réseau coupé, WebView muette), on
     // propose l'ouverture dans le navigateur au lieu d'un écran noir. Le délai ne court qu'à
     // partir du tap — avant, il n'y a rien à charger.
@@ -1560,68 +2016,192 @@ fun YoutubePlayer(videoId: String, poster: String?, modifier: Modifier = Modifie
         if (!loaded) failed = true
     }
 
-    if (failed) {
-        // Repli : l'affiche de la vidéo, un tap l'ouvre dans YouTube (navigateur externe).
-        VideoPoster(
-            poster = poster,
-            label = "Ouvrir la vidéo sur YouTube",
-            onTap = { openUrl(context, "https://www.youtube.com/watch?v=$videoId") },
-            modifier = modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-        )
-        return
+    // Plein écran : la WebView change de parent, l'écran passe en paysage, les barres système
+    // s'effacent, et la page reçoit la classe `pressia-full` (voir [youtubePlayerCss]) pour que
+    // l'image occupe toute la hauteur au lieu du seul 16/9.
+    LaunchedEffect(fullscreen) {
+        val act = context.activityOrNull()
+        val wv = webView
+        if (fullscreen) {
+            if (wv != null) {
+                screen.enter(context, rootView, wv) { fullscreen = false }
+                wv.evaluateJavascript(
+                    "document.documentElement.classList.add('pressia-full');" +
+                        "window.pressiaFull=true;" +
+                        "if(window.pressiaControls){window.pressiaControls()}",
+                    null
+                )
+            }
+            act?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            act?.window?.let { w ->
+                androidx.core.view.WindowCompat.getInsetsController(w, w.decorView).apply {
+                    systemBarsBehavior =
+                        androidx.core.view.WindowInsetsControllerCompat
+                            .BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                }
+            }
+        } else {
+            if (wv != null) {
+                wv.evaluateJavascript(
+                    "document.documentElement.classList.remove('pressia-full');" +
+                        "window.pressiaFull=false;" +
+                        // La page a été mise à la taille de l'écran par la classe : sans cet
+                        // événement, YouTube garde sa mise en page plein écran dans le bloc.
+                        "window.dispatchEvent(new Event('resize'));",
+                    null
+                )
+            }
+            screen.exit()
+            act?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            act?.window?.let { w ->
+                androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+                    .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        // Reprise : détacher la WebView coupe le média et YouTube le laisse en pause. On redemande
+        // la lecture après coup, plusieurs fois — la page rétablit parfois son état un instant
+        // plus tard (changement de segment, reprise du rendu).
+        val player = webView
+        if (player != null) {
+            listOf(150L, 600L, 1500L, 3000L).forEach { wait ->
+                kotlinx.coroutines.delay(wait)
+                player.evaluateJavascript("if(window.pressiaResume){window.pressiaResume()}", null)
+            }
+        }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .background(androidx.compose.ui.graphics.Color.Black)
-            .clipToBounds()
-    ) {
-        AndroidView(
-            factory = { ctx ->
-                android.webkit.WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mediaPlaybackRequiresUserGesture = false
-                    settings.setSupportZoom(false)
-                    settings.builtInZoomControls = false
-                    settings.displayZoomControls = false
-                    isHorizontalScrollBarEnabled = false
-                    isVerticalScrollBarEnabled = false
-                    // Fond **transparent**, pas noir : au moment où elle est créée, la WebView
-                    // n'a pas encore la taille de son bloc et peint alors tout l'écran en noir
-                    // (constaté : une image entièrement noire à l'appui). Le noir vient de la
-                    // boîte qui l'entoure, et de la page elle-même (`background:#000`, voir
-                    // [youtubePlayerCss]).
-                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    webViewClient = object : android.webkit.WebViewClient() {
-                        override fun onPageFinished(view: android.webkit.WebView, url: String) {
-                            view.post {
-                                loaded = true
-                                // La page est un site complet : on n'en garde que le lecteur.
-                                view.evaluateJavascript(youtubePlayerScript(), null)
-                                view.evaluateJavascript(youtubeControlsScript(), null)
-                            }
-                        }
-                    }
-                    webView = this
-                    // En-tête Referer explicite : un chargement de premier niveau n'en envoie aucun.
-                    loadUrl(playerUrl, mapOf("Referer" to youtubeReferer()))
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            onRelease = { wv ->
-                // `about:blank` d'abord : la WebView est dans une colonne défilable, la stopper
-                // avant sa destruction évite qu'elle continue de charger en arrière-plan.
-                wv.stopLoading()
-                wv.loadUrl("about:blank")
-                wv.destroy()
-                webView = null
+    // Retour : quitter le plein écran d'abord, quitter l'article ensuite.
+    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
+
+    // La vue plein écran est posée sur la fenêtre, hors de la composition : elle ne part pas
+    // toute seule, et l'orientation doit être rendue au système.
+    DisposableEffect(Unit) {
+        onDispose {
+            screen.release()
+            val act = context.activityOrNull()
+            act?.requestedOrientation =
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            act?.window?.let { w ->
+                androidx.core.view.WindowCompat.getInsetsController(w, w.decorView)
+                    .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             }
-        )
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .clipToBounds()
+        ) {
+            when {
+                // Affiche seule tant que l'utilisateur n'a pas appuyé : aucune WebView, aucun réseau.
+                !started -> VideoPoster(
+                    poster = poster,
+                    label = "Lire la vidéo",
+                    onTap = { started = true },
+                    modifier = Modifier.fillMaxSize()
+                )
+                // Repli : l'affiche de la vidéo, un tap l'ouvre dans YouTube (navigateur externe).
+                failed -> VideoPoster(
+                    poster = poster,
+                    label = "Ouvrir la vidéo sur YouTube",
+                    onTap = { openUrl(context, watchUrl) },
+                    modifier = Modifier.fillMaxSize()
+                )
+                else -> AndroidView(
+                    factory = { ctx ->
+                        android.webkit.WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.mediaPlaybackRequiresUserGesture = false
+                            // L'interface YouTube n'est servie qu'à un User-Agent de navigateur.
+                            if (siteUi) settings.userAgentString = youtubeBrowserUserAgent()
+                            settings.setSupportZoom(false)
+                            settings.builtInZoomControls = false
+                            settings.displayZoomControls = false
+                            isHorizontalScrollBarEnabled = false
+                            isVerticalScrollBarEnabled = false
+                            // Fond **transparent**, pas noir : au moment où elle est créée, la
+                            // WebView n'a pas encore la taille de son bloc et peint alors tout
+                            // l'écran en noir (constaté : une image entièrement noire à l'appui).
+                            // Le noir vient de la boîte qui l'entoure, et de la page elle-même
+                            // (`background:#000`, voir [youtubePlayerCss]).
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            // Bouton plein écran de nos contrôles : c'est l'application qui le
+                            // réalise (voir [PlayerJsBridge]).
+                            addJavascriptInterface(
+                                PlayerJsBridge { scope.launch { fullscreen = !fullscreen } },
+                                "PressIAHost"
+                            )
+                            webViewClient = object : android.webkit.WebViewClient() {
+                                override fun onPageFinished(view: android.webkit.WebView, url: String) {
+                                    view.post {
+                                        loaded = true
+                                        // La page reçoit son habillage (géométrie du bloc, fond
+                                        // noir, gestes) puis son script de démarrage.
+                                        view.evaluateJavascript(
+                                            youtubePlayerScript(
+                                                if (siteUi) youtubeSiteCss() else youtubePlayerCss()
+                                            ),
+                                            null
+                                        )
+                                        view.evaluateJavascript(
+                                            if (siteUi) youtubeSiteScript() else youtubeControlsScript(),
+                                            null
+                                        )
+                                        if (fullscreen) {
+                                            view.evaluateJavascript(
+                                                "document.documentElement.classList.add('pressia-full');" +
+                                                    "window.pressiaFull=true;",
+                                                null
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            webView = this
+                            // En-tête Referer explicite : un chargement de premier niveau n'en envoie aucun.
+                            loadUrl(playerUrl, mapOf("Referer" to youtubeReferer(siteUi)))
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    onRelease = { wv ->
+                        // La vue plein écran ne doit pas survivre à la WebView qui la fournit.
+                        screen.release()
+                        // `about:blank` d'abord : la WebView est dans une colonne défilable, la
+                        // stopper avant sa destruction évite qu'elle continue de charger en
+                        // arrière-plan.
+                        wv.stopLoading()
+                        wv.loadUrl("about:blank")
+                        wv.destroy()
+                        webView = null
+                    }
+                )
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            YoutubeTitleRow(title, watchUrl, modifier = Modifier.weight(1f))
+            if (started && !failed) FullscreenToggle(fullscreen) {
+                val wv = webView
+                if (wv == null) {
+                    fullscreen = !fullscreen
+                } else {
+                    // La page retient l'état de lecture avant le déplacement (voir
+                    // `pressiaToggleFull`) ; sans page prête, on bascule directement.
+                    wv.evaluateJavascript(
+                        "(function(){if(window.pressiaToggleFull){window.pressiaToggleFull();}" +
+                            "else if(window.PressIAHost){window.PressIAHost.fullscreen();}})()",
+                        null
+                    )
+                }
+            }
+        }
     }
 
     // Cycle de vie : la lecture YouTube se met en pause quand l'écran est quitté, et reprend

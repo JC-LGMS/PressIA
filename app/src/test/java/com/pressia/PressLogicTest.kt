@@ -588,11 +588,19 @@ class PressLogicTest {
         // L'affiche se déduit de l'identifiant.
         assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
             com.pressia.ui.youtubePosterUrl("https://www.youtube.com/embed/dQw4w9WgXcQ"))
-        // La lecture se fait sur la page `watch` : l'intégration `embed` donne le son sans
-        // l'image sur certains appareils (décodeur alimenté, images jamais composées), alors que
-        // la page de lecture, document de premier niveau, rend la vidéo normalement.
+        // Mode « contrôles PressIA » : la page de lecture, dont YouTube livre le lecteur nu à une
+        // WebView (l'application pose ses propres commandes).
         assertEquals("https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+            com.pressia.ui.youtubeWatchUrl("dQw4w9WgXcQ"))
+        // Mode « interface YouTube » : la page d'intégration, dont les contrôles sont de vrais
+        // éléments du document. La page `watch` ne convient pas : en WebView avec un User-Agent de
+        // navigateur, son lecteur se croit non visible et se met en pause après chaque play().
+        assertEquals("https://www.youtube.com/embed/dQw4w9WgXcQ",
             com.pressia.ui.youtubeEmbedUrl("dQw4w9WgXcQ"))
+        // Le référent porte l'hôte historique de la page de lecture : YouTube refuse
+        // `www.youtube.com` comme référent d'une intégration (« Erreur 152 »).
+        assertEquals("https://m.youtube.com/", com.pressia.ui.youtubeReferer())
+        assertEquals("https://m.youtube.com/", com.pressia.ui.youtubeReferer(siteUi = true))
         // Habillage : le bloc 16/9 ne doit montrer que le lecteur.
         assertTrue(com.pressia.ui.youtubePlayerScript().contains("position:fixed"))
         assertTrue(com.pressia.ui.youtubePlayerCss().contains("56.25vw"))

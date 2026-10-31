@@ -81,6 +81,15 @@ class Prefs(private val ctx: Context) {
         /** Balayage droit par défaut dans un article : article plus récent. */
         const val ARTICLE_SWIPE_RIGHT_DEFAULT = "newer"
         /**
+         * Lecteur des vidéos YouTube : "pressia" (défaut — contrôles de l'application posés
+         * par-dessus l'image) ou "youtube" (l'interface du site elle-même).
+         */
+        val YOUTUBE_UI = stringPreferencesKey("youtube_ui")
+        /** Lecteur YouTube par défaut : les contrôles de PressIA. */
+        const val YOUTUBE_UI_DEFAULT = "pressia"
+        /** Valeurs admises pour [YOUTUBE_UI]. */
+        val YOUTUBE_UI_IDS = listOf("pressia", "youtube")
+        /**
          * Source des favicons : agrégateur (service Google, défaut) ou sites eux-mêmes
          * (`/favicon.ico`, en direct). L'icône fournie par le compte reste prioritaire
          * dans les deux cas.
@@ -269,6 +278,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("double_tap_action", DOUBLE_TAP_ACTION),
             PrefEntry.Str("article_swipe_left", ARTICLE_SWIPE_LEFT),
             PrefEntry.Str("article_swipe_right", ARTICLE_SWIPE_RIGHT),
+            PrefEntry.Str("youtube_ui", YOUTUBE_UI),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),

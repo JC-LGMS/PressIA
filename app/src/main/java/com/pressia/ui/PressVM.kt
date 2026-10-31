@@ -272,6 +272,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val homeScreen: StateFlow<String?> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, null)
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")
+    /**
+     * Lecteur des vidéos YouTube : « pressia » (contrôles de l'application, défaut) ou
+     * « youtube » (l'interface du site elle-même). Une valeur inconnue retombe sur le défaut.
+     */
+    val youtubeUi: StateFlow<String> = prefs.flow(Prefs.YOUTUBE_UI, Prefs.YOUTUBE_UI_DEFAULT)
+        .map { if (it in Prefs.YOUTUBE_UI_IDS) it else Prefs.YOUTUBE_UI_DEFAULT }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.YOUTUBE_UI_DEFAULT)
     val hasCloudAccounts: Boolean get() = accounts.isNotEmpty()
     /** Faux = un dossier par compte même si les noms se ressemblent. */
     val mergeFolders: StateFlow<Boolean> = prefs.flow(Prefs.MERGE_FOLDERS, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)

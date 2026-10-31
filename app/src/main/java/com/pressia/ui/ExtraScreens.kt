@@ -642,6 +642,7 @@ fun SettingsScreen(vm: PressVM) {
     var doubleTap by remember { mutableStateOf(Prefs.DOUBLE_TAP_DEFAULT) }
     var artSwipeLeft by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_LEFT_DEFAULT) }
     var artSwipeRight by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT) }
+    var youtubeUi by remember { mutableStateOf(Prefs.YOUTUBE_UI_DEFAULT) }
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
@@ -679,6 +680,8 @@ fun SettingsScreen(vm: PressVM) {
         doubleTap = get(Prefs.DOUBLE_TAP_ACTION, Prefs.DOUBLE_TAP_DEFAULT)
         artSwipeLeft = get(Prefs.ARTICLE_SWIPE_LEFT, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT)
         artSwipeRight = get(Prefs.ARTICLE_SWIPE_RIGHT, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
+        youtubeUi = get(Prefs.YOUTUBE_UI, Prefs.YOUTUBE_UI_DEFAULT)
+            .takeIf { it in Prefs.YOUTUBE_UI_IDS } ?: Prefs.YOUTUBE_UI_DEFAULT
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         refreshCacheInfo()
@@ -725,6 +728,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DOUBLE_TAP_ACTION, doubleTap)
         vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_LEFT, artSwipeLeft)
         vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_RIGHT, artSwipeRight)
+        vm.repo.prefs.set(Prefs.YOUTUBE_UI, youtubeUi)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
@@ -891,6 +895,25 @@ fun SettingsScreen(vm: PressVM) {
         Text(
             "Par défaut, gauche = article plus ancien et droite = article plus récent. " +
                 "Toute autre action remplace la navigation dans ce sens (« Aucun » : le geste ne fait rien).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("Vidéos YouTube")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("pressia" to "Contrôles PressIA", "youtube" to "Interface YouTube").forEach { (id, l) ->
+                FilterChip(youtubeUi == id, { youtubeUi = id; save() }, { Text(l) })
+            }
+        }
+        Text(
+            if (youtubeUi == "youtube")
+                "La page YouTube s'affiche avec ses propres boutons (lecture, barre d'avancée, " +
+                    "qualité, partage). Plus fidèle, mais plus lourde et sans les réglages de " +
+                    "PressIA (vitesses, boucle) : le titre et le plein écran restent sous la vidéo."
+            else
+                "La vidéo se lit dans l'article avec les contrôles de PressIA : lecture/pause, " +
+                    "double appui pour avancer ou reculer de 10 s, barre d'avancée, son, vitesse, " +
+                    "lecture en boucle et plein écran. Le titre de la vidéo, sous le lecteur, " +
+                    "l'ouvre dans YouTube.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

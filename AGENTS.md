@@ -246,15 +246,31 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     son ni image, aucun journal `MediaPlayer`). Le `VideoView` doit aussi être créé **dans** la
     fenêtre (`factory` d'`AndroidView`), pas par un `remember` détaché.
   - `<iframe src="…/embed/…">` = **page web**, pas un média → `ABlock.V(embed = true)`. Pour
-    **YouTube**, la vidéo est lue **dans l'application** (`YoutubePlayer`) : la WebView charge la
-    page de **lecture** (`m.youtube.com/watch?v=<id>`), pas la page d'intégration. Raison
-    mesurée sur l'émulateur : `youtube.com/embed/…` crée bien le décodeur (`c2.goldfish.vp9`),
-    l'audio passe, mais **aucune image n'est composée** (0 % de mouvement sur la zone, alors que
-    Chrome joue la même vidéo) — tandis que la page de lecture, document de premier niveau, rend
-    la vidéo normalement (60 % de mouvement). C'est aussi le chemin du tap sur le titre de
-    l'intégration, seul geste qui affichait l'image. La page du site est **habillée** par
-    `youtubePlayerScript()` / `youtubePlayerCss()` (en-tête et contenus annexes masqués, lecteur
-    fixé en haut, `height:56.25vw`) : le bloc 16/9 ne montre que la vidéo. Ne pas réintroduire de
+    **YouTube**, la vidéo est lue **dans l'application** (`YoutubePlayer`), dans l'une des deux
+    présentations du réglage « Vidéos YouTube » (`Prefs.YOUTUBE_UI`, défaut `pressia`) :
+    - **`pressia`** (défaut) : la WebView charge la page de **lecture**
+      (`youtubeWatchUrl` → `m.youtube.com/watch?v=<id>`) avec son propre User-Agent (`wv`). C'est
+      la page où l'image est composée de façon fiable : en WebView `wv`, l'intégration
+      `youtube.com/embed/…` crée bien le décodeur (`c2.goldfish.vp9`) et l'audio passe, mais
+      **aucune image n'est composée** (0 % de mouvement sur la zone, alors que Chrome joue la
+      même vidéo), tandis que la page de lecture, document de premier niveau, rend la vidéo
+      normalement (60 % de mouvement).
+    - **`youtube`** : la page d'**intégration** (`youtubeEmbedUrl` → `youtube.com/embed/<id>`)
+      chargée avec un **User-Agent de navigateur** (`youtubeBrowserUserAgent`) : YouTube y sert
+      la vraie page mobile, dont les contrôles sont de **vrais éléments** du document (titre,
+      son, sous-titres, roue, ⤢, barre d'avancée, temps) au lieu d'un canevas. La page
+      `m.youtube.com/watch` ne convient **pas** à ce mode : en User-Agent navigateur elle se met
+      en pause ~0,5 s après chaque `play()` — pile relevée : `onVideoProgress` →
+      `visibility.Xj()` → `pauseVideo` —, même sans feuille de style de l'application et avec
+      `backgroundable` forcé.
+    **`Referer` = `https://m.youtube.com/` dans les deux modes** (`youtubeReferer`) : un
+    `loadUrl` sans en-tête n'en envoie aucun (« Erreur 152 »), et `www.youtube.com` comme référent
+    d'une intégration est refusé (une page YouTube ne peut pas en intégrer une autre) — vérifié
+    en direct ; l'erreur s'affiche **dans** le bloc. La page est **habillée** par
+    `youtubePlayerScript()`, avec `youtubePlayerCss()` (page de lecture : en-tête et contenus
+    annexes masqués, lecteur fixé en haut, `height:56.25vw`) ou `youtubeSiteCss()` (intégration :
+    même géométrie, sans masquage — c'est déjà un lecteur), si bien que le bloc 16/9 ne montre que
+    la vidéo. Ne pas réintroduire de
     détection d'erreur par lecture du texte de la page : elle se déclenchait à tort, basculait
     sur l'affiche et le tap ouvrait l'application YouTube installée. Les autres services
     d'intégration (Vimeo, Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image
@@ -263,7 +279,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     chargée, si bien que la WebView créée à l'affichage de l'article jouait toute seule. Le bloc
     montre l'affiche (`VideoPoster`), et le tap seul crée la WebView ; le délai de secours de
     20 s ne court qu'à partir de là.
-  - **Contrôles : les nôtres, injectés dans la page** (`youtubeControlsScript`). Ceux du lecteur
+  - **Mode `pressia` : les contrôles sont les nôtres**, injectés dans la page
+    (`youtubeControlsScript`). Ceux du lecteur
     mobile sont **peints sur un canevas** : le document ne contient ni `.ytp-progress-bar`, ni
     `.ytp-chrome-bottom`, ni bouton atteignable, et aucun appui dessus n'a d'effet — ni la pause,
     ni la roue des réglages, ni la barre d'avancée (au mieux l'image d'aperçu du temps visé, la
@@ -284,6 +301,22 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     Chromium prenne un glissement horizontal pour un défilement et l'annule par un `pointercancel`
     au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage d'article
     (`detectArticleSwipe`, repère `playerGesture`) — sinon tirer la barre changeait d'article.
+  - **Un garde-fou tient la lecture voulue** (mode `pressia`). Après un aller-retour en plein
+    écran, YouTube se croit définitivement invisible et annulait chaque reprise — `onVideoProgress`
+    → contrôle de visibilité → `pauseVideo` : la vidéo restait en pause quoi qu'on fasse, y compris
+    en appelant `play()` depuis la console. `HTMLMediaElement.prototype.pause` est donc **ignoré
+    tant que `window.pressiaWant` est vrai** : drapeau posé par le tap de lecture et les événements
+    `play`, tombé par `toggle()` **avant** la pause demandée par l'utilisateur (et par `ended`).
+    Vérifié en direct : plein écran, ✕, puis 8 s de lecture continue (21,7 → 34,6 s), pause et
+    reprise manuelles obéies. Ne pas remplacer ce drapeau par un écouteur d'événements : c'est
+    l'appel lui-même qu'il faut laisser passer ou non.
+  - **Le plein écran est celui de l'application** (`PlayerFullscreen` + `PlayerJsBridge`), pour les
+    deux modes : l'API Fullscreen de la page est refusée par la WebView. La WebView est **déplacée**
+    dans un `FrameLayout` posé sur la racine de la fenêtre — même page, même instant de lecture ;
+    la recréer relancerait la vidéo au début. La classe `pressia-full` étire l'image sur toute la
+    hauteur, l'activité passe en paysage et les barres système s'effacent ; ✕ en haut à gauche,
+    `BackHandler`, et `release()` sur `onRelease` comme sur `onDispose`. Déplacer la vue coupe le
+    média : `pressiaResume` est rappelé au retour (150/600/1500/3000 ms).
   - **Le son est tenu par l'application** : le lecteur démarre muet (politique de lecture
     automatique) et le recoupe parfois en cours de lecture (changement de segment, reprise). Comme
     la lecture vient d'un appui franc sur l'affiche, `paint()` (appelé toutes les 500 ms et sur les

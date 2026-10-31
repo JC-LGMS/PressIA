@@ -47,6 +47,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.15",
+        listOf(
+            ChangelogItem(
+                "2026-10-31",
+                "Vidéo YouTube : interface au choix, plein écran natif",
+                "Un réglage « Vidéos YouTube » choisit la présentation du lecteur : « Contrôles " +
+                    "PressIA » (défaut) garde la page de lecture, où YouTube livre un lecteur " +
+                    "sans commandes et où l'image est composée de façon fiable — l'application " +
+                    "pose les siennes (lecture/pause, ±10 s, barre, son, vitesses, boucle) ; " +
+                    "« Interface YouTube » charge la page d'intégration avec un User-Agent de " +
+                    "navigateur, et YouTube affiche alors ses propres contrôles, qui sont de " +
+                    "vrais boutons. Le plein écran est désormais celui de l'application : la vue " +
+                    "est déplacée sur toute la fenêtre, en paysage, sans recharger la page — donc " +
+                    "sans relancer la vidéo —, et ✕ (ou Retour) la remet en place. En mode " +
+                    "PressIA, un garde-fou empêche YouTube d'annuler la lecture au retour du " +
+                    "plein écran : il ignorait chaque reprise, la vidéo restait bloquée en pause.",
+                time = "10:42"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.14",
         listOf(
             ChangelogItem(
