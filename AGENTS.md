@@ -30,7 +30,10 @@ tools temporaire :
 | emulator | `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe` (AVD **Pixel_10**) |
 
 Ces outils sont hors du dépôt : s'ils disparaissent, les retélécharger (le ZIP de Gradle 8.7 est
-normalement déjà dans le même dossier).
+normalement déjà dans le même dossier). **Le dossier temporaire est vidé de temps à autre** (constaté
+le 31/10 : seul le JDK restait). Avant de retélécharger Gradle, regarder ce qu'il y a déjà dans le
+dépôt de distributions : `~\.gradle\wrapper\dists\gradle-8.10.2-bin\<haché>\gradle-8.10.2\bin\gradle.bat`
+— une distribution complète y fonctionne avec AGP 8.5.2.
 
 Préambule PowerShell avant tout appel Gradle :
 
