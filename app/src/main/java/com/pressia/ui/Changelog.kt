@@ -47,6 +47,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.16",
+        listOf(
+            ChangelogItem(
+                "2026-11-01",
+                "Vidéo YouTube : bouton plein écran à deux icônes",
+                "Le bouton plein écran de la barre du lecteur ne se distinguait pas d'un coin " +
+                    "de l'image : un carré vide, à peine plus clair en plein écran, et les " +
+                    "commandes du site (CC, roue, ⤢, progression) s'affichaient par-dessus les " +
+                    "nôtres dans le même coin une fois la vidéo assez grande — d'où des appuis " +
+                    "qui réduisaient la vidéo au lieu de la mettre en pause, et d'autres qui la " +
+                    "rétablissaient. Le bouton porte maintenant les deux icônes de " +
+                    "l'application (agrandir / réduire) et devient rouge en plein écran, les " +
+                    "commandes de YouTube sont masquées, et le mini-lecteur du site ne s'installe " +
+                    "plus. Au passage, la lecture et l'arrêt passent par l'API du lecteur YouTube " +
+                    "(comme ses boutons) : ils ne déclenchent plus de rechargement de la vidéo, " +
+                    "et l'icône lecture/pause suit l'état réel du lecteur.",
+                time = "02:00"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.15",
         listOf(
             ChangelogItem(

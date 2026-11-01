@@ -1074,6 +1074,28 @@ internal fun youtubePlayerCss(): String = listOf(
     "ytm-header-renderer,ytm-app-header,ytm-mobile-topbar-renderer,#header,header," +
         "ytm-slim-video-metadata-section-renderer,ytm-watch-metadata," +
         "ytm-comment-section-renderer,.watch-below-the-player{display:none!important}",
+    // Les commandes du **site** ne doivent pas cohabiter avec les nôtres : dès que le lecteur
+    // devient assez grand (plein écran), YouTube rend sa propre barre — CC, roue, ⤢, barre de
+    // progression —, qui s'affichait **dans le même coin** que la nôtre : deux jeux de commandes
+    // superposés, dont deux boutons de plein écran, si bien qu'un appui sur la vidéo tombait sur
+    // l'un ou l'autre. Le lecteur étant le nôtre (voir [youtubeControlsScript]), ses commandes
+    // sont masquées.
+    ".ytp-chrome-top,.ytp-chrome-bottom,.ytp-gradient-top,.ytp-gradient-bottom," +
+        ".ytp-progress-bar-container,#player-control-overlay,.ytp-fullscreen-button," +
+        ".ytp-miniplayer-button,.ytp-settings-button,.ytp-subtitles-button,.ytp-watermark," +
+        ".ytp-bezel-text-wrapper,.ytp-tooltip,.ytp-ce-element{display:none!important}",
+    // Le **mini-lecteur** (« sticky ») : YouTube substitue une vignette au grand lecteur quand il
+    // croit l'utilisateur ailleurs dans la page. Le bloc n'expose qu'une vue, et la substitution
+    // changeait la taille de la vidéo en pleine lecture (l'appui suivant la rétablissait). On
+    // garde la géométrie du grand lecteur ; le script retire aussi la classe (voir
+    // [youtubeControlsScript]).
+    "html.sticky-player #player-container-id,html.sticky-player .player-container," +
+        "html.sticky-player ytm-player,html.sticky-player .html5-video-player{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important}",
+    "html.sticky-player video.video-stream{" +
+        "position:fixed!important;top:0!important;left:0!important;" +
+        "width:100vw!important;height:56.25vw!important;object-fit:contain!important}",
     "#player-container-id,.player-container,ytm-player,.html5-video-player{" +
         "position:fixed!important;top:0!important;left:0!important;" +
         "width:100vw!important;height:56.25vw!important;margin:0!important;padding:0!important}" +
@@ -1117,6 +1139,9 @@ internal fun youtubePlayerScript(css: String = youtubePlayerCss()): String =
         "if(!s){s=document.createElement('style');s.id='pressia-yt';" +
         "(document.head||document.documentElement).appendChild(s);}" +
         "s.textContent=css;};" +
+        // La page peut se réappliquer l'habillage (YouTube remplace parfois la feuille de style) ;
+        // `pressiaApplyCss` le lui permet depuis les contrôles.
+        "window.pressiaApplyCss=apply;" +
         "apply();setTimeout(apply,700);setTimeout(apply,2200);setTimeout(apply,5000);" +
         "})()"
 
@@ -1138,8 +1163,22 @@ private fun jsSingleQuoted(value: String): String =
  *    appui à gauche/droite recule/avance de 10 s. Elle intercepte aussi les appuis destinés au
  *    canevas, si bien que les contrôles morts de YouTube ne s'affichent plus ;
  *  - une barre en bas : lecture/pause, temps écoulé et durée, barre d'avancée (appui et
- *    glissement, `video.currentTime`), son, et roue des réglages ;
+ *    glissement), son, roue des réglages et **bouton plein écran** ;
  *  - un menu de réglages : vitesse de lecture et lecture en boucle.
+ *
+ * Trois points appris à l'usage, à ne pas défaire :
+ *  - les commandes passent par l'**API du lecteur** (`movie_player.playVideo`/`pauseVideo`/
+ *    `seekTo`/`setPlaybackRate`) quand elle est là. Un `video.pause()` direct laisse YouTube hors
+ *    du coup, et sa machine d'état réagit à sa façon : constaté, la page basculait sur son
+ *    **mini-lecteur** (classe `sticky-player`), la vidéo se retrouvait réduite et l'appui suivant
+ *    la rétablissait — une bascule que l'on prenait pour un aller-retour de plein écran ;
+ *  - le bouton plein écran porte **deux icônes** (material « fullscreen » / « fullscreen_exit »,
+ *    les mêmes que celles de l'application), et devient rouge en plein écran. Sa commande est un
+ *    vrai élément du document, de 34×34, à l'**extrémité droite de la barre** : un carré vide ne
+ *    disait ni ce qu'il faisait ni dans quel état on était, et les commandes du site — masquées
+ *    depuis (`youtubePlayerCss`) — en affichaient un autre dans le même coin ;
+ *  - `paint()` retire la classe `sticky-player` et réapplique l'habillage (`pressiaApplyCss`) :
+ *    le mini-lecteur ne doit pas s'installer, le bloc n'exposant qu'une vue.
  *
  * `touch-action:none` et `preventDefault`/`stopPropagation` sont indispensables : sans eux
  * Chromium prend le glissement horizontal pour un défilement et l'annule (`pointercancel` au bout
@@ -1153,12 +1192,90 @@ internal fun youtubeControlsScript(): String = """
   var el = {};
   var speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
   function video() { return document.querySelector('video'); }
+  // Les commandes passent par l'**API du lecteur** (`movie_player`) quand elle est là : appeler
+  // directement `video.play()`/`pause()` laisse YouTube hors du coup, et sa machine d'état réagit
+  // à sa façon — constaté : un appui pour mettre en pause faisait basculer la page sur son
+  // **mini-lecteur**, la vidéo se retrouvait réduite et l'appui suivant la rétablissait, sans
+  // qu'aucune pause ne soit perçue.
+  function player() {
+    var pl = document.getElementById('movie_player');
+    return (pl && pl.playVideo && pl.pauseVideo) ? pl : null;
+  }
+  function seekTo(t) {
+    var pl = player();
+    if (pl && pl.seekTo) { try { pl.seekTo(t, true); return; } catch (e) {} }
+    var v = video();
+    if (v) v.currentTime = t;
+  }
+  // Lecture en cours **selon le lecteur** (et non selon le seul élément média) : YouTube peut
+  // avoir une autre idée que le `<video>` — la commande comme l'icône doivent suivre la sienne,
+  // sans quoi l'appui suivant fait le contraire de ce qu'on attend (et l'icône se fige).
+  // États du lecteur : -1 à venir, 0 fin, 1 lecture, 2 pause, 3 mémoire tampon, 5 en attente.
+  // Seuls 1 et « en pause » sont concluants : sur **3** (mémoire tampon), qui reste affiché
+  // longtemps après une pause sur ce lecteur, c'est le `<video>` qui tranche.
+  function isPlaying() {
+    var v = video();
+    var byElement = !!(v && !v.paused && !v.ended);
+    var pl = player();
+    if (pl && pl.getPlayerState) {
+      try {
+        var st = pl.getPlayerState();
+        if (st === 1) return true;
+        if (st === 0 || st === 2 || st === 5) return false;
+      } catch (e) {}
+    }
+    return byElement;
+  }
   function fmt(s) {
     s = Math.max(0, Math.floor(s || 0));
     var m = Math.floor(s / 60), r = s % 60;
     return m + ':' + (r < 10 ? '0' : '') + r;
   }
+  // Le **mini-lecteur** (« sticky ») : YouTube le substitue au grand lecteur quand il croit
+  // l'utilisateur ailleurs dans la page — la vidéo changeait alors de taille en pleine lecture.
+  // Le bloc n'expose qu'une vue : la classe est retirée et l'habillage réappliqué.
+  function unsticky() {
+    var de = document.documentElement;
+    if (!de.classList.contains('sticky-player')) return;
+    de.classList.remove('sticky-player');
+    if (window.pressiaApplyCss) window.pressiaApplyCss();
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+  }
+  // Icônes du bouton plein écran : la même paire que celle de l'application (Material
+  // « fullscreen » / « fullscreen_exit »). Un carré plein ne disait rien — et se confondait avec
+  // le bouton du site, placé dans le même coin : on voyait un appui sur la vidéo changer de mode
+  // sans comprendre lequel des deux avait répondu.
+  //
+  // **Rien qui écrive du balisage d'un coup** : la page de YouTube applique une politique
+  // *Trusted Types* (« This document requires 'TrustedHTML' assignment ») et l'affectation lève
+  // une exception — qui interrompait la construction des contrôles (plus de barre du tout,
+  // silencieusement). L'icône est donc construite avec l'API DOM.
+  var FS_PATH = {
+    expand: 'M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3z' +
+      'M14 5v2h3v3h2V5h-5z',
+    reduce: 'M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5z' +
+      'M16 8V5h-2v5h5V8h-3z'
+  };
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function fsIcon(kind) {
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '20');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('fill', '#fff');
+    svg.setAttribute('aria-hidden', 'true');
+    var p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', FS_PATH[kind]);
+    svg.appendChild(p);
+    return svg;
+  }
+  function setFsIcon(kind) {
+    if (!el.fs) return;
+    while (el.fs.firstChild) el.fs.removeChild(el.fs.firstChild);
+    el.fs.appendChild(fsIcon(kind));
+  }
   function paint() {
+    unsticky();
     var v = video();
     if (!v || !el.fill) return;
     // Le son est rétabli à chaque passe tant que l'utilisateur ne l'a pas coupé lui-même :
@@ -1174,39 +1291,54 @@ internal fun youtubeControlsScript(): String = """
     el.fill.style.width = (p * 100) + '%';
     el.dot.style.left = (p * 100) + '%';
     el.time.textContent = fmt(v.currentTime) + ' / ' + fmt(d);
-    if (v.paused) { el.play.className = ''; } else { el.play.className = 'on'; }
+    // L'icône de lecture suit le **lecteur** (voir `isPlaying`), pas le seul `<video>`.
+    if (el.play) el.play.className = isPlaying() ? 'on' : '';
     el.mute.textContent = userMuted ? '🔇' : '🔊';
-    if (el.fs) el.fs.className = window.pressiaFull ? 'on' : '';
+    // État du bouton plein écran : icône « réduire » en plein écran, « agrandir » sinon. Le
+    // redessin n'a lieu qu'au **changement** d'état, `paint()` tournant toutes les 500 ms ; l'état
+    // vient de l'application (`window.pressiaFull`), seule à savoir où en est la vue.
+    var fsOn = !!window.pressiaFull;
+    if (el.fs && el.fsState !== fsOn) {
+      el.fsState = fsOn;
+      el.fs.className = fsOn ? 'on' : '';
+      setFsIcon(fsOn ? 'reduce' : 'expand');
+      el.fs.title = fsOn ? 'Réduire' : 'Plein écran';
+    }
   }
+  // Redessin immédiat, après un basculement de plein écran commandé par l'application.
+  window.pressiaPaint = paint;
   function seek(x) {
     var v = video();
     if (!v || !isFinite(v.duration) || v.duration <= 0) return;
     var r = el.track.getBoundingClientRect();
     var p = Math.min(1, Math.max(0, (x - r.left) / r.width));
-    v.currentTime = p * v.duration;
+    seekTo(p * v.duration);
     paint();
   }
   function toggle() {
     var v = video();
     if (!v) return;
-    if (v.paused) {
-      window.pressiaWant = true;
-      try {
-        var pr = v.play();
-        if (pr && pr.catch) pr.catch(function () {});
-      } catch (e) {}
-    } else {
+    var pl = player();
+    if (isPlaying()) {
       // La pause est demandée : le drapeau tombe **avant** l'appel, sinon le garde-fou de
       // `pressiaPause` (voir plus haut) l'ignorerait.
       window.pressiaWant = false;
-      v.pause();
+      try { if (pl) { pl.pauseVideo(); } else { v.pause(); } } catch (e) {}
+    } else {
+      window.pressiaWant = true;
+      try {
+        if (pl) { pl.playVideo(); } else {
+          var pr = v.play();
+          if (pr && pr.catch) pr.catch(function () {});
+        }
+      } catch (e) {}
     }
     paint();
   }
   function nudge(d) {
     var v = video();
     if (!v || !isFinite(v.duration)) return;
-    v.currentTime = Math.min(v.duration, Math.max(0, v.currentTime + d));
+    seekTo(Math.min(v.duration, Math.max(0, v.currentTime + d)));
     paint();
   }
   // Plein écran : c'est l'application qui l'exécute (elle déplace la WebView), l'API Fullscreen du
@@ -1259,7 +1391,10 @@ internal fun youtubeControlsScript(): String = """
   function pickSpeed(value) {
     var v = video();
     if (!v) return;
-    v.playbackRate = parseFloat(value);
+    var rate = parseFloat(value);
+    var pl = player();
+    try { if (pl && pl.setPlaybackRate) { pl.setPlaybackRate(rate); } else { v.playbackRate = rate; } }
+    catch (e) { v.playbackRate = rate; }
     var items = el.speedBox.children;
     for (var i = 0; i < items.length; i++) {
       items[i].className = 'pressia-chip' +
@@ -1291,10 +1426,12 @@ internal fun youtubeControlsScript(): String = """
 #pressia-gap{flex:1 1 auto}
 #pressia-mute{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
 #pressia-gear{font-size:16px;line-height:34px;width:34px;height:34px;text-align:center;flex:0 0 auto}
-#pressia-fs{position:relative;width:34px;height:34px;flex:0 0 auto}
-#pressia-fs::before{content:'';position:absolute;left:9px;top:10px;width:12px;height:12px;
-  border:2px solid #fff;border-radius:2px;box-sizing:border-box}
-#pressia-fs.on::before{background:rgba(255,255,255,.45)}
+#pressia-fs{position:relative;width:34px;height:34px;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;border-radius:6px;background:rgba(0,0,0,.32)}
+#pressia-fs:active{background:rgba(255,255,255,.22)}
+/* Plein écran : le bouton devient franchement rouge (couleur de l'application) et son icône
+   passe en « réduire » (voir FS_ICON) — l'état se lit d'un coup d'œil. */
+#pressia-fs.on{background:rgba(244,68,68,.9)}
 #pressia-line{position:relative;height:16px;margin:0 12px;flex:0 0 auto}
 #pressia-track{position:absolute;left:0;right:0;top:6px;height:4px;border-radius:2px;
   background:rgba(255,255,255,.35)}
@@ -1338,6 +1475,7 @@ internal fun youtubeControlsScript(): String = """
       gear.textContent = '⚙';
       var fsBtn = document.createElement('div');
       fsBtn.id = 'pressia-fs';
+      fsBtn.title = 'Plein écran';
       var line = document.createElement('div');
       line.id = 'pressia-line';
       var track = document.createElement('div');
@@ -1375,6 +1513,8 @@ internal fun youtubeControlsScript(): String = """
       el.gear = gear; el.line = line; el.track = track; el.fill = fill; el.dot = dot;
       el.menu = menu; el.speedBox = speedBox; el.loop = loop;
       el.fs = fsBtn;
+      el.fsState = false;
+      setFsIcon('expand');
 
       // Appui simple : lecture/pause. Double appui : -10 s à gauche, +10 s à droite.
       var downX = 0, downY = 0, downT = 0, lastTap = 0, tapTimer = null;
@@ -1754,14 +1894,16 @@ private class PlayerFullscreen {
 
     val active: Boolean get() = frame != null
 
+    /** @return vrai si la vue est bien passée en plein écran (voir l'appelant, qui remet sinon
+     *  l'état à « réduit » — un état plein écran sans vue plein écran laissait le bouton bloqué). */
     fun enter(
         ctx: android.content.Context,
         root: android.view.ViewGroup?,
         view: android.view.View,
         exit: () -> Unit
-    ) {
-        if (active || root == null) return
-        val parent = view.parent as? android.view.ViewGroup ?: return
+    ): Boolean {
+        if (active || root == null) return false
+        val parent = view.parent as? android.view.ViewGroup ?: return false
         holder = parent
         holderParams = view.layoutParams
         target = view
@@ -1808,6 +1950,7 @@ private class PlayerFullscreen {
             )
         )
         frame = screen
+        return true
     }
 
     /** Revient au bloc de l'article (la vue retrouve son parent Compose). */
@@ -2023,12 +2166,20 @@ fun YoutubePlayer(
         val act = context.activityOrNull()
         val wv = webView
         if (fullscreen) {
-            if (wv != null) {
-                screen.enter(context, rootView, wv) { fullscreen = false }
+            // L'application est seule à savoir où en est la vue : si le déplacement échoue (vue
+            // détachée au moment du geste), l'état ne doit pas rester « plein écran » sans vue
+            // plein écran — c'est ce qui laissait le bouton dans le mauvais sens en permanence.
+            val entered = wv != null && screen.enter(context, rootView, wv) { fullscreen = false }
+            if (!entered) {
+                fullscreen = false
+            } else if (wv != null) {
                 wv.evaluateJavascript(
                     "document.documentElement.classList.add('pressia-full');" +
                         "window.pressiaFull=true;" +
-                        "if(window.pressiaControls){window.pressiaControls()}",
+                        "if(window.pressiaControls){window.pressiaControls()}" +
+                        // L'icône du bouton suit l'état : on la redessine sans attendre la passe
+                        // de `paint()` (500 ms).
+                        "if(window.pressiaPaint){window.pressiaPaint()};",
                     null
                 )
             }
@@ -2047,6 +2198,7 @@ fun YoutubePlayer(
                 wv.evaluateJavascript(
                     "document.documentElement.classList.remove('pressia-full');" +
                         "window.pressiaFull=false;" +
+                        "if(window.pressiaPaint){window.pressiaPaint()};" +
                         // La page a été mise à la taille de l'écran par la classe : sans cet
                         // événement, YouTube garde sa mise en page plein écran dans le bloc.
                         "window.dispatchEvent(new Event('resize'));",

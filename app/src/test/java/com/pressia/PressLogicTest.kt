@@ -605,6 +605,32 @@ class PressLogicTest {
         assertTrue(com.pressia.ui.youtubePlayerScript().contains("position:fixed"))
         assertTrue(com.pressia.ui.youtubePlayerCss().contains("56.25vw"))
     }
+    @Test fun `controles du lecteur - regles apprises a l'usage`() {
+        val css = com.pressia.ui.youtubePlayerCss()
+        val js = com.pressia.ui.youtubeControlsScript()
+        // Les commandes du **site** sont masquées : sinon deux jeux de commandes se superposent
+        // dès que le lecteur est assez grand, dont son bouton de plein écran — dans le même coin
+        // que le nôtre.
+        assertTrue(css.contains("#player-control-overlay"))
+        assertTrue(css.contains(".ytp-fullscreen-button"))
+        // Le mini-lecteur de la page ne doit pas s'installer : la classe est retirée et
+        // l'habillage réappliqué.
+        assertTrue(js.contains("sticky-player"))
+        assertTrue(js.contains("pressiaApplyCss"))
+        // Les commandes passent par l'API du lecteur, et l'état aussi (le `<video>` seul peut
+        // être en désaccord avec lui) : le `<video>` ne tranche que sur « mémoire tampon ».
+        assertTrue(js.contains("getPlayerState"))
+        assertTrue(js.contains("pauseVideo"))
+        assertTrue(js.contains("playVideo"))
+        // Les deux icônes du bouton plein écran, avec leurs tracés respectifs.
+        assertTrue(js.contains("M7 14H5v5h5v-2H7v-3z"))   // agrandir
+        assertTrue(js.contains("M5 16h3v3h2v-5H5v2z"))     // réduire
+        // **Pas d'`innerHTML`** : la page applique une politique *Trusted Types* et l'appel lève
+        // une exception au milieu de `build()` (plus de barre du tout, silencieusement). L'icône
+        // est construite par l'API DOM.
+        assertFalse(js.contains("innerHTML"))
+        assertTrue(js.contains("createElementNS"))
+    }
     @Test fun `blocs article texte nu conserve`() {
         // Flux qui livre le corps hors balise de bloc, relevé en vrai sur Les Numériques : nœuds
         // texte de premier niveau, un <br>, l'image, un autre <br>, la suite. Le texte doit

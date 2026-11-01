@@ -254,7 +254,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
       `youtube.com/embed/…` crée bien le décodeur (`c2.goldfish.vp9`) et l'audio passe, mais
       **aucune image n'est composée** (0 % de mouvement sur la zone, alors que Chrome joue la
       même vidéo), tandis que la page de lecture, document de premier niveau, rend la vidéo
-      normalement (60 % de mouvement).
+      normalement (60 % de mouvement). Les commandes du site y sont **masquées** et remplacées
+      par les nôtres (voir le point « mode `pressia` » plus bas).
     - **`youtube`** : la page d'**intégration** (`youtubeEmbedUrl` → `youtube.com/embed/<id>`)
       chargée avec un **User-Agent de navigateur** (`youtubeBrowserUserAgent`) : YouTube y sert
       la vraie page mobile, dont les contrôles sont de **vrais éléments** du document (titre,
@@ -297,6 +298,30 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     - un menu (`#pressia-menu`) : vitesses 0,5× à 2× (`video.playbackRate`) et « Lecture en
       boucle » (`video.loop`). Il tient dans le bloc (la vue ne fait que 213 px de haut) : rester
       compact, un menu qui déborde sort de l'écran.
+    Quatre règles apprises à l'usage, à ne pas défaire :
+    - **les commandes passent par l'API du lecteur** (`movie_player.playVideo`/`pauseVideo`/
+      `seekTo`/`setPlaybackRate`), et l'**état** vient de `getPlayerState()` — `1` lecture, `0`/`2`/`5`
+      arrêt, mais sur `3` (mémoire tampon, qui reste affiché longtemps après une pause sur ce
+      lecteur) c'est le `<video>` qui tranche, comme quand le lecteur n'est pas encore là. Un
+      `video.pause()` direct laisse YouTube hors du coup : sa machine d'état réagissait à sa façon
+      — la page basculait sur son **mini-lecteur** (`html.sticky-player`), la vidéo se retrouvait
+      réduite et l'appui suivant la rétablissait ; on y voyait un aller-retour de plein écran. Et
+      une icône lecture/pause déduite du seul `<video>` se figeait, en désaccord avec le lecteur ;
+    - **les commandes du site sont masquées** (`youtubePlayerCss` : `.ytp-chrome-top/.ytp-chrome-bottom/
+      #player-control-overlay/.ytp-fullscreen-button/.ytp-watermark`…). Elles n'existent qu'une fois
+      le lecteur assez grand (plein écran) : deux jeux de commandes se superposaient alors, dont
+      **son** bouton de plein écran dans le même coin que le nôtre, si bien qu'un appui sur la
+      vidéo tombait sur l'un ou l'autre ;
+    - **le bouton plein écran porte deux icônes** (material « fullscreen » / « fullscreen_exit »,
+      les mêmes que celles de `FullscreenToggle` côté Compose) et devient **rouge** (couleur de
+      l'application) en plein écran : un carré vide ne disait ni ce qu'il faisait ni dans quel état
+      on était. Son icône est construite par l'**API DOM** (`createElementNS`) — `innerHTML` est
+      refusé par la page (« This document requires 'TrustedHTML' assignment », politique *Trusted
+      Types* de YouTube) et levait une exception **au milieu de `build()`** : plus de barre du tout,
+      silencieusement ;
+    - **le mini-lecteur ne doit pas s'installer** : `paint()` retire `sticky-player` et réapplique
+      l'habillage (`pressiaApplyCss`) ; le bloc n'expose qu'une vue. C'est vérifié après coup
+      (classe absente, un seul `<video>`).
     Deux mesures, à ne pas défaire : `touch-action:none` (page, surface et barre) évite que
     Chromium prenne un glissement horizontal pour un défilement et l'annule par un `pointercancel`
     au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage d'article
@@ -317,6 +342,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     hauteur, l'activité passe en paysage et les barres système s'effacent ; ✕ en haut à gauche,
     `BackHandler`, et `release()` sur `onRelease` comme sur `onDispose`. Déplacer la vue coupe le
     média : `pressiaResume` est rappelé au retour (150/600/1500/3000 ms).
+    **Un aller-retour en plein écran se voit à l'écran**, et se vérifie en trois points : la classe
+    `pressia-full` et `window.pressiaFull` (page), l'icône du bouton de la barre (agrandir →
+    réduire), et le ✕ posé par l'application (uiautomator le liste sous « quitter le plein écran »).
+    Attention à la géométrie des appuis : en paysage la fenêtre commence ~141 px à droite du bord
+    (encoche), et 1 px CSS vaut 2,625 px d'écran — viser le centre du bounds mesuré dans la page,
+    jamais des coordonnées devinées. `PlayerFullscreen.enter` rend un **booléen** : si le
+    déplacement échoue (vue détachée), l'appelant remet l'état à « réduit », sans quoi le bouton
+    restait dans le mauvais sens.
   - **Le son est tenu par l'application** : le lecteur démarre muet (politique de lecture
     automatique) et le recoupe parfois en cours de lecture (changement de segment, reprise). Comme
     la lecture vient d'un appui franc sur l'affiche, `paint()` (appelé toutes les 500 ms et sur les
