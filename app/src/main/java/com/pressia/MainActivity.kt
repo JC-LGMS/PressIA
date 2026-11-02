@@ -119,9 +119,9 @@ class MainActivity : ComponentActivity() {
                 val atHome = if (hierarchical) atRoot else current == "home"
 
                 // Dernière destination de contenu réellement visitée (accueil, dossier ou article).
-                // Les écrans utilitaires — Favoris, Recherche, Doublons, Stats, Réglages, Comptes,
-                // Sauvegarde/Restauration, À propos — s'appuient dessus pour renvoyer là où l'utilisateur se trouvait,
-                // plutôt que de remonter une pile qui peut ne plus contenir cette destination.
+                // Sert de secours au retour depuis un écran utilitaire — Favoris, Recherche,
+                // Doublons, Stats, Réglages, Comptes, Sauvegarde/Restauration, À propos : la cible
+                // réelle se lit d'abord dans la pile (voir backToLastContent).
                 var lastContent by rememberSaveable { mutableStateOf(startRoute) }
                 LaunchedEffect(current) {
                     if (current in CONTENT_ROUTES) lastContent = current
@@ -203,9 +203,17 @@ class MainActivity : ComponentActivity() {
                 /**
                  * Ramène à la dernière destination de contenu visitée. Depuis un écran utilitaire,
                  * un seul retour doit suffire : les étapes intermédiaires sont sautées.
+                 *
+                 * La cible se lit d'abord dans la pile — la première destination de contenu sous
+                 * l'écran courant — et [lastContent] ne sert que de secours. Lire [lastContent]
+                 * seul rouvrait l'article : ouvert depuis Favoris puis quitté par le retour, il
+                 * restait la « dernière page de contenu », et le retour suivant depuis Favoris
+                 * dépilait vers une destination absente puis la recréait (l'article revenait).
                  */
                 fun backToLastContent() {
-                    val target = lastContent
+                    val target = contentReturnTarget(
+                        nav.currentBackStack.value.map { it.destination.route.orEmpty() }
+                    ) ?: lastContent
                     if (!nav.popBackStack(target, inclusive = false)) {
                         // La destination n'est plus dans la pile (changement d'accueil) : on la recrée.
                         nav.navigate(target) {
@@ -656,6 +664,17 @@ private fun startOf(home: String): String = if (home == "subs") "home" else "str
 
 /** Écrans de contenu : ce que l'utilisateur consulte réellement (accueil, flux, article). */
 private val CONTENT_ROUTES = setOf("home", "stream", "article")
+
+/**
+ * Destination de retour depuis un écran utilitaire : la première destination de contenu
+ * rencontrée sous lui dans la pile (la pile est donnée du fond vers le sommet, l'écran courant
+ * étant le dernier). `null` quand la pile n'en contient aucune : l'appelant retombe alors sur la
+ * dernière page de contenu mémorisée. Pur et testé.
+ */
+internal fun contentReturnTarget(routes: List<String>): String? =
+    routes.asReversed().drop(1)
+        .map { it.substringBefore("/") }
+        .firstOrNull { it in CONTENT_ROUTES }
 
 /**
  * Écrans utilitaires : on les quitte d'un seul retour vers la dernière destination de contenu,

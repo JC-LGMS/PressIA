@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.20",
+        listOf(
+            ChangelogItem(
+                "2026-11-02",
+                "Retour depuis Favoris : l'article ne se rouvre plus",
+                "Depuis Favoris, ouvrir un article puis revenir à la liste laissait l'article " +
+                    "comme « dernière page de contenu » : le retour suivant, au lieu de rendre " +
+                    "la page d'où l'on venait, dépilait vers une destination disparue puis la " +
+                    "recréait — l'article se rouvrait. La cible du retour est maintenant lue " +
+                    "dans la pile de navigation (la première page de contenu réellement située " +
+                    "sous l'écran utilitaire), la mémoire de la dernière page ne servant que de " +
+                    "secours. Ouvrir Favoris depuis un article y ramène toujours, comme avant.",
+                time = "23:48"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.19",
         listOf(
             ChangelogItem(

@@ -1083,6 +1083,22 @@ class PressLogicTest {
         assertEquals(0, com.pressia.ui.centeredStopIndex(3, 10))
     }
 
+    @Test fun `retour d un ecran utilitaire vise le contenu en dessous`() {
+        // Favoris ouvert depuis l'accueil, puis l'article quitte par le retour : le retour
+        // suivant depuis Favoris doit rendre l'accueil — l'article n'est plus dans la pile.
+        assertEquals("home", com.pressia.contentReturnTarget(listOf("home", "starred")))
+        // Favoris ouvert depuis l'article (tiroir) : il est toujours sous l'utilitaire.
+        assertEquals("article", com.pressia.contentReturnTarget(listOf("home", "starred", "article", "starred")))
+        // Un dossier/flux sous l'utilitaire est retrouve.
+        assertEquals("stream", com.pressia.contentReturnTarget(listOf("home", "stream", "starred")))
+        // Deux utilitaires empiles : on saute etapes et articles deja quittes.
+        assertEquals("home", com.pressia.contentReturnTarget(listOf("home", "starred", "settings")))
+        // Route a parametre : la base suffit.
+        assertEquals("home", com.pressia.contentReturnTarget(listOf("home", "oauth/feedly")))
+        // Rien sous l'utilitaire : l'appelant garde sa derniere page de contenu.
+        assertEquals(null, com.pressia.contentReturnTarget(listOf("changelog")))
+    }
+
     @Test fun `index paresseux du dernier non-lu compte les intercalaires`() {
         val day = 86_400_000L
         val now = System.currentTimeMillis()
