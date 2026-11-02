@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.19",
+        listOf(
+            ChangelogItem(
+                "2026-11-02",
+                "Liste : le bouton haut remonte d'un trait",
+                "Sur une très longue liste, le bouton « remonter en haut » avançait par étapes : " +
+                    "chaque saut réestimait la hauteur des lignes et relançait l'animation, si " +
+                    "bien que la course durait des dizaines de secondes et finissait article par " +
+                    "article. La remontée est maintenant un défilement continu, à la vitesse " +
+                    "maximale que la liste peut composer, borné dans le temps : quelques images " +
+                    "suffisent quel que soit le nombre d'articles, puis la liste se pose " +
+                    "exactement tout en haut. Les trois listes (articles, vue magazine, " +
+                    "abonnements) en profitent.",
+                time = "23:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.18",
         listOf(
             ChangelogItem(

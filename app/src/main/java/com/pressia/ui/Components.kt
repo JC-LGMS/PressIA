@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -716,6 +717,42 @@ fun lastUnreadLazyIndex(items: List<StreamItem>, isExcluded: (ArticleEntity) -> 
     return p + gaps.coerceAtLeast(0)
 }
 
+/** Durée maximale de la remontée animée : au-delà, on se pose tout en haut (voir [animateToTop]). */
+private const val TOP_REWIND_MS = 600L
+
+/**
+ * Remontée jusqu'en haut.
+ *
+ * `animateScrollToItem(0)` se comporte mal sur une très longue liste : il avance par étapes en
+ * réestimant la hauteur moyenne des lignes, et chaque étape relance l'animation depuis l'arrêt.
+ * Sur des centaines d'articles la course durait des dizaines de secondes et finissait « article
+ * par article ». Ici la remontée est un défilement continu, à la vitesse maximale que la liste
+ * peut composer (environ un écran par image) : la durée de la course dépend du nombre d'images
+ * nécessaires pour composer les articles traversés, jamais d'étapes relancées. Elle est de plus
+ * bornée dans le temps — passé [TOP_REWIND_MS] on se pose directement tout en haut — pour qu'un
+ * appareil lent ne reste pas à défiler pendant vingt secondes.
+ */
+suspend fun LazyListState.animateToTop() {
+    val start = System.currentTimeMillis()
+    while (firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 0) {
+        if (System.currentTimeMillis() - start >= TOP_REWIND_MS) break
+        scrollBy(-layoutInfo.viewportSize.height.coerceAtLeast(1).toFloat())
+        withFrameNanos { }
+    }
+    scrollToItem(0)
+}
+
+/** Même remontée pour la vue magazine (grille d'articles). */
+suspend fun LazyGridState.animateToTop() {
+    val start = System.currentTimeMillis()
+    while (firstVisibleItemIndex > 0 || firstVisibleItemScrollOffset > 0) {
+        if (System.currentTimeMillis() - start >= TOP_REWIND_MS) break
+        scrollBy(-layoutInfo.viewportSize.height.coerceAtLeast(1).toFloat())
+        withFrameNanos { }
+    }
+    scrollToItem(0)
+}
+
 /** Nom d'origine lisible : « https://www.lemonde.fr/rss/une.xml » → « lemonde.fr ». */
 fun prettyFeedTitle(title: String?): String {
     if (title.isNullOrBlank()) return ""
@@ -939,7 +976,7 @@ fun ArticleList(
             }
             if (articles.size > 3) {
                 ScrollJumpOverlay(
-                    onTop = { scope.launch { gridState.animateScrollToItem(0) } },
+                    onTop = { scope.launch { gridState.animateToTop() } },
                     onBottom = {
                         scope.launch {
                             val info = gridState.layoutInfo
@@ -1006,7 +1043,7 @@ fun ArticleList(
             }
             if (articles.size > 3) {
                 ScrollJumpOverlay(
-                    onTop = { scope.launch { listState.animateScrollToItem(0) } },
+                    onTop = { scope.launch { listState.animateToTop() } },
                     onBottom = {
                         scope.launch {
                             val info = listState.layoutInfo

@@ -232,7 +232,7 @@ fun SubscriptionsScreen(
             }
         if (vm.subs.size + vm.folders.size > 3) {
             ScrollJumpOverlay(
-                onTop = { jumpScope.launch { listState.animateScrollToItem(0) } },
+                onTop = { jumpScope.launch { listState.animateToTop() } },
                 onBottom = {
                     jumpScope.launch {
                         val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
