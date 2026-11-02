@@ -78,7 +78,9 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
   chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,
   titre, détail = le message de commit) **en tête de la version courante** de `CHANGELOG` :
   compléter l'entrée existante si la version n'a pas changé, en créer une si le build l'a déjà
-  incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé.
+  incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé. **Contrôler
+  l'écran après l'installation** (le nombre de changements doit augmenter) : un APK produit avant
+  l'édition du journal affiche encore l'ancienne liste, et c'est le seul signal.
 - L'historique initial (208 commits, jusqu'au 2026-10-25) est dans `ui/ChangelogHistory.kt`,
   généré depuis `git log` : **ne plus le modifier**. Seuls les commits qui touchent `app/src/main`
   ou `app/build.gradle.kts` y figurent (ni tests, ni documentation, ni outillage).
@@ -122,6 +124,14 @@ par son text / content-desc / resource-id, calculer le centre de son bounds, pui
 Méthodologie : dump après chaque action, attendre 1–3 s selon la transition, re-dumper.
 L'ordre de grandeur du dump identifie l'écran : menu contextuel (DropdownMenu) ≈ 4 KB, liste
 d'articles 35–45 KB, détail d'article (WebView) 45–50 KB.
+
+Pour **chronométrer** une animation, `uiautomator dump` est inadapté : il attend l'inactivité de
+l'interface (2–4 s). Utiliser `screencap -p /sdcard/x.png` + `pull` (~400–700 ms par capture, à
+soustraire du temps mesuré) ou une trace `logcat` temporaire, retirée avant le commit.
+
+**La pile de navigation n'est pas un état d'écran.** `nav.currentBackStack` est un `StateFlow`
+depuis Navigation 2.7 (lire `.value`) ; les arguments d'écran y sont conservés par entrée, ce qui
+sert à vérifier un parcours retour (voir `contentReturnTarget` et `ARTICLE_ID`).
 
 ### Simuler un appui long (long-press)
 
@@ -606,6 +616,31 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   (`backToLastContent`), puis la page courante n'étant plus l'accueil configuré, le retour suivant
   mène à la **nouvelle** page d'accueil, et c'est seulement là qu'un autre retour ferme
   l'application.
+- **Retour depuis un écran utilitaire : la cible se lit dans la pile**, pas dans `lastContent`
+  seul. `contentReturnTarget` (pur, testé) prend la première destination de **contenu** située
+  sous l'écran courant dans `nav.currentBackStack.value` ; `lastContent` ne sert que de secours
+  quand la pile n'en contient aucune. Lire `lastContent` seul rouvrait l'article : ouvert depuis
+  Favoris puis quitté par le retour, il restait la « dernière page de contenu » et le retour
+  suivant tentait d'y dépiler, échouait, puis le **recréait** (`nav.navigate`). Ouvrir Favoris
+  depuis un article y ramène toujours : l'article est alors réellement sous l'utilitaire.
+- **Chaque entrée de navigation « article » porte son propre article** (`ARTICLE_ID` rangé dans
+  `entry.savedStateHandle`, relu par `getStateFlow`). Une valeur globale (`selectedArticleId`,
+  supprimée) faisait afficher, en revenant sur un article antérieur après un détour par Favoris,
+  celui qu'on venait d'ouvrir depuis Favoris : la destination restaurée était la bonne, mais
+  l'identifiant relu ne l'était plus. Le balayage horizontal ne change pas d'entrée : il met à
+  jour cet état via `ArticleScreen(onShowArticle = …)`, si bien que le retour rend l'article
+  laissé sur place. L'identifiant n'entre **pas** dans la route (URL de flux local, identifiants
+  d'entrée) : `nav.navigate("article")` puis
+  `nav.currentBackStackEntry?.savedStateHandle?.set(ARTICLE_ID, id)`.
+- **Bouton « remonter en haut » : pas d'`animateScrollToItem(0)` sur une longue liste.** Il avance
+  par étapes — il réestime la hauteur des lignes et relance l'animation à chaque fois — si bien
+  que la course durait des dizaines de secondes et finissait article par article.
+  `LazyListState.animateToTop` / `LazyGridState.animateToTop` (`Components.kt`) font un défilement
+  continu (`scrollBy(-hauteur d'écran)` + `withFrameNanos`), borné à `TOP_REWIND_MS` (600 ms),
+  puis `scrollToItem(0)` pour se poser exactement en haut. Mesures : LazyList plafonne `scrollBy`
+  à ~1,2 écran par image et l'émulateur ne rend que ~7 images/s pendant le défilement, d'où la
+  borne de temps. Les trois listes s'en servent (articles, magazine, abonnements) ; le bouton
+  « descendre », lui, garde `animateScrollToItem` (il vise la fin des non-lus).
 - Balayage de retour : `rememberBackSwipeState()` + `Modifier.backSwipe(state, onSwipe)` et le
   repère `SwipeBackHint` (`StreamScreen.kt`) sont partagés par `StreamScaffold` et
   `SubscriptionsScreen`. Le détecteur est posé sur la boîte qui **enveloppe** la liste : les lignes
