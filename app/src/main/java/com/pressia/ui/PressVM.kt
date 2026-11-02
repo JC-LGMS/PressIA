@@ -813,8 +813,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (ids.isEmpty()) return@launch
         // Même ordre que « tout marquer lu » : l'annulation est proposée avant la poussée.
         offerUndo(ids)
-        repo.markArticlesRead(ids)
+        // Rendre les articles « collants » AVANT l'écriture, exactement comme [setRead] : sous
+        // le filtre « non-lus seuls » (par défaut), la réémission du flux qui suit l'écriture
+        // les retirait de la liste le temps que `keepIds` soit mis à jour — les lignes
+        // disparaissaient puis revenaient, et la liste sautait de position au lieu de rester
+        // sur place. Ils restent donc visibles à leur place, simplement estompés.
         keepIds.value = keepIds.value + ids.toSet()
+        repo.markArticlesRead(ids)
         refresh()
     }
 

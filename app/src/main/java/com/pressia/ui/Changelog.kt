@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.17",
+        listOf(
+            ChangelogItem(
+                "2026-11-01",
+                "Liste : l'appui long ne fait plus sauter la vue",
+                "Le menu d'appui long (« marquer lus les plus récents / plus anciens ») écrivait " +
+                    "en base AVANT de rendre les articles « collants ». Sous le filtre « non-lus " +
+                    "seuls » (par défaut), la liste réactive les retirait donc le temps d'une " +
+                    "émission, puis les réaffichait : les lignes disparaissaient et revenaient, " +
+                    "et le défilement sautait de position au lieu de rester sur l'article " +
+                    "regardé. Les identifiants sont maintenant ajoutés aux articles « collants » " +
+                    "avant l'écriture, comme pour une lecture simple : ils restent en place, " +
+                    "simplement estompés.",
+                time = "16:31"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.16",
         listOf(
             ChangelogItem(
