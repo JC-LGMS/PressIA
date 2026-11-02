@@ -211,8 +211,13 @@ interface PressDao {
     /**
      * Variante « collante » : les articles passés en lus pendant la session restent listés
      * tant qu'on reste dans le même flux ([keepIds]), au lieu de disparaître sous le nez.
+     *
+     * [keepIds] ne dispense que du filtre « non-lus seuls » : le périmètre (flux/dossier) et le
+     * jeu de favoris s'appliquent aussi à ces articles. Sans cette répétition, un article ouvert
+     * depuis « Tous les articles » restait « collant » et réapparaissait en tête de Favoris alors
+     * qu'il n'est pas étoilé.
      */
-    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR id IN (:keepIds) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
     @Query("SELECT COUNT(*) FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND unread = 1")
     suspend fun unreadCount(feedId: String?): Int

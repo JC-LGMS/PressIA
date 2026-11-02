@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.18",
+        listOf(
+            ChangelogItem(
+                "2026-11-02",
+                "Favoris : un article lu depuis la liste ne s'y invite plus",
+                "La liste « collante » garde visibles les articles passés en lus pendant la " +
+                    "session, pour qu'ils ne disparaissent pas sous le doigt. Cet égard ignorait " +
+                    "le périmètre : l'article ouvert depuis « Tous les articles » réapparaissait " +
+                    "donc en tête de Favoris alors qu'il n'y est pas étoilé. Les articles " +
+                    "retenus ne sont plus dispensés que du filtre « non-lus seuls » : le flux " +
+                    "affiché et le jeu de favoris s'appliquent aussi à eux.",
+                time = "22:53"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.17",
         listOf(
             ChangelogItem(
