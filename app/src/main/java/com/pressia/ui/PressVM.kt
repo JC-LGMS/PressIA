@@ -161,8 +161,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var syncMsg by mutableStateOf<String?>(null)
     /** Dernier résultat d'authentification OAuth (affiché sur l'écran Comptes). */
     var authMsg by mutableStateOf<String?>(null)
-    /** Article ouvert via la route "article" (évite les caractères spéciaux dans la navigation). */
-    var selectedArticleId by mutableStateOf<String?>(null)
     /**
      * Mode « article complet » (Readability) épinglé pour la session : quand l'icône
      * Readability l'active, tous les articles ouverts passent en complet. Sauf réglage

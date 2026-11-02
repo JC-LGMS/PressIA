@@ -170,8 +170,13 @@ class MainActivity : ComponentActivity() {
                         }
                         return
                     }
-                    vm.selectedArticleId = id
+                    // L'article de cette entrée de pile est rangé dans son propre état
+                    // (`savedStateHandle`) : un identifiant global faisait afficher, en revenant
+                    // sur un article antérieur, celui qu'on venait d'ouvrir ailleurs (Favoris).
+                    // L'identifiant n'entre pas dans la route : certains en portent des
+                    // caractères spéciaux (URL de flux local, identifiants d'entrée).
                     nav.navigate("article")
+                    nav.currentBackStackEntry?.savedStateHandle?.set(ARTICLE_ID, id)
                 }
 
                 /**
@@ -448,15 +453,22 @@ class MainActivity : ComponentActivity() {
                                         swipeLabel = if (hierarchical && atRoot) "ouvrir le menu"
                                         else "retour à l'accueil")
                                 }
-                                composable("article") {
+                                composable("article") { entry ->
                                     BackRule()
-                                    val id = vm.selectedArticleId
-                                    if (id == null) {
+                                    // L'article est celui de CETTE entrée de pile. Le balayage
+                                    // horizontal le fait défiler sans changer d'entrée : l'état
+                                    // de l'entrée suit, si bien que revenir dessus (après un
+                                    // détour par Favoris, la Recherche…) rend l'article qu'on y
+                                    // avait laissé, et non le dernier ouvert ailleurs.
+                                    val handle = entry.savedStateHandle
+                                    val id by handle.getStateFlow(ARTICLE_ID, "").collectAsState()
+                                    if (id.isBlank()) {
                                         LaunchedEffect(Unit) { nav.popBackStack() }
                                     } else {
                                         ArticleScreen(vm, id,
                                             onBack = { nav.popBackStack() },
-                                            onMenu = { openDrawer() })
+                                            onMenu = { openDrawer() },
+                                            onShowArticle = { handle[ARTICLE_ID] = it })
                                     }
                                 }
                                 composable("starred") {
@@ -658,6 +670,13 @@ class MainActivity : ComponentActivity() {
         intent.data?.takeIf { it.host == "oauth" }?.let { oauthLink.value = it }
     }
 }
+
+/**
+ * Clé de l'identifiant d'article dans l'état de l'entrée de navigation « article » : chaque
+ * entrée de la pile garde le sien, si bien que revenir sur un article antérieur rend bien cet
+ * article-là.
+ */
+private const val ARTICLE_ID = "articleId"
 
 /** Route de démarrage : l'accueil est « Accueil » ou « Tous les articles » selon le réglage. */
 private fun startOf(home: String): String = if (home == "subs") "home" else "stream"

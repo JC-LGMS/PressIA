@@ -74,7 +74,17 @@ fun feedHtml(a: ArticleEntity?): String? {
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: () -> Unit) {
+fun ArticleScreen(
+    vm: PressVM,
+    articleId: String,
+    onBack: () -> Unit,
+    onMenu: () -> Unit,
+    /**
+     * Balayage horizontal vers un voisin : l'appelant retient l'article affiché (état de
+     * l'entrée de navigation), pour qu'on le retrouve en revenant sur cet écran.
+     */
+    onShowArticle: (String) -> Unit
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var article by remember { mutableStateOf<ArticleEntity?>(null) }
@@ -334,8 +344,8 @@ fun ArticleScreen(vm: PressVM, articleId: String, onBack: () -> Unit, onMenu: ()
                         onEnd = {
                             dragging = false
                             when {
-                                dragX <= -120f && leftNav && nextId != null -> vm.selectedArticleId = nextId
-                                dragX >= 120f && rightNav && prevId != null -> vm.selectedArticleId = prevId
+                                dragX <= -120f && leftNav && nextId != null -> onShowArticle(nextId)
+                                dragX >= 120f && rightNav && prevId != null -> onShowArticle(prevId)
                                 // Sens « navigation » sans voisin : on revient à la liste (retour)
                                 // et on garde le toast informatif.
                                 dragX <= -120f && leftNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }

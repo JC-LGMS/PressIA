@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.21",
+        listOf(
+            ChangelogItem(
+                "2026-11-03",
+                "Retour sur un article : c'est bien celui qu'on avait laissé",
+                "L'article affiché était une valeur unique de l'application, réécrite à chaque " +
+                    "ouverture : après un détour par Favoris (ou la Recherche), revenir sur " +
+                    "l'article ouvert auparavant rendait celui qu'on venait d'ouvrir depuis " +
+                    "Favoris. Chaque entrée de navigation porte désormais son propre article, y " +
+                    "compris celui atteint par balayage horizontal : le retour rend exactement " +
+                    "l'article laissé à cet endroit. Le corrigé précédent s'applique toujours " +
+                    "(retour depuis Favoris vers la page d'où l'on venait).",
+                time = "00:05"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.20",
         listOf(
             ChangelogItem(
