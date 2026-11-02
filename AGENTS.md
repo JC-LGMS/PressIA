@@ -81,6 +81,9 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
   incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé. **Contrôler
   l'écran après l'installation** (le nombre de changements doit augmenter) : un APK produit avant
   l'édition du journal affiche encore l'ancienne liste, et c'est le seul signal.
+- **Un commit qui ne touche ni `app/src/main` ni `app/build.gradle.kts`** (tests, documentation,
+  outillage — ce fichier compris) **ne change ni la version ni le journal** : l'empreinte ne
+  couvre que ces sources, et la page ne consigne que ce qui est livré dans l'APK.
 - L'historique initial (208 commits, jusqu'au 2026-10-25) est dans `ui/ChangelogHistory.kt`,
   généré depuis `git log` : **ne plus le modifier**. Seuls les commits qui touchent `app/src/main`
   ou `app/build.gradle.kts` y figurent (ni tests, ni documentation, ni outillage).
