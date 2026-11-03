@@ -72,15 +72,37 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
     Après le commit, la modification suivante ouvre la version suivante.
   - L'empreinte est réécrite **à chaque** build, même sans incrément : le fichier commité décrit
     exactement les sources commitées, sinon le build suivant incrémenterait à tort.
+  - **Ce que couvre l'empreinte** : `app/src/main/**` (Kotlin, `res/`, manifeste…) et
+    `app/build.gradle.kts` — pas les tests (`app/src/test`), ni la racine du projet (build.gradle
+    racine, wrapper, `local.properties`), ni ce fichier : les toucher ne change rien à la version.
   - Ne jamais retoucher les numéros à la main.
+- **Déroulé d'une évolution** (l'ordre compte) :
+  1. modifier les sources et compiler autant que nécessaire : le premier build incrémente, les
+     suivants conservent ;
+  2. écrire l'entrée du journal (voir ci-dessous) ;
+  3. **recompiler après la dernière édition** : `version.properties` doit décrire les sources
+     telles qu'elles seront commitées, sinon le build suivant les verra changées et ouvrira une
+     version de plus, sans rien de neuf derrière ;
+  4. installer, vérifier à l'écran, puis commiter sources + journal + `version.properties`
+     **ensemble** : un commit = une version.
+- **Évolution abandonnée** après l'incrément (tout annulé) : rendre `version.properties` au
+  commité (`git restore version.properties`) puis recompiler ; sinon le fichier porte un numéro
+  pour un changement qui n'existe pas.
+- **Ce que l'application affiche** : « Version installée : 1.0.21 (2026-11-03 00:03) ». Le numéro
+  vient du `PackageManager`, la date de `BuildConfig.BUILD_TIME` — donc du **build de l'APK**, pas
+  du commit. Un APK construit avant la dernière édition montre une date plus ancienne, et c'est ce
+  qui le trahit.
 - **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
   le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
   chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,
   titre, détail = le message de commit) **en tête de la version courante** de `CHANGELOG` :
   compléter l'entrée existante si la version n'a pas changé, en créer une si le build l'a déjà
-  incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé. **Contrôler
-  l'écran après l'installation** (le nombre de changements doit augmenter) : un APK produit avant
-  l'édition du journal affiche encore l'ancienne liste, et c'est le seul signal.
+  incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé. **L'heure est
+  celle du commit**, pas celle du build : la noter en dernier, puis recompiler une fois
+  (l'incrément en cours est conservé) — deux entrées écrites trop tôt avaient une minute
+  d'avance. **Contrôler l'écran après l'installation** (le nombre de changements doit augmenter) :
+  un APK produit avant l'édition du journal affiche encore l'ancienne liste, et c'est le seul
+  signal.
 - **Un commit qui ne touche ni `app/src/main` ni `app/build.gradle.kts`** (tests, documentation,
   outillage — ce fichier compris) **ne change ni la version ni le journal** : l'empreinte ne
   couvre que ces sources, et la page ne consigne que ce qui est livré dans l'APK.
