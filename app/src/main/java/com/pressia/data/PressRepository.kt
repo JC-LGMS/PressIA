@@ -870,8 +870,8 @@ class PressRepository(
         feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "",
         limit: Int = 2000, offset: Int = 0
     ): List<ArticleEntity> {
-        val catFeeds = catId?.let { folderFeeds(it) } ?: emptyList()
-        return dao.stream(feedId, catFeeds, if (catFeeds.isEmpty()) 1 else 0, if (unreadOnly) 1 else 0, favScopeArg(favScope), limit, offset)
+        val (catFeeds, catEmpty) = catScope(catId)
+        return dao.stream(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, favScopeArg(favScope), limit, offset)
     }
     /**
      * Flux du flux de lecture : la liste affichée se met à jour toute seule quand la
@@ -896,11 +896,22 @@ class PressRepository(
         catId: String?, unreadOnly: Boolean, favScope: String,
         block: (List<String>, Int, Int, String) -> Flow<T>
     ): Flow<T> = flow {
-        val catFeeds = catId?.let { folderFeeds(it) } ?: emptyList()
+        val (catFeeds, catEmpty) = catScope(catId)
         emitAll(
-            block(catFeeds, if (catFeeds.isEmpty()) 1 else 0, if (unreadOnly) 1 else 0, favScopeArg(favScope))
+            block(catFeeds, catEmpty, if (unreadOnly) 1 else 0, favScopeArg(favScope))
         )
     }
+
+    /**
+     * Périmètre dossier des requêtes d'articles : `([] , 1)` = aucun dossier demandé.
+     *
+     * Un dossier **sans flux** rend une liste impossible plutôt que `([] , 1)` : le drapeau
+     * « pas de dossier » se confondait avec « dossier vide », et un dossier vide affichait donc
+     * tous les articles de l'application (liste, recherche).
+     */
+    private suspend fun catScope(catId: String?): Pair<List<String>, Int> =
+        if (catId == null) emptyList<String>() to 1
+        else folderFeeds(catId).ifEmpty { listOf("") } to 0
 
     suspend fun article(id: String) = dao.article(id)
     /**
@@ -914,8 +925,8 @@ class PressRepository(
     suspend fun search(
         q: String, feedId: String?, catId: String?, withBody: Boolean = false
     ): List<ArticleEntity> {
-        val feedIds = catId?.let { folderFeeds(it) } ?: emptyList()
-        return dao.search(q, feedId, feedIds, if (feedIds.isEmpty()) 1 else 0, if (withBody) 1 else 0)
+        val (feedIds, catEmpty) = catScope(catId)
+        return dao.search(q, feedId, feedIds, catEmpty, if (withBody) 1 else 0)
     }
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----

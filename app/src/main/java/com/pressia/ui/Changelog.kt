@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.23",
+        listOf(
+            ChangelogItem(
+                "2026-11-04",
+                "Dossier vide : plus aucun article ; articles collants bornés",
+                "Un dossier sans flux affichait tous les articles de l'application : la requête " +
+                    "prenait « dossier vide » pour « pas de dossier ». Il n'affiche plus rien, et " +
+                    "« tout marquer lu » n'y marque plus tout le compte (même confusion). D'autre " +
+                    "part, les articles gardés visibles après lecture pendant la session " +
+                    "s'accumulaient sans limite, chacun lié un par un dans la requête : la liste " +
+                    "est bornée à 400, les plus récents gardés.",
+                time = "01:43"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.22",
         listOf(
             ChangelogItem(

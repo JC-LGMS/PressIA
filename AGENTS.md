@@ -608,6 +608,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   « Read later » d'un flux non abonné), `mergeIncomingArticle` le conserve si l'entrée n'en porte
   pas, `ArticleRow` et l'écran Doublons retombent dessus (et `FeedAvatar` sur l'initiale).
   `setFeedTitle` (flux local qui annonce son nom) met aussi à jour les articles du flux.
+- **Un dossier vide n'affiche rien, et n'a pas de « tout le compte ».** Les requêtes de liste
+  prennent `catEmpty = 1` pour « aucun dossier demandé » : `PressRepository.catScope` ne le pose
+  que si `catId == null`, et rend une liste impossible (`listOf("")`) pour un dossier sans flux.
+  Avant, les deux cas se confondaient : un dossier vide affichait tous les articles de
+  l'application, et « tout marquer lu » y marquait tout le compte (`PressVM.markAllRead` sort
+  désormais sans rien faire).
+- Articles « collants » de la session (`PressVM.keepIds`) : bornés à `KEEP_MAX` (400, les plus
+  récents gardés). La requête les lie un par un (`id IN (:keepIds)`), une session en accumulait
+  des milliers.
 
 ## Pièges connus — interface, navigation et gestes
 

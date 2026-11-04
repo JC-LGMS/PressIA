@@ -3,6 +3,8 @@ package com.pressia
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
 import com.pressia.ui.parseArticleActions
+import com.pressia.ui.keptIds
+import com.pressia.ui.KEEP_MAX
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
 import com.pressia.data.local.ThumbStore
@@ -1520,5 +1522,17 @@ class PressLogicTest {
         )
         assertEquals(listOf("https://ex.com/corps-1.jpg"), com.pressia.data.articleImageUrls("/miniature.jpg", """<img src="https://ex.com/corps-1.jpg">""", null, "https://ex.com/a"))
         assertEquals(emptyList<String>(), com.pressia.data.articleImageUrls(null, null, "  ", "https://ex.com/a"))
+    }
+
+    @Test fun `articles collants bornes, les derniers gardes`() {
+        // Une longue session en accumulerait des milliers : la requête les lie un par un.
+        val all = keptIds(emptySet(), (1..KEEP_MAX + 5).map { "a$it" })
+        assertEquals(KEEP_MAX, all.size)
+        assertEquals("a6", all.first())
+        assertEquals("a${KEEP_MAX + 5}", all.last())
+        // Un identifiant déjà gardé ne fait pas sortir les plus anciens.
+        assertEquals(listOf("x", "y"), keptIds(setOf("x", "y"), listOf("x")).toList())
+        assertEquals(setOf("x"), keptIds(setOf("x"), emptyList()))
+        assertEquals(listOf("y"), keptIds(setOf("x", "y"), emptyList(), max = 1).toList())
     }
 }

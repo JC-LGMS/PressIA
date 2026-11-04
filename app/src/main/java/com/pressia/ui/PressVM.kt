@@ -112,6 +112,16 @@ fun articleActionLabel(id: String): String = when (id) {
 fun parseArticleActions(raw: String): List<String> =
     raw.split(",").map { it.trim() }.filter { it in ARTICLE_ACTION_IDS }.distinct()
 
+/**
+ * Articles « collants » gardés au plus : la requête du flux les lie un par un
+ * (`id IN (:keepIds)`), et une longue session en accumulerait des milliers.
+ */
+const val KEEP_MAX = 400
+
+/** [current] plus [ids], borné à [max] : les derniers ajoutés restent (voir [KEEP_MAX]). */
+fun keptIds(current: Set<String>, ids: Collection<String>, max: Int = KEEP_MAX): Set<String> =
+    (current + ids).toList().takeLast(max).toSet()
+
 class PressVM(val repo: PressRepository) : ViewModel() {
     val prefs = repo.prefs
     var scope by mutableStateOf(Scope())
@@ -398,6 +408,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
  * disparaissent pas de la liste tant qu'on reste dans le même flux (ils sont oubliés au changement de flux).
  */
     private val keepIds = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Articles « collants » après ajout de [ids], bornés à [KEEP_MAX] (les plus récents gardés) :
+     * la requête du flux les lie un par un (`id IN (:keepIds)`), une session entière en
+     * accumulerait des milliers.
+     */
+    private fun keep(ids: Collection<String>) {
+        keepIds.value = keptIds(keepIds.value, ids)
+    }
 
     /** Change de flux (flux, catégorie ou « Tous les articles ») : la liste « collante » repart à zéro. */
     fun switchScope(s: Scope) {
@@ -735,7 +754,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // qui suit l'écriture le trouve déjà gardé, sinon la ligne disparaissait puis
         // réapparaissait (filtre non-lus + pas encore collant entre les deux émissions).
         // Repasser en non-lu : l'oublier APRÈS l'écriture, pour la raison symétrique.
-        if (!unread) keepIds.value = keepIds.value + id
+        if (!unread) keep(listOf(id))
         repo.setRead(id, unread)
         if (unread) keepIds.value = keepIds.value - id
         if (articles.none { it.id == id }) {
@@ -771,11 +790,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         repo.logReading(articleId, feedId, durationSec)
     }
     fun markAllRead() = viewModelScope.launch {
+        val folder = scope.categoryId
         val ids = when {
             scope.feedId != null -> listOf(scope.feedId!!)
-            scope.categoryId != null -> repo.folderFeeds(scope.categoryId!!)
+            folder != null -> repo.folderFeeds(folder)
             else -> emptyList()
         }
+        // Un dossier sans flux n'a aucun article : liste vide n'y vaut pas « tout le compte ».
+        if (folder != null && ids.isEmpty()) return@launch
         // IDs avant marquage (exactement ceux qui vont passer en lus, favoris/read later
         // exclus) : l'annulation sait quoi rouvrir.
         val marked = if (ids.isEmpty()) repo.allMarkableIds() else repo.feedsMarkableIds(ids)
@@ -816,7 +838,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // les retirait de la liste le temps que `keepIds` soit mis à jour — les lignes
         // disparaissaient puis revenaient, et la liste sautait de position au lieu de rester
         // sur place. Ils restent donc visibles à leur place, simplement estompés.
-        keepIds.value = keepIds.value + ids.toSet()
+        keep(ids)
         repo.markArticlesRead(ids)
         refresh()
     }
@@ -885,7 +907,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (ids.isEmpty()) return@launch
         offerUndo(ids)
         repo.markArticlesRead(ids)
-        keepIds.value = keepIds.value + ids.toSet()
+        keep(ids)
         refresh()
         reloadSearch()
     }
