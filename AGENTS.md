@@ -569,7 +569,16 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 ## Pièges connus — données, cache et stockage
 
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
-  `exportSchema = false`, version DB actuelle : 6.
+  `exportSchema = false`, version DB actuelle : 7.
+- **Un ajout d'`Index` sur une entité exige une migration** (Room compare le schéma et son
+  empreinte à l'ouverture : sans `MIGRATION_6_7`, l'app plantait sur une base v6 existante) :
+  `CREATE INDEX IF NOT EXISTS` sur les trois index des stats (`articles.readAt`,
+  `reading_events.articleId`, `reading_events.openedAt`). « Passés en lu sans ouvrir » cherche un
+  évènement par article lu : sans l'index sur `articleId`, la sous-requête balayait toute la table
+  d'évènements une fois par article.
+- **L'écran article ne lit plus d'articles pour son balayage** : `PressVM.scanIds`
+  (`dao.streamIds` → `SELECT id …`) donne les voisins. `SELECT *` chargeait 2000 articles complets,
+  HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants.
 - Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`
   dit laquelle. Couper le mode (icône, pastille, double-tap) doit **réécrire** `content` avec la
   version du flux et remettre `fullFetched` à 0 : sans cette écriture la copie Readability restait

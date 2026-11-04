@@ -47,7 +47,7 @@ fun StreamScaffold(
     val backSwipe = if (onSwipeBack == null) Modifier else Modifier.backSwipe(swipe, onSwipeBack)
     // Liste réactive : les nouveaux articles enregistrés par la synchronisation (bouton ou tâche
     // d'arrière-plan) apparaissent immédiatement, sans rechargement manuel de l'écran.
-    // L'initial est null (« rien émis pour ce périmètre ») et non l'ancien snapshot `vm.articles` :
+    // L'initial est null (« rien émis pour ce périmètre ») et non un ancien instantané :
     // à l'ouverture d'un autre flux, on ne revoit plus brièvement les articles du précédent en
     // attendant la première émission du nouveau flux (un blanc d'une image, Room répond aussitôt).
     // Le « Rien ici » ne s'affiche que sur une vraie liste vide, pas pendant ce blanc.

@@ -150,7 +150,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     var searchEpoch by mutableStateOf(0)
         private set
-    var articles by mutableStateOf<List<ArticleEntity>>(emptyList())
+    /**
+     * Identifiants du périmètre, dans l'ordre d'affichage : voisins du balayage de l'écran
+     * article. Des identifiants, pas des articles — `SELECT *` chargeait 2000 articles complets,
+     * HTML compris, à chaque rafraîchissement. Les listes, elles, sont réactives.
+     */
+    var scanIds by mutableStateOf<List<String>>(emptyList())
     var categories by mutableStateOf<List<CategoryEntity>>(emptyList())
     /** Dossiers affichés (un par dossier, ou fusionnés entre comptes selon [mergeFolders]). */
     var folders by mutableStateOf<List<PressRepository.Folder>>(emptyList())
@@ -422,7 +427,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun switchScope(s: Scope) {
         if (s.feedId != scope.feedId || s.categoryId != scope.categoryId) {
             keepIds.value = emptySet()
-            articles = emptyList()  // vide l'écran immédiatement, évite le flash du flux précédent
+            scanIds = emptyList()  // vide l'écran immédiatement, évite le flash du flux précédent
         }
         // Changer de périmètre (ou quitter la page), c'est abandonner l'annulation en cours :
         // elle ne porte que sur le marquage qu'on vient de voir.
@@ -499,7 +504,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         subs = repo.subscriptions()
         unreads = repo.unreadByFeed()
         folderUnreads = repo.unreadByFolder()
-        articles = repo.stream(scope.feedId, scope.categoryId, unreadOnly)
+        scanIds = repo.streamIds(scope.feedId, scope.categoryId, unreadOnly)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
         } finally {
@@ -757,28 +762,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (!unread) keep(listOf(id))
         repo.setRead(id, unread)
         if (unread) keepIds.value = keepIds.value - id
-        if (articles.none { it.id == id }) {
-            // L'article manque à la liste héritée (arrivé par le flux réactif après le refresh,
-            // ou rouvert sous filtre non-lus) : l'y mettre pour un retour sur la liste sans flash —
-            // la ligne ne fait que changer d'apparence (estompage).
-            repo.article(id)?.let { full ->
-                articles = (articles + full).sortedByDescending { it.published }
-                // La ligne de la liste de recherche ne s'alimente pas de `articles` : sans ce
-                // report, son rond lu/non-lu y resterait celui d'avant le tap.
-                searchResults = searchResults.map { if (it.id == id) it.copy(unread = unread) else it }
-                return@launch
-            }
-        }
-        articles = articles.map { if (it.id == id) it.copy(unread = unread) else it }
+        // La liste de recherche ne s'alimente pas du flux principal : sans ce report, son rond
+        // lu/non-lu y resterait celui d'avant le tap.
         searchResults = searchResults.map { if (it.id == id) it.copy(unread = unread) else it }
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
-        // Le dépôt a écrit le bon drapeau (étoile locale, ou « Read later » pour Feedly) :
-        // on relit l'article plutôt que de deviner lequel, l'affichage suit.
-        repo.article(id)?.let { full ->
-            articles = articles.map { if (it.id == id) full else it }
-        }
     }
     /** Article d'un flux Feedly : son étoile est le « Read later » du compte. */
     fun isFeedlyArticle(a: ArticleEntity): Boolean =

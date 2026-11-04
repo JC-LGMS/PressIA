@@ -43,6 +43,9 @@ data class SubscriptionEntity(
 @Entity(
     tableName = "articles",
     indices = [Index("feedId"), Index("published"), Index("unread"), Index("starred"), Index("laterSaved"),
+        // « Passés en lu sans ouvrir » (stats) filtre sur readAt : sans index, la sous-requête
+        // balayait toute la table une fois par article lu.
+        Index("readAt"),
         // Requête des images en attente : filtre sur imageCached + tri par published, servis
         // par l'index — les colonnes lourdes (summary/content) sont ensuite lues dans la table,
         // pour les seuls articles en attente (images du corps).
@@ -86,7 +89,12 @@ data class SyncActionEntity(
 )
 
 /** Évènement de lecture pour les stats. */
-@Entity(tableName = "reading_events")
+@Entity(
+    tableName = "reading_events",
+    // articleId : jointure « cet article a-t-il été ouvert ? » (une fois par article lu dans les
+    // stats) ; openedAt : toutes les bornes de période des statistiques.
+    indices = [Index("articleId"), Index("openedAt")]
+)
 data class ReadingEventEntity(
     @PrimaryKey(autoGenerate = true) val rowId: Long = 0L,
     val articleId: String,
@@ -203,8 +211,14 @@ interface PressDao {
      * tableau « Read later » appartient au compte. Un article peut appartenir aux deux — il a pu
      * être Gauché sur l'appareil puis enregistré depuis un autre — d'où un filtre « tous ».
      */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
-    suspend fun stream(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): List<ArticleEntity>
+    /**
+     * Même périmètre que [streamFlow], mais **sans les colonnes lourdes** : les identifiants
+     * seuls, dans l'ordre d'affichage. La liste de balayage de l'écran article n'a besoin que de
+     * cela ; `SELECT *` y chargeait 2000 articles complets, HTML compris, pour n'en garder que
+     * les identifiants.
+     */
+    @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
     /** Même requête, réactive : la liste visible se rafraîchit dès que la sync insère des articles. */
     @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlow(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): Flow<List<ArticleEntity>>
@@ -626,7 +640,7 @@ data class ArticleFeed(val id: String, val feedId: String)
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 6, exportSchema = false
+    version = 7, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -695,6 +709,19 @@ abstract class PressDatabase : RoomDatabase() {
                         "(SELECT `title` FROM `subscriptions` s WHERE s.`id` = `articles`.`feedId`), '') " +
                         "WHERE `feedTitle` = ''"
                 )
+            }
+        }
+
+        /**
+         * v6 → v7 : index des statistiques. « Passés en lu sans ouvrir » cherche, pour chaque
+         * article lu, un évènement de lecture portant son identifiant : sans ces index, la
+         * sous-requête balayait toute la table une fois par article.
+         */
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_articles_readAt` ON `articles` (`readAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_events_articleId` ON `reading_events` (`articleId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_events_openedAt` ON `reading_events` (`openedAt`)")
             }
         }
     }

@@ -881,12 +881,12 @@ class PressRepository(
             }
         }
 
-    suspend fun stream(
-        feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "",
-        limit: Int = 2000, offset: Int = 0
-    ): List<ArticleEntity> {
+    /** Identifiants du périmètre, dans l'ordre d'affichage (liste de balayage de l'écran article). */
+    suspend fun streamIds(
+        feedId: String?, catId: String?, unreadOnly: Boolean, limit: Int = 2000, offset: Int = 0
+    ): List<String> {
         val (catFeeds, catEmpty) = catScope(catId)
-        return dao.stream(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, favScopeArg(favScope), limit, offset)
+        return dao.streamIds(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, limit, offset)
     }
     /**
      * Flux du flux de lecture : la liste affichée se met à jour toute seule quand la
@@ -3210,6 +3210,7 @@ fun buildDatabase(ctx: Context): PressDatabase =
     Room.databaseBuilder(ctx, PressDatabase::class.java, "pressia.db")
         .addMigrations(
             PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3,
-            PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5, PressDatabase.MIGRATION_5_6
+            PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5, PressDatabase.MIGRATION_5_6,
+            PressDatabase.MIGRATION_6_7
         )
         .build()

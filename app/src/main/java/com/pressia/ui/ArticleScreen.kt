@@ -130,11 +130,11 @@ fun ArticleScreen(
     // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
     // fond (synchro, filtre), le swipe de l'article en cours ne doit pas mourir avec elle.
     // Hors liste (recherche, favoris), pas de voisin. Rattrapés tant qu'ils sont vides : à la
-    // reprise après mort du processus, `vm.articles` arrive après la première composition —
+    // reprise après mort du processus, `vm.scanIds` arrive après la première composition —
     // sans ce rattrapage, plus aucun balayage de navigation pour cet article.
-    var ids by remember(articleId) { mutableStateOf(vm.articles.map { it.id }) }
-    LaunchedEffect(articleId, vm.articles) {
-        if (ids.isEmpty()) ids = vm.articles.map { it.id }
+    var ids by remember(articleId) { mutableStateOf(vm.scanIds) }
+    LaunchedEffect(articleId, vm.scanIds) {
+        if (ids.isEmpty()) ids = vm.scanIds
     }
     val idx = ids.indexOf(articleId)
     val prevId = if (idx > 0) ids[idx - 1] else null

@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.25",
+        listOf(
+            ChangelogItem(
+                "2026-11-04",
+                "Statistiques indexées, rafraîchissement allégé",
+                "« Passés en lu sans ouvrir » cherchait, pour chaque article lu, un évènement de " +
+                    "lecture : la sous-requête balayait toute la table d'évènements, une fois par " +
+                    "article. Les colonnes articles.readAt, reading_events.articleId et " +
+                    "reading_events.openedAt sont indexées (base 6 → 7). Et chaque " +
+                    "rafraîchissement chargeait 2000 articles complets, HTML compris, pour n'en " +
+                    "garder que les identifiants du balayage : une requête d'identifiants seuls " +
+                    "les fournit.",
+                time = "08:58"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.24",
         listOf(
             ChangelogItem(
