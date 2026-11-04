@@ -106,6 +106,12 @@ class Prefs(private val ctx: Context) {
         /** Synchronisation automatique au lancement de l'application. */
         val SYNC_ON_LAUNCH = booleanPreferencesKey("sync_on_launch")
         /**
+         * Feedly marque lu tout non-lu de plus de 31 jours. Vrai (défaut) : la synchronisation
+         * conserve l'état non lu local au-delà de ce délai ; faux : l'état du service s'applique
+         * et ces articles passent en lu.
+         */
+        val FEEDLY_KEEP_UNREAD = booleanPreferencesKey("feedly_keep_unread")
+        /**
          * Instant (ms) de la dernière synchronisation complète réussie. Sert de garde-fou au
          * réglage précédent : sans lui, chaque ouverture de l'application relançait une
          * synchronisation, y compris quand on ne fait qu'y jeter un œil.
@@ -266,6 +272,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.IntPref("sync_interval_min", SYNC_INTERVAL_MIN),
             PrefEntry.Str("unread_only_by_feed", UNREAD_ONLY_BY_FEED),
             PrefEntry.Bool("sync_on_launch", SYNC_ON_LAUNCH),
+            PrefEntry.Bool("feedly_keep_unread", FEEDLY_KEEP_UNREAD),
             PrefEntry.LongPref("last_backup_at", LAST_BACKUP_AT),
             PrefEntry.Str("last_backup_meta", LAST_BACKUP_META),
             PrefEntry.LongPref("stats_since", STATS_SINCE),

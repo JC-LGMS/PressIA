@@ -1627,7 +1627,7 @@ class PressRepository(
             if (feedId != null || categoryId != null) {
                 // Périmètre restreint : le flux seul, comme avant (ni dossiers ni compteurs).
                 val only = p.stream(account.token, feedId, categoryId, max)
-                val added = storeArticles(only.articles, keepReadBeforeMs = autoReadCutoff(p.id))
+                val added = storeArticles(only.articles, keepReadBeforeMs = cutoffFor(p.id))
                 // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
                 clearAccountExpired(account.id)
                 return added
@@ -1673,7 +1673,7 @@ class PressRepository(
                 }
                 page = dPage.await(); cats = dCats.await(); subs = dSubs.await(); rawCounts = dCounts.await()
             }
-            var added = storeArticles(page.articles, keepReadBeforeMs = autoReadCutoff(p.id))
+            var added = storeArticles(page.articles, keepReadBeforeMs = cutoffFor(p.id))
             val subIds = subs.map { it.id }.toSet()
             val serverUnread = rawCounts?.filterKeys { it in subIds }
             android.util.Log.i(
@@ -1763,6 +1763,16 @@ class PressRepository(
     }
 
     /**
+     * Fenêtre d'auto-lecture du service, ou null quand le réglage « Feedly : garder non lu au-delà
+     * de 31 jours » est coupé : l'état lu/non-lu du service fait alors foi, même au-delà du délai.
+     */
+    private suspend fun cutoffFor(providerId: String): Long? {
+        if (providerId != "feedly") return autoReadCutoff(providerId)
+        val keep = prefs.data.first()[Prefs.FEEDLY_KEEP_UNREAD] ?: true
+        return if (keep) autoReadCutoff(providerId) else null
+    }
+
+    /**
      * Propage le lu/non-lu distant : les articles lus ailleurs (hors fenêtre récente) passent en
      * lus, ceux rouverts ailleurs repassent en non-lus.
      *
@@ -1792,7 +1802,7 @@ class PressRepository(
         } else {
             remote.ids.chunked(500).flatMap { dao.readStatesOfProvider(account.id, it) }
         }
-        val cutoff = autoReadCutoff(p.id)
+        val cutoff = cutoffFor(p.id)
         val localUnread = closableUnread(states, cutoff)
         val localReadAmongRemote = states.filter { !it.unread }.map { it.id }.toSet()
         if (cutoff != null) {
@@ -1960,7 +1970,7 @@ class PressRepository(
             }
             val known = mine.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             val fresh = withinHistory(mine, cutoff, known)
-            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = autoReadCutoff(p.id))
+            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = cutoffFor(p.id))
             seen += page.articles.size
             if (feedSaturated(counts[feedId] ?: 0, keep, mine.any { it.id in known })) break
             if (!advanced) break
@@ -2062,7 +2072,7 @@ class PressRepository(
             // Hors favoris : les lignes plus vieilles que la fenêtre sautent (sauf déjà
             // connues ou marquées, voir withinHistory).
             val fresh = withinHistory(page.articles, cutoff, known)
-            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = autoReadCutoff(p.id))
+            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = cutoffFor(p.id))
             seen += page.articles.size
             onProgress?.invoke(seen)
             // Passe par flux : quota atteint sans rien de nouveau à rafraîchir — les pages
@@ -2207,7 +2217,7 @@ class PressRepository(
                         // instructions, le bloc doit toujours s'évaluer en nombre d'articles.
                         val n = storeArticles(
                             items,
-                            keepReadBeforeMs = autoReadCutoff(providerFor(account.provider).id)
+                            keepReadBeforeMs = cutoffFor(providerFor(account.provider).id)
                         )
                         if (keepSaved.isNotEmpty()) dao.markLaterSaved(keepSaved)
                         if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)

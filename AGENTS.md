@@ -272,6 +272,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `SelectionContainer` (appui long, poignées, « Copier / Tout sélectionner »). Le balayage
   horizontal d'article continue de fonctionner : c'est le geste immédiat, la sélection demandant
   un appui long.
+  Les deux actions de lecture — « Rechercher sur Internet » et « Traduire » — viennent d'un
+  `TextToolbar` propre à l'écran (`ArticleTextToolbar`, posé dans `LocalTextToolbar` autour du
+  `SelectionContainer`) : Compose 1.7 ne livre pas le texte sélectionné à la barre, si bien que
+  chaque action **copie** la sélection (même rappel que « Copier ») puis relit le presse-papiers
+  (`selectionText`). Ne pas chercher une API de sélection à la place : il n'y en a pas dans cette
+  version ; monter de Compose la rendrait disponible (`TextToolbarState`).
 - **Vidéos** : deux cas distincts, à ne pas confondre :
   - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
     `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur
@@ -545,6 +551,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `reconcileReadState` ne ferme que les non-lus de la fenêtre (`closableUnread`). Sans ces bornes,
   chaque synchronisation refermait les vieux non-lus balayés par le service. Un article **inconnu**
   garde l'état annoncé par le serveur : il n'y a rien de local à préserver.
+  La borne se coupe depuis Réglages (« Feedly : garder non lu au-delà de 31 jours », activée par
+  défaut) : `PressRepository.cutoffFor(providerId)` rend alors `null`, et l'état du service fait
+  foi — les six appels à `autoReadCutoff` passent par lui, un nouveau doit le faire aussi.
 - Bandeau de synchro : l'avancement par flux d'un compte (découverte, puis rattrapage) vient de
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le

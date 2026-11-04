@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,7 +19,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -646,6 +644,7 @@ fun SettingsScreen(vm: PressVM) {
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
+    var feedlyKeepUnread by remember { mutableStateOf(true) }
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
     var cacheInfo by remember { mutableStateOf("calcul…") }
@@ -684,6 +683,7 @@ fun SettingsScreen(vm: PressVM) {
             .takeIf { it in Prefs.YOUTUBE_UI_IDS } ?: Prefs.YOUTUBE_UI_DEFAULT
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
+        feedlyKeepUnread = get(Prefs.FEEDLY_KEEP_UNREAD, true)
         refreshCacheInfo()
     }
 
@@ -732,6 +732,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
+        vm.repo.prefs.set(Prefs.FEEDLY_KEEP_UNREAD, feedlyKeepUnread)
         vm.refresh()
     }
 
@@ -1021,6 +1022,17 @@ fun SettingsScreen(vm: PressVM) {
                 "synchronisation » ci-dessous (10 minutes par défaut) : les données sont déjà là. " +
                 "Option coupée : rien n'est récupéré au démarrage. " +
                 "Le bouton d'actualisation, lui, marche toujours.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Feedly : garder non lu au-delà de 31 jours"); Spacer(Modifier.weight(1f))
+            Switch(feedlyKeepUnread, { feedlyKeepUnread = it; save() })
+        }
+        Text(
+            "Feedly marque lu de lui-même tout article non lu depuis plus de 31 jours. Avec cette " +
+                "option (activée par défaut), PressIA conserve l'état non lu de ces articles lors " +
+                "des synchronisations ; coupée, l'état du service s'applique et ils passent en lu.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

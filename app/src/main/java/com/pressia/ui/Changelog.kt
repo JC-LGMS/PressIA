@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.22",
+        listOf(
+            ChangelogItem(
+                "2026-11-04",
+                "Sélection : chercher et traduire ; Feedly garde ses non-lus",
+                "Le menu de sélection d'un article offrait « Copier » et « Tout sélectionner » ; " +
+                    "il ajoute « Rechercher sur Internet » et « Traduire », qui ouvrent le " +
+                    "navigateur sur le texte sélectionné. Compose ne livre pas la sélection à ce " +
+                    "menu : les deux actions la font copier, puis relisent le presse-papiers (le " +
+                    "texte est donc copié au passage). Côté réglages, une option « Feedly : " +
+                    "garder non lu au-delà de 31 jours », activée par défaut, empêche les " +
+                    "synchronisations de fermer les articles que Feedly marque lus de lui-même " +
+                    "passé ce délai : leur état non lu est conservé.",
+                time = "01:27"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.21",
         listOf(
             ChangelogItem(
@@ -59,7 +77,7 @@ val CHANGELOG: List<ChangelogEntry> = listOf(
                     "compris celui atteint par balayage horizontal : le retour rend exactement " +
                     "l'article laissé à cet endroit. Le corrigé précédent s'applique toujours " +
                     "(retour depuis Favoris vers la page d'où l'on venait).",
-                time = "00:05"
+                time = "00:04"
             )
         )
     ),
@@ -94,7 +112,7 @@ val CHANGELOG: List<ChangelogEntry> = listOf(
                     "suffisent quel que soit le nombre d'articles, puis la liste se pose " +
                     "exactement tout en haut. Les trois listes (articles, vue magazine, " +
                     "abonnements) en profitent.",
-                time = "23:15"
+                time = "23:14"
             )
         )
     ),

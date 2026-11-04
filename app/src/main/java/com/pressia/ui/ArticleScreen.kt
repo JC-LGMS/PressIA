@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Text
@@ -22,6 +23,17 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -47,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.LifecycleEventObserver
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /** Contenu RSS d'origine d'un article (jamais le HTML extrait par Readability, pour éviter
  * les allers-retours dégradés). */
@@ -109,6 +122,9 @@ fun ArticleScreen(
     // balayage d'article ne doit pas le confisquer, sinon tirer la barre de la vidéo change
     // d'article au lieu d'avancer dans la vidéo.
     val inPlayer = remember { mutableStateOf(false) }
+    // Barre de sélection du texte : celle du système (copier, tout sélectionner) complétée par
+    // « Rechercher sur Internet » et « Traduire ».
+    val textToolbar = remember { ArticleTextToolbar() }
 
     // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
     // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
@@ -364,6 +380,7 @@ fun ArticleScreen(
         // Texte sélectionnable (appui long, puis poignées ou « Tout sélectionner ») : la
         // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
         // défilement comme les badges de balayage restent en dehors.
+        CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
         SelectionContainer {
         Column(
             Modifier.fillMaxSize().padding(16.dp)
@@ -508,6 +525,8 @@ fun ArticleScreen(
             if (bannerLift > 0.dp) Spacer(Modifier.height(bannerLift + 20.dp))
         }
         }  // fin de SelectionContainer
+        }
+        SelectionActions(textToolbar, ctx)
         // Barre de défilement : au bord droit, dans la marge de 16 dp que le texte laisse libre.
         // Elle vit hors de la colonne défilante pour deux raisons — ne pas partir avec le
         // contenu quand le balayage horizontal translate la page, et ne pas suivre le
@@ -575,6 +594,111 @@ private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): P
     "star" -> (if (starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
         (if (starred) "Retirer des favoris" else "Ajouter aux favoris")
     else -> null
+}
+
+/**
+ * Barre de sélection de l'article : les commandes du système (copier, tout sélectionner) et deux
+ * actions propres à la lecture — chercher le texte sur Internet, le traduire.
+ *
+ * Compose ne livre pas le texte sélectionné à la barre : les deux actions passent donc par la
+ * copie (comme « Copier »), puis relisent le presse-papiers. La sélection est copiée au passage.
+ */
+private class ArticleTextToolbar : TextToolbar {
+    /** Sélection en cours : rectangle (coordonnées de fenêtre) et commandes disponibles. */
+    var menu by mutableStateOf<Menu?>(null)
+        private set
+
+    class Menu(
+        val rect: Rect,
+        val onCopy: (() -> Unit)?,
+        val onSelectAll: (() -> Unit)?
+    )
+
+    override val status: TextToolbarStatus
+        get() = if (menu == null) TextToolbarStatus.Hidden else TextToolbarStatus.Shown
+
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?
+    ) {
+        // L'article est du texte en lecture seule : seuls copier et tout sélectionner existent.
+        menu = Menu(rect, onCopyRequested, onSelectAllRequested)
+    }
+
+    override fun hide() {
+        menu = null
+    }
+}
+
+/** Actions proposées sur le texte sélectionné, posées sous la sélection. */
+@Composable
+private fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.Context) {
+    val menu = toolbar.menu ?: return
+    Popup(
+        popupPositionProvider = object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize
+            ): IntOffset {
+                val x = menu.rect.left.roundToInt()
+                    .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                val y = (menu.rect.bottom.roundToInt() + 8)
+                    .coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
+                return IntOffset(x, y)
+            }
+        },
+        onDismissRequest = { toolbar.hide() },
+        properties = PopupProperties(focusable = true)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp
+        ) {
+            Column(Modifier.padding(vertical = 6.dp).widthIn(max = 240.dp)) {
+                SelectionAction("Copier") { menu.onCopy?.invoke(); toolbar.hide() }
+                SelectionAction("Tout sélectionner") { menu.onSelectAll?.invoke(); toolbar.hide() }
+                SelectionAction("Rechercher sur Internet") {
+                    selectionText(ctx, menu.onCopy)?.let {
+                        openUrl(ctx, "https://www.google.com/search?q=" + android.net.Uri.encode(it))
+                    }
+                    toolbar.hide()
+                }
+                SelectionAction("Traduire") {
+                    selectionText(ctx, menu.onCopy)?.let {
+                        openUrl(
+                            ctx,
+                            "https://translate.google.com/?sl=auto&tl=fr&text=" + android.net.Uri.encode(it)
+                        )
+                    }
+                    toolbar.hide()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        style = MaterialTheme.typography.bodyMedium
+    )
+}
+
+/** Texte sélectionné : la copie demandée à Compose, relue dans le presse-papiers. */
+private fun selectionText(ctx: android.content.Context, copy: (() -> Unit)?): String? {
+    copy?.invoke()
+    val cm = ctx.getSystemService(android.content.ClipboardManager::class.java) ?: return null
+    return cm.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()?.trim()
+        ?.takeIf { it.isNotEmpty() }
 }
 
 /**
