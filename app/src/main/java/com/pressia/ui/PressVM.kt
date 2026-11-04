@@ -980,7 +980,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Même mécanique que « tout marquer lu » : l'annulation est proposée avant l'écriture,
         // sinon le marquage de masse de l'écran Doublons était le seul sans retour possible.
         offerUndo(ids)
-        ids.forEach { repo.setRead(it, false) }
+        // Un seul enqueueAll et une seule poussée paginée (repo.setRead, lui, repoussait la file
+        // à chaque article : la file était vidée une fois par doublon).
+        repo.markArticlesRead(ids)
         dups = repo.duplicateGroups()
         refreshNow()
     }

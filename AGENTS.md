@@ -525,6 +525,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     et réécrire le jeton de renouvellement) et **conserve l'identité du compte** : ses dossiers et
     ses articles suivent. Un `CancellationException` n'est **jamais** confondu avec un jeton à
     renouveler.
+  - **Le jeton CSRF (`api.token`) vaut pour la session** : `InoreaderProvider.tag` le demande une
+    fois par lot (`markRead` / `markUnread`), pas par article — sinon chaque article coûtait deux
+    requêtes (GET token + POST edit-tag).
+- **Tables JSON de DataStore** (sessions expirées, empreintes « read later », totaux de
+  réconciliation) : lecture-modification-écriture, donc **jamais sans verrou** (`expiredMutex`,
+  `hashMutex`). Les comptes se synchronisent en parallèle : sans lui, deux écritures qui se
+  chevauchent perdent la première (préférence disparue).
 - File montante : `pendingSync()` est une **page** (`LIMIT 100`), pas la file. Tout code qui
   raisonne sur « les actions en attente » doit passer par une requête dédiée (`pendingReadIds`,
   `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue` enchaîne les pages

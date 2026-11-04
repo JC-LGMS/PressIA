@@ -308,6 +308,8 @@ class PressRepository(
     private val syncMutex = Mutex()
     /** Sérialise la mise à jour des empreintes (lecture-modification-écriture d'une map JSON). */
     private val hashMutex = Mutex()
+    /** Idem pour la table des sessions expirées (comptes synchronisés en parallèle). */
+    private val expiredMutex = Mutex()
     /**
      * Verrou de la passe images. Deux passes se chevauchaient à chaque synchro — le pipeline en
      * lance une et le tableau « Read later », exécuté en parallèle, en relançait une de son côté :
@@ -544,33 +546,46 @@ class PressRepository(
      * L'écran Comptes les affiche avec une réinvite à reconnecter ; un appel authentifié réussi
      * retire le drapeau aussitôt.
      */
-    suspend fun expiredAccounts(): Set<String> =
+    suspend fun expiredAccounts(): Set<String> = expiredMutex.withLock { readExpired() }
+
+    /**
+     * Lecture de la table des sessions expirées. À prendre **dans** [expiredMutex] : les comptes
+     * se synchronisent en parallèle, et deux lectures-écritures qui se chevauchent se perdent
+     * (la seconde réécrit la table lue avant la modification de la première).
+     */
+    private suspend fun readExpired(): Set<String> =
         parseExpired(prefs.data.first()[Prefs.EXPIRED_ACCOUNTS])
 
     suspend fun markAccountExpired(id: String) {
         val key = id.trim()
         if (key.isBlank()) return
-        val cur = expiredAccounts()
-        if (key in cur) return
-        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur + key))
+        expiredMutex.withLock {
+            val cur = readExpired()
+            if (key in cur) return@withLock
+            prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur + key))
+        }
     }
 
     suspend fun clearAccountExpired(id: String) {
         val key = id.trim()
         if (key.isBlank()) return
-        val cur = expiredAccounts()
-        if (key !in cur) return
-        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur - key))
+        expiredMutex.withLock {
+            val cur = readExpired()
+            if (key !in cur) return@withLock
+            prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(cur - key))
+        }
     }
 
     /** Oublie les alertes d'un service (reconnecté) : seuls ses comptes sont concernés. */
     suspend fun clearExpiredOfService(service: String) {
         val s = service.trim().lowercase()
         if (s.isBlank()) return
-        val cur = expiredAccounts()
-        val kept = cur.filterNot { providerBase(it) == s }.toSet()
-        if (kept.size == cur.size) return
-        prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(kept))
+        expiredMutex.withLock {
+            val cur = readExpired()
+            val kept = cur.filterNot { providerBase(it) == s }.toSet()
+            if (kept.size == cur.size) return@withLock
+            prefs.set(Prefs.EXPIRED_ACCOUNTS, encodeExpired(kept))
+        }
     }
 
     /** Compte servant aux opérations courantes (le premier connecté si aucun n'est désigné). */
@@ -1751,7 +1766,9 @@ class PressRepository(
         o.keys().asSequence().associateWith { o.optInt(it) }
     }.getOrDefault(emptyMap())
 
-    private suspend fun storeReconcileTotal(accountId: String, total: Int) {
+    /** Écriture de la table : même mutex que les empreintes (lecture-modification-écriture d'une
+     *  map JSON, et les comptes se synchronisent en parallèle). */
+    private suspend fun storeReconcileTotal(accountId: String, total: Int) = hashMutex.withLock {
         val o = org.json.JSONObject()
         (reconcileTotals() + (accountId to total)).forEach { (k, v) -> o.put(k, v) }
         prefs.set(Prefs.RECONCILE_TOTALS, o.toString())

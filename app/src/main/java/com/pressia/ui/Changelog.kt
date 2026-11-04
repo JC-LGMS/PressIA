@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.24",
+        listOf(
+            ChangelogItem(
+                "2026-11-04",
+                "Inoreader, doublons et comptes parallèles : requêtes et verrous",
+                "« Tout marquer lu » sur Inoreader demandait le jeton CSRF article par article, " +
+                    "soit deux requêtes HTTP par article : il est demandé une fois pour la " +
+                    "boucle. « Marquer lus tous les doublons » vidait la file de synchronisation " +
+                    "une fois par doublon ; un seul envoi groupé la vide une fois. Enfin, des " +
+                    "comptes synchronisés en parallèle perdaient des préférences (sessions " +
+                    "expirées, totaux de réconciliation) : ces tables JSON de DataStore se " +
+                    "modifient désormais sous verrou.",
+                time = "08:06"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.23",
         listOf(
             ChangelogItem(

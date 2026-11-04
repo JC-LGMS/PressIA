@@ -367,16 +367,18 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val s = call(token) { h -> api.stream(h, stream, n = max.coerceIn(1, 200), cont = continuation) }
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
-    private suspend fun tag(token: String?, itemId: String, add: String?, remove: String?) {
+    private suspend fun tag(token: String?, ids: List<String>, add: String?, remove: String?) {
+        if (ids.isEmpty()) return
         call(token) { h ->
             // Le jeton CSRF de l'endpoint est cherché avec le même en-tête : il va de pair
-            // avec le jeton d'accès, pas avec lui.
+            // avec le jeton d'accès, pas avec lui. Il vaut pour la session : le redemander à
+            // chaque article doublait les requêtes (un GET token + un POST edit-tag par article).
             val t = try { api.token(h) } catch (_: Exception) { "" }
-            api.editTag(h, itemId, add, remove, t)
+            ids.forEach { api.editTag(h, it, add, remove, t) }
         }
     }
-    override suspend fun markRead(t: String?, ids: List<String>) = ids.forEach { tag(t, it, "user/-/state/com.google/read", null) }
-    override suspend fun markUnread(t: String?, ids: List<String>) = ids.forEach { tag(t, it, null, "user/-/state/com.google/read") }
+    override suspend fun markRead(t: String?, ids: List<String>) = tag(t, ids, "user/-/state/com.google/read", null)
+    override suspend fun markUnread(t: String?, ids: List<String>) = tag(t, ids, null, "user/-/state/com.google/read")
     override suspend fun markAllRead(t: String?, feedIds: List<String>) { /* via mark-all-as-read endpoint côté repo */ }
     override suspend fun profile(token: String?): String? {
         val u = call(token) { h -> api.userInfo(h) }
