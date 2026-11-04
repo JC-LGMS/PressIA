@@ -287,117 +287,64 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     son ni image, aucun journal `MediaPlayer`). Le `VideoView` doit aussi être créé **dans** la
     fenêtre (`factory` d'`AndroidView`), pas par un `remember` détaché.
   - `<iframe src="…/embed/…">` = **page web**, pas un média → `ABlock.V(embed = true)`. Pour
-    **YouTube**, la vidéo est lue **dans l'application** (`YoutubePlayer`), dans l'une des deux
-    présentations du réglage « Vidéos YouTube » (`Prefs.YOUTUBE_UI`, défaut `pressia`) :
-    - **`pressia`** (défaut) : la WebView charge la page de **lecture**
-      (`youtubeWatchUrl` → `m.youtube.com/watch?v=<id>`) avec son propre User-Agent (`wv`). C'est
-      la page où l'image est composée de façon fiable : en WebView `wv`, l'intégration
-      `youtube.com/embed/…` crée bien le décodeur (`c2.goldfish.vp9`) et l'audio passe, mais
-      **aucune image n'est composée** (0 % de mouvement sur la zone, alors que Chrome joue la
-      même vidéo), tandis que la page de lecture, document de premier niveau, rend la vidéo
-      normalement (60 % de mouvement). Les commandes du site y sont **masquées** et remplacées
-      par les nôtres (voir le point « mode `pressia` » plus bas).
-    - **`youtube`** : la page d'**intégration** (`youtubeEmbedUrl` → `youtube.com/embed/<id>`)
-      chargée avec un **User-Agent de navigateur** (`youtubeBrowserUserAgent`) : YouTube y sert
-      la vraie page mobile, dont les contrôles sont de **vrais éléments** du document (titre,
-      son, sous-titres, roue, ⤢, barre d'avancée, temps) au lieu d'un canevas. La page
-      `m.youtube.com/watch` ne convient **pas** à ce mode : en User-Agent navigateur elle se met
-      en pause ~0,5 s après chaque `play()` — pile relevée : `onVideoProgress` →
-      `visibility.Xj()` → `pauseVideo` —, même sans feuille de style de l'application et avec
-      `backgroundable` forcé.
-    **`Referer` = `https://m.youtube.com/` dans les deux modes** (`youtubeReferer`) : un
-    `loadUrl` sans en-tête n'en envoie aucun (« Erreur 152 »), et `www.youtube.com` comme référent
-    d'une intégration est refusé (une page YouTube ne peut pas en intégrer une autre) — vérifié
-    en direct ; l'erreur s'affiche **dans** le bloc. La page est **habillée** par
-    `youtubePlayerScript()`, avec `youtubePlayerCss()` (page de lecture : en-tête et contenus
-    annexes masqués, lecteur fixé en haut, `height:56.25vw`) ou `youtubeSiteCss()` (intégration :
-    même géométrie, sans masquage — c'est déjà un lecteur), si bien que le bloc 16/9 ne montre que
-    la vidéo. Ne pas réintroduire de
-    détection d'erreur par lecture du texte de la page : elle se déclenchait à tort, basculait
-    sur l'affiche et le tap ouvrait l'application YouTube installée. Les autres services
-    d'intégration (Vimeo, Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image
-    YouTube déduite de l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
-    **Rien ne se charge avant un appui** : la page de lecture démarre d'elle-même une fois
-    chargée, si bien que la WebView créée à l'affichage de l'article jouait toute seule. Le bloc
-    montre l'affiche (`VideoPoster`), et le tap seul crée la WebView ; le délai de secours de
-    20 s ne court qu'à partir de là.
-  - **Mode `pressia` : les contrôles sont les nôtres**, injectés dans la page
-    (`youtubeControlsScript`). Ceux du lecteur
-    mobile sont **peints sur un canevas** : le document ne contient ni `.ytp-progress-bar`, ni
-    `.ytp-chrome-bottom`, ni bouton atteignable, et aucun appui dessus n'a d'effet — ni la pause,
-    ni la roue des réglages, ni la barre d'avancée (au mieux l'image d'aperçu du temps visé, la
-    lecture reprenant au temps précédent), y compris après `touch-action:none` et avec le décalage
-    de ~90 px des appuis dans une WebView (constaté un par un sur l'émulateur). Aucun style ne peut
-    donc les rendre utilisables : s'en servir, c'est n'avoir aucun contrôle du tout. Les nôtres
-    sont de vrais éléments du document, au-dessus du lecteur :
-    - une surface transparente sur toute la vidéo (`#pressia-shade`) : appui simple = lecture/pause,
-      double appui à gauche/droite = ∓10 s. Elle intercepte les appuis destinés au canevas, si
-      bien que les contrôles morts de YouTube ne s'affichent plus ; un appui à côté du menu ouvert
-      le referme sans toucher à la lecture ;
-    - une barre en bas (`#pressia-bar`, 50 px) : lecture/pause, temps écoulé / durée, barre
-      d'avancée, son, roue ;
-    - un menu (`#pressia-menu`) : vitesses 0,5× à 2× (`video.playbackRate`) et « Lecture en
-      boucle » (`video.loop`). Il tient dans le bloc (la vue ne fait que 213 px de haut) : rester
-      compact, un menu qui déborde sort de l'écran.
-    Quatre règles apprises à l'usage, à ne pas défaire :
-    - **les commandes passent par l'API du lecteur** (`movie_player.playVideo`/`pauseVideo`/
-      `seekTo`/`setPlaybackRate`), et l'**état** vient de `getPlayerState()` — `1` lecture, `0`/`2`/`5`
-      arrêt, mais sur `3` (mémoire tampon, qui reste affiché longtemps après une pause sur ce
-      lecteur) c'est le `<video>` qui tranche, comme quand le lecteur n'est pas encore là. Un
-      `video.pause()` direct laisse YouTube hors du coup : sa machine d'état réagissait à sa façon
-      — la page basculait sur son **mini-lecteur** (`html.sticky-player`), la vidéo se retrouvait
-      réduite et l'appui suivant la rétablissait ; on y voyait un aller-retour de plein écran. Et
-      une icône lecture/pause déduite du seul `<video>` se figeait, en désaccord avec le lecteur ;
-    - **les commandes du site sont masquées** (`youtubePlayerCss` : `.ytp-chrome-top/.ytp-chrome-bottom/
-      #player-control-overlay/.ytp-fullscreen-button/.ytp-watermark`…). Elles n'existent qu'une fois
-      le lecteur assez grand (plein écran) : deux jeux de commandes se superposaient alors, dont
-      **son** bouton de plein écran dans le même coin que le nôtre, si bien qu'un appui sur la
-      vidéo tombait sur l'un ou l'autre ;
-    - **le bouton plein écran porte deux icônes** (material « fullscreen » / « fullscreen_exit »,
-      les mêmes que celles de `FullscreenToggle` côté Compose) et devient **rouge** (couleur de
-      l'application) en plein écran : un carré vide ne disait ni ce qu'il faisait ni dans quel état
-      on était. Son icône est construite par l'**API DOM** (`createElementNS`) — `innerHTML` est
-      refusé par la page (« This document requires 'TrustedHTML' assignment », politique *Trusted
-      Types* de YouTube) et levait une exception **au milieu de `build()`** : plus de barre du tout,
-      silencieusement ;
-    - **le mini-lecteur ne doit pas s'installer** : `paint()` retire `sticky-player` et réapplique
-      l'habillage (`pressiaApplyCss`) ; le bloc n'expose qu'une vue. C'est vérifié après coup
-      (classe absente, un seul `<video>`).
-    Deux mesures, à ne pas défaire : `touch-action:none` (page, surface et barre) évite que
-    Chromium prenne un glissement horizontal pour un défilement et l'annule par un `pointercancel`
-    au bout de ~15 px ; et un doigt posé sur un lecteur sort du balayage d'article
-    (`detectArticleSwipe`, repère `playerGesture`) — sinon tirer la barre changeait d'article.
-  - **Un garde-fou tient la lecture voulue** (mode `pressia`). Après un aller-retour en plein
-    écran, YouTube se croit définitivement invisible et annulait chaque reprise — `onVideoProgress`
-    → contrôle de visibilité → `pauseVideo` : la vidéo restait en pause quoi qu'on fasse, y compris
-    en appelant `play()` depuis la console. `HTMLMediaElement.prototype.pause` est donc **ignoré
-    tant que `window.pressiaWant` est vrai** : drapeau posé par le tap de lecture et les événements
-    `play`, tombé par `toggle()` **avant** la pause demandée par l'utilisateur (et par `ended`).
-    Vérifié en direct : plein écran, ✕, puis 8 s de lecture continue (21,7 → 34,6 s), pause et
-    reprise manuelles obéies. Ne pas remplacer ce drapeau par un écouteur d'événements : c'est
-    l'appel lui-même qu'il faut laisser passer ou non.
-  - **Le plein écran est celui de l'application** (`PlayerFullscreen` + `PlayerJsBridge`), pour les
-    deux modes : l'API Fullscreen de la page est refusée par la WebView. La WebView est **déplacée**
-    dans un `FrameLayout` posé sur la racine de la fenêtre — même page, même instant de lecture ;
-    la recréer relancerait la vidéo au début. La classe `pressia-full` étire l'image sur toute la
-    hauteur, l'activité passe en paysage et les barres système s'effacent ; ✕ en haut à gauche,
-    `BackHandler`, et `release()` sur `onRelease` comme sur `onDispose`. Déplacer la vue coupe le
-    média : `pressiaResume` est rappelé au retour (150/600/1500/3000 ms).
+    **YouTube**, la vidéo est lue **dans l'application** (`YoutubePlayer`), sur la page
+    d'**intégration** (`youtubeEmbedUrl` → `youtube.com/embed/<id>`), chargée avec un
+    **User-Agent de navigateur** (`youtubeBrowserUserAgent`) : YouTube y sert la vraie page
+    mobile, dont les commandes sont de **vrais éléments du document** (titre, son, sous-titres,
+    roue, ⤢, barre d'avancée, temps) — il n'y a donc rien à poser à la place.
+    La page de **lecture** `m.youtube.com/watch` a été essayée puis abandonnée : en WebView `wv`
+    elle n'offre aucun contrôle utilisable (boutons peints sur un canevas, hors de portée des
+    appuis), et surtout **elle se met en pause toute seule** quelques secondes après le début —
+    pile relevée : `onVideoProgress` → `visibility.Xj()` → `pauseVideo` —, y compris avec un
+    User-Agent de navigateur et sans feuille de style de l'application. Le lecteur du site, lui,
+    joue normalement (aucune pause spontanée constatée).
+    **`Referer` = `https://m.youtube.com/`** (`youtubeReferer`) : un `loadUrl` sans en-tête n'en
+    envoie aucun (« Erreur 152 »), et `www.youtube.com` comme référent d'une intégration est
+    refusé (une page YouTube ne peut pas en intégrer une autre) — vérifié en direct ; l'erreur
+    s'affiche **dans** le bloc. La page est **habillée** par `youtubePlayerScript(youtubeSiteCss())` :
+    géométrie du bloc 16/9, fond noir, pas de défilement. Ne pas réintroduire de détection
+    d'erreur par lecture du texte de la page : elle se déclenchait à tort, basculait sur l'affiche
+    et le tap ouvrait l'application YouTube installée. Les autres services d'intégration (Vimeo,
+    Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image YouTube déduite de
+    l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
+    **Rien ne se charge avant un appui** : l'affiche occupe le bloc (`VideoPoster`), et le tap
+    seul crée la WebView. La page d'intégration n'a pas d'autoplay : c'est `youtubeSiteScript`
+    qui démarre la lecture (geste de l'utilisateur, `mediaPlaybackRequiresUserGesture = false`
+    aidant) et rétablit le son (`unMute`), YouTube démarrant muet sans geste. Le délai de secours
+    de 20 s ne court qu'à partir du tap.
+    Deux mesures : `touch-action:none` (`youtubeSiteCss`) évite que Chromium prenne un glissement
+    horizontal pour un défilement et l'annule (`pointercancel` au bout de ~15 px) ; et un doigt
+    posé sur le lecteur sort du balayage d'article (`detectArticleSwipe`, repère `playerGesture`)
+    — sinon tirer la barre d'avancée changeait d'article.
+  - **La touche Retour doit être rendue à l'application.** Quand la vidéo joue, l'appui est
+    **consommé par la hiérarchie de vues** : ni la WebView, ni la vue plein écran, ni le
+    `BackHandler` de l'écran, ni `onBackPressed` ne le reçoivent (constaté : `Activity.dispatchKeyEvent`
+    le voit passer, `onBackPressed` n'est jamais appelé ; le même appui, vidéo en pause, suivait le
+    chemin normal). Deux garde-fous, parce que le chemin dépend de qui a la touche :
+    - `PlayerWebView` (la sous-classe de WebView que le lecteur utilise) intercepte `KEYCODE_BACK`
+      **avant Chromium** et le rend au `OnBackPressedDispatcher` : sinon Chromium l'avale et
+      **arrête la lecture** (`crMediaCodecBridge: Codec released`) au lieu de quitter l'écran ;
+    - `PlayerBack.handler` : tant que le lecteur est affiché, `MainActivity.dispatchKeyEvent`
+      confie la touche au gestionnaire de l'écran article — plein écran d'abord, puis
+      `OnBackPressedDispatcher.onBackPressed()`, exactement le comportement habituel — et la
+      consomme. Hors du lecteur, le gestionnaire vaut `null` et rien n'est intercepté.
+    Vérifié dans les quatre cas : vidéo en lecture, en pause, plein écran, et retour **après** un
+    aller-retour en plein écran.
+  - **Le plein écran est celui de l'application** (`PlayerFullscreen` + `PlayerJsBridge`) : l'API
+    Fullscreen de la page est refusée par la WebView. La WebView est **déplacée** dans un
+    `FrameLayout` posé sur la racine de la fenêtre — même page, même instant de lecture ; la
+    recréer relancerait la vidéo au début. La classe `pressia-full` étire l'image sur toute la
+    hauteur, l'activité passe en paysage et les barres système s'effacent ; ✕ en haut à gauche, et
+    `release()` sur `onRelease` comme sur `onDispose`. Déplacer la vue coupe le média :
+    `pressiaResume` est rappelé au retour (150/600/1500/3000 ms).
     **Un aller-retour en plein écran se voit à l'écran**, et se vérifie en trois points : la classe
-    `pressia-full` et `window.pressiaFull` (page), l'icône du bouton de la barre (agrandir →
-    réduire), et le ✕ posé par l'application (uiautomator le liste sous « quitter le plein écran »).
-    Attention à la géométrie des appuis : en paysage la fenêtre commence ~141 px à droite du bord
-    (encoche), et 1 px CSS vaut 2,625 px d'écran — viser le centre du bounds mesuré dans la page,
-    jamais des coordonnées devinées. `PlayerFullscreen.enter` rend un **booléen** : si le
-    déplacement échoue (vue détachée), l'appelant remet l'état à « réduit », sans quoi le bouton
-    restait dans le mauvais sens.
-  - **Le son est tenu par l'application** : le lecteur démarre muet (politique de lecture
-    automatique) et le recoupe parfois en cours de lecture (changement de segment, reprise). Comme
-    la lecture vient d'un appui franc sur l'affiche, `paint()` (appelé toutes les 500 ms et sur les
-    événements du média) **rétablit `muted = false` et `volume = 1`** tant que l'utilisateur n'a pas
-    coupé le son lui-même — le bouton 🔊 de la barre tient ce drapeau (`userMuted`) et l'icône
-    affichée le suit, pas l'état du média. Un simple écouteur `playing` ne suffisait pas : le son
-    revenait puis se recoupait seul.
+    `pressia-full` et `window.pressiaFull` (page), l'icône du bouton sous la vidéo (agrandir →
+    réduire, `FullscreenToggle`), et le ✕ posé par l'application (uiautomator le liste sous
+    « quitter le plein écran »). Attention à la géométrie des appuis : en paysage la fenêtre
+    commence ~141 px à droite du bord (encoche), et 1 px CSS vaut 2,625 px d'écran — viser le
+    centre du bounds mesuré dans la page, jamais des coordonnées devinées.
+    `PlayerFullscreen.enter` rend un **booléen** : si le déplacement échoue (vue détachée),
+    l'appelant remet l'état à « réduit », sans quoi le bouton restait dans le mauvais sens.
   - **Écran noir à l'appui** : la WebView était peinte en noir (`setBackgroundColor(BLACK)`)
     avant d'avoir la taille de son bloc, ce qui noircissait **tout** l'écran une seconde. Fond
     transparent, noir dû à la boîte qui l'entoure (`clipToBounds`) et à la page.

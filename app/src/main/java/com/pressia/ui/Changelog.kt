@@ -47,6 +47,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.26",
+        listOf(
+            ChangelogItem(
+                "2026-11-05",
+                "Vidéo : un seul lecteur, celui du site ; le retour fonctionne",
+                "Le réglage « Vidéos YouTube » disparaît, et avec lui le lecteur maison : la vidéo " +
+                    "se lit désormais sur la page d'intégration de YouTube, avec ses propres " +
+                    "commandes (lecture, barre d'avancée, qualité, sous-titres) — et elle ne se met " +
+                    "plus en pause toute seule quelques secondes après le début, ce que faisait la " +
+                    "page de lecture (son lecteur se croit invisible). " +
+                    "Autre correctif : quand la vidéo jouait, l'appui sur Retour était consommé " +
+                    "avant l'application — il ne quittait plus l'article, et il arrêtait même la " +
+                    "lecture au passage. La touche est maintenant rendue à l'application, en plein " +
+                    "écran comme dans l'article : le plein écran se referme d'abord, l'article se " +
+                    "quitte ensuite.",
+                time = "00:28"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.25",
         listOf(
             ChangelogItem(

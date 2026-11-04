@@ -590,48 +590,39 @@ class PressLogicTest {
         // L'affiche se déduit de l'identifiant.
         assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
             com.pressia.ui.youtubePosterUrl("https://www.youtube.com/embed/dQw4w9WgXcQ"))
-        // Mode « contrôles PressIA » : la page de lecture, dont YouTube livre le lecteur nu à une
-        // WebView (l'application pose ses propres commandes).
-        assertEquals("https://m.youtube.com/watch?v=dQw4w9WgXcQ",
-            com.pressia.ui.youtubeWatchUrl("dQw4w9WgXcQ"))
-        // Mode « interface YouTube » : la page d'intégration, dont les contrôles sont de vrais
-        // éléments du document. La page `watch` ne convient pas : en WebView avec un User-Agent de
-        // navigateur, son lecteur se croit non visible et se met en pause après chaque play().
+        // Le lecteur est la page d'**intégration** de YouTube, dont les contrôles sont de vrais
+        // éléments du document. C'est la seule présentation : la page `watch`, elle, se met en
+        // pause toute seule (son lecteur se croit non visible) et n'offre aucun contrôle
+        // utilisable en WebView.
         assertEquals("https://www.youtube.com/embed/dQw4w9WgXcQ",
             com.pressia.ui.youtubeEmbedUrl("dQw4w9WgXcQ"))
         // Le référent porte l'hôte historique de la page de lecture : YouTube refuse
         // `www.youtube.com` comme référent d'une intégration (« Erreur 152 »).
         assertEquals("https://m.youtube.com/", com.pressia.ui.youtubeReferer())
-        assertEquals("https://m.youtube.com/", com.pressia.ui.youtubeReferer(siteUi = true))
         // Habillage : le bloc 16/9 ne doit montrer que le lecteur.
-        assertTrue(com.pressia.ui.youtubePlayerScript().contains("position:fixed"))
-        assertTrue(com.pressia.ui.youtubePlayerCss().contains("56.25vw"))
+        assertTrue(
+            com.pressia.ui.youtubePlayerScript(com.pressia.ui.youtubeSiteCss())
+                .contains("position:fixed")
+        )
+        assertTrue(com.pressia.ui.youtubeSiteCss().contains("56.25vw"))
+        // L'interface du site (ses commandes) n'est servie qu'à un User-Agent de navigateur : la
+        // WebView se présente avec celui-ci, pas avec le sien (`wv`).
+        assertTrue(com.pressia.ui.youtubeBrowserUserAgent().contains("Chrome/"))
+        assertFalse(com.pressia.ui.youtubeBrowserUserAgent().contains("wv"))
     }
-    @Test fun `controles du lecteur - regles apprises a l'usage`() {
-        val css = com.pressia.ui.youtubePlayerCss()
-        val js = com.pressia.ui.youtubeControlsScript()
-        // Les commandes du **site** sont masquées : sinon deux jeux de commandes se superposent
-        // dès que le lecteur est assez grand, dont son bouton de plein écran — dans le même coin
-        // que le nôtre.
-        assertTrue(css.contains("#player-control-overlay"))
-        assertTrue(css.contains(".ytp-fullscreen-button"))
-        // Le mini-lecteur de la page ne doit pas s'installer : la classe est retirée et
-        // l'habillage réappliqué.
-        assertTrue(js.contains("sticky-player"))
-        assertTrue(js.contains("pressiaApplyCss"))
-        // Les commandes passent par l'API du lecteur, et l'état aussi (le `<video>` seul peut
-        // être en désaccord avec lui) : le `<video>` ne tranche que sur « mémoire tampon ».
-        assertTrue(js.contains("getPlayerState"))
-        assertTrue(js.contains("pauseVideo"))
+    @Test fun `lecteur youtube - demarrage et plein ecran`() {
+        val js = com.pressia.ui.youtubeSiteScript()
+        // La page d'intégration n'a pas d'autoplay : la lecture vient de l'appui sur l'affiche.
         assertTrue(js.contains("playVideo"))
-        // Les deux icônes du bouton plein écran, avec leurs tracés respectifs.
-        assertTrue(js.contains("M7 14H5v5h5v-2H7v-3z"))   // agrandir
-        assertTrue(js.contains("M5 16h3v3h2v-5H5v2z"))     // réduire
-        // **Pas d'`innerHTML`** : la page applique une politique *Trusted Types* et l'appel lève
-        // une exception au milieu de `build()` (plus de barre du tout, silencieusement). L'icône
-        // est construite par l'API DOM.
-        assertFalse(js.contains("innerHTML"))
-        assertTrue(js.contains("createElementNS"))
+        assertTrue(js.contains("unMute"))
+        // Le ⤢ du site demande le plein écran au navigateur, refusé dans une WebView : il est
+        // détourné vers l'application, qui déplace la vue.
+        assertTrue(js.contains("fullscreen-icon"))
+        assertTrue(js.contains("PressIAHost"))
+        // Déplacer la WebView coupe le média : l'état de lecture est retenu et la reprise
+        // redemandée après coup (voir `PlayerFullscreen`).
+        assertTrue(js.contains("pressiaResume"))
+        assertTrue(com.pressia.ui.youtubeSiteCss().contains("pressia-full"))
     }
     @Test fun `blocs article texte nu conserve`() {
         // Flux qui livre le corps hors balise de bloc, relevé en vrai sur Les Numériques : nœuds

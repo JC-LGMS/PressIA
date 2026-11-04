@@ -44,6 +44,21 @@ class MainActivity : ComponentActivity() {
      */
     private val oauthLink = mutableStateOf<android.net.Uri?>(null)
 
+    /**
+     * Lecteur YouTube : la touche Retour y est **consommée par la hiérarchie de vues** quand la
+     * vidéo joue — aucun gestionnaire de retour ne la reçoit, `onBackPressed` n'est jamais appelé
+     * (voir `PlayerBack`). L'activité, elle, la voit toujours passer : tant que le lecteur est à
+     * l'écran, elle la lui confie. Hors du lecteur, `handler` vaut `null` : rien n'est intercepté.
+     */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val back = com.pressia.ui.PlayerBack.handler
+        if (back != null && event.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.action == android.view.KeyEvent.ACTION_UP) back()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         intent?.data?.takeIf { it.host == "oauth" }?.let { oauthLink.value = it }
