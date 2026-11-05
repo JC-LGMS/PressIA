@@ -519,6 +519,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   veille malgré un réglage à dix minutes. C'est `syncOnLaunch` qui arbitre : option, sources et
   fenêtre de fraîcheur (`isSyncFresh`, réglage « Fréquence de synchronisation », 0 = manuelle =
   jamais frais), et il s'abstient si un travail est déjà en cours (le relancer l'annulerait).
+  La **minuterie de premier plan** (`PressVM.startSyncTicker`/`stopSyncTicker`, câblés sur
+  `ON_RESUME`/`ON_PAUSE`) prend le relais tant que l'écran reste visible : elle dort jusqu'à
+  l'échéance du même réglage, repasse par `syncOnLaunch`, puis attend la fin de la passe
+  (`syncJob?.join()` — la date n'est reculée qu'à la fin, sinon elle repartait aussitôt). Fréquence
+  « manuelle » (0) : la boucle veille toujours (une fois par minute), sans quoi repasser à une
+  fréquence depuis Réglages ne redémarrerait jamais la minuterie — aucun `ON_RESUME` sur cet écran.
+  `attemptedAt` (mémoire) évite de retenter chaque minute une synchro en échec, `LAST_SYNC_AT`
+  n'avançant qu'en cas de succès.
 
 ## Pièges connus — données, cache et stockage
 
