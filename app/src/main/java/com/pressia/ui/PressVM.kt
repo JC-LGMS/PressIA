@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 data class Scope(val feedId: String? = null, val categoryId: String? = null, val label: String = "Tous les articles")
@@ -693,6 +694,52 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     private fun launchSync(block: suspend () -> Unit) {
         syncJob?.cancel()
         syncJob = viewModelScope.launch { block() }
+    }
+
+    /**
+     * Minuterie du premier plan : une application laissée ouverte au même écran ne se
+     * resynchronisait jamais non plus. Tant que l'écran est visible ([stopSyncTicker] sur
+     * `ON_PAUSE`), elle se réveille à l'échéance du réglage « Fréquence de synchronisation » et
+     * repasse par [syncOnLaunch], qui revérifie option, sources et fraîcheur. Fréquence
+     * « manuelle » (0) : la boucle continue à veiller, sinon repasser à une fréquence depuis
+     * Réglages ne redémarrerait jamais la minuterie (aucun `ON_RESUME` sur cet écran).
+     */
+    private var syncTicker: Job? = null
+    fun startSyncTicker() {
+        if (syncTicker?.isActive == true) return
+        syncTicker = viewModelScope.launch {
+            // Date de la dernière tentative : `LAST_SYNC_AT` n'avance qu'en cas de succès, une
+            // synchro en échec serait donc retentée à chaque réveil (un appel par minute).
+            var attemptedAt = 0L
+            while (true) {
+                val window = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
+                if (window <= 0) {
+                    delay(60_000L)
+                    continue
+                }
+                val last = maxOf(prefs.flow(Prefs.LAST_SYNC_AT, 0L).first(), attemptedAt)
+                val dueIn = last + window * 60_000L - System.currentTimeMillis()
+                if (dueIn > 0L) {
+                    delay(dueIn)
+                    continue
+                }
+                if (!repo.isOnline()) {
+                    // Pas de réseau : rien à tenter, mais on revient voir — la synchro
+                    // manuelle et le retour au premier plan restent les déclencheurs normaux.
+                    delay(60_000L)
+                    continue
+                }
+                attemptedAt = System.currentTimeMillis()
+                syncOnLaunch()
+                // Attend la passe déclenchée : la date n'est reculée qu'à sa fin, sans quoi la
+                // boucle repartait aussitôt, l'échéance semblant toujours passée.
+                syncJob?.join()
+            }
+        }
+    }
+    fun stopSyncTicker() {
+        syncTicker?.cancel()
+        syncTicker = null
     }
 
     /**

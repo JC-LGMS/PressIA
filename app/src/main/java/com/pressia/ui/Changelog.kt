@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.28",
+        listOf(
+            ChangelogItem(
+                "2026-11-05",
+                "Minuterie de synchronisation au premier plan",
+                "Le retour au premier plan resynchronisait, mais une application laissée ouverte " +
+                    "au même écran ne se resynchronisait jamais non plus : la minuterie manquait. " +
+                    "Tant que l'écran est visible, une boucle dort jusqu'à l'échéance du réglage " +
+                    "« Fréquence de synchronisation » puis repasse par la même porte (option, " +
+                    "sources et fraîcheur revérifiées), et attend la fin de la passe. Elle s'arrête " +
+                    "quand l'application passe en arrière-plan ; fréquence « manuelle » : elle ne " +
+                    "synchronise pas mais reste à l'écoute d'un changement de réglage. Une " +
+                    "tentative en échec n'est pas retentée toutes les minutes.",
+                time = "08:42"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.27",
         listOf(
             ChangelogItem(
