@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.29",
+        listOf(
+            ChangelogItem(
+                "2026-11-05",
+                "Plafond de taille pour les flux et les pages d'articles",
+                "Les corps de flux et les pages d'articles partaient entiers en mémoire, sans " +
+                    "plafond : huit flux interrogés en parallèle, un serveur qui répond une " +
+                    "archive ou un corps sans fin, et la synchro mourait en OutOfMemory. Le " +
+                    "même plafond qu'une miniature s'applique désormais - 5 Mo pour un flux, " +
+                    "8 Mo pour une page d'article - et un dépassement est un échec de " +
+                    "récupération, journalisé pour le flux local concerné.",
+                time = "09:53"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.28",
         listOf(
             ChangelogItem(

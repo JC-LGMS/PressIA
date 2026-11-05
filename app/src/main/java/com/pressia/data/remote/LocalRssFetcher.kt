@@ -63,6 +63,14 @@ object LocalRssFetcher {
         .build()
     private const val UA = "Mozilla/5.0 (Linux; Android 14; PressIA) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
+    /**
+     * Plafond du corps d'un flux. Huit flux sont interrogés en parallèle : un serveur qui
+     * répond une archive ou un flux sans fin (URL hostile, configuration cassée) faisait
+     * gonfler la mémoire jusqu'à l'`OutOfMemoryError` en pleine synchronisation. Un vrai flux
+     * tient largement sous cette taille ; au-delà, la récupération est un échec.
+     */
+    private const val MAX_FEED_BYTES = 5 * 1024 * 1024
+
     suspend fun fetch(feedUrl: String, feedId: String, max: Int): LocalFeedFetch = withContext(Dispatchers.IO) {
         // L'URL est nettoyée avant la requête : une URL enregistrée avec un caractère parasite
         // (NUL collé au clavier) reste ainsi exploitable, sans obliger l'utilisateur à la ressaisir.
@@ -78,7 +86,11 @@ object LocalRssFetcher {
             try {
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
-                        val xml = resp.body?.string() ?: return@withContext LocalFeedFetch(feedId, error = "réponse vide")
+                        val body = resp.body ?: return@withContext LocalFeedFetch(feedId, error = "réponse vide")
+                        val bytes = com.pressia.data.local.ThumbStore
+                            .readCapped(body.byteStream(), MAX_FEED_BYTES)
+                            ?: return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
+                        val xml = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
                         val parsed = parseFeed(xml, feedId)
                         return@withContext LocalFeedFetch(feedId, parsed.articles.take(max), parsed.title)
                     }

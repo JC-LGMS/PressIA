@@ -14,6 +14,9 @@ object Readability {
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
     private const val UA = "Mozilla/5.0 (Linux; Android 14; PressIA) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+
+    /** Plafond de la page récupérée pour l'extraction (voir `ThumbStore.readCapped`). */
+    private const val MAX_PAGE_BYTES = 8 * 1024 * 1024
     private val NOISE = Regex("(?i)nav|header|footer|sidebar|comment|share|related|advert|cookie|menu|widget|subscribe|newsletter|popup|banner")
 
     /** Marqueurs de page "bloquée" : anti-robot, vérification JS, paywall brutal, Cloudflare… */
@@ -66,7 +69,13 @@ object Readability {
                 .build()
             client.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) return@withContext FullResult.Failed
-                val html = r.body?.string() ?: return@withContext FullResult.Failed
+                val body = r.body ?: return@withContext FullResult.Failed
+                // Plafond : une page énorme (archive, image encodée, réponse sans fin) partait
+                // entière en mémoire puis dans jsoup. Au-delà, l'extraction est un échec.
+                val bytes = com.pressia.data.local.ThumbStore
+                    .readCapped(body.byteStream(), MAX_PAGE_BYTES)
+                    ?: return@withContext FullResult.Failed
+                val html = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
                 if (isBlockedPage(html)) return@withContext FullResult.Blocked
                 val extracted = extract(html, url)
                 val text = Jsoup.parse(extracted).text()
