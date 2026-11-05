@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.27",
+        listOf(
+            ChangelogItem(
+                "2026-11-05",
+                "Synchronisation au retour dans l'application",
+                "La synchro automatique ne partait qu'à la création de l'activité : une " +
+                    "application laissée en arrière-plan puis rouverte (processus toujours vivant) " +
+                    "ne resynchronisait jamais, et « Dernière synchro » pouvait dater de la veille " +
+                    "malgré un réglage à dix minutes. Chaque retour au premier plan repasse " +
+                    "désormais par la même porte — option et fenêtre de fraîcheur revérifiées — et " +
+                    "n'annule pas une synchro déjà en cours.",
+                time = "08:11"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.26",
         listOf(
             ChangelogItem(

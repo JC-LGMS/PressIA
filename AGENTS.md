@@ -512,6 +512,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le
   compteur est croissant et finit sur le vrai total, jamais sur le nombre d'abonnements.
+- **Pas de planificateur de synchro** (le Worker a été supprimé : elle ne tourne qu'app ouverte) :
+  `MainActivity` appelle `vm.syncOnLaunch()` à **chaque `ON_RESUME`**, pas seulement à la création
+  de l'activité. Un déclenchement au seul `onCreate` laissait une application rouverte après des
+  heures d'arrière-plan (processus vivant) sans aucune synchro, « Dernière synchro » figé à la
+  veille malgré un réglage à dix minutes. C'est `syncOnLaunch` qui arbitre : option, sources et
+  fenêtre de fraîcheur (`isSyncFresh`, réglage « Fréquence de synchronisation », 0 = manuelle =
+  jamais frais), et il s'abstient si un travail est déjà en cours (le relancer l'annulerait).
 
 ## Pièges connus — données, cache et stockage
 

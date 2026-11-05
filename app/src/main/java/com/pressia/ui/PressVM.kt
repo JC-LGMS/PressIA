@@ -696,7 +696,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /**
-     * Synchronisation au démarrage : exactement la même que la manuelle ([syncNow]).
+     * Synchronisation à l'ouverture : exactement la même que la manuelle ([syncNow]).
+     *
+     * Appelée à **chaque retour au premier plan** (MainActivity), pas seulement à la création de
+     * l'activité : une application laissée en arrière-plan puis rouverte ne resynchronisait
+     * jamais, si bien que « Dernière synchro » pouvait dater de la veille malgré un réglage à
+     * dix minutes.
      *
      * Elle n'a lieu que si l'option est active, qu'il y a de quoi synchroniser (compte ou
      * flux — sinon premier démarrage ou après déconnexion : rien à récupérer, silence total)
@@ -713,35 +718,40 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Option et fraîcheur sont revérifiées sous le verrou partagé (l'app ne synchronise
      * que lorsqu'elle est ouverte : pas d'autre déclencheur concurrent).
      */
-    fun syncOnLaunch() = launchSync {
-        repo.withSyncLock {
-            val prefs = repo.prefs
-            // Lecture directe du réglage, pas du StateFlow : au démarrage celui-ci vaut encore son
-            // initial (vrai) tant que le DataStore n'a pas émis — l'option coupée serait ignorée.
-            if (prefs.flow(Prefs.SYNC_ON_LAUNCH, true).first()) {
-                val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
-                val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
-                val now = System.currentTimeMillis()
-                val ageMin = if (last > 0L) (now - last) / 60_000L else -1L
-                if (isSyncFresh(last, now, windowMin)) {
-                    android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
-                } else if (!repo.hasSources()) {
-                    android.util.Log.i("PressIA", "sync au lancement sautée (aucune source : ni compte ni flux)")
-                } else {
-                    android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
-                    // Même contenu, mêmes indicateurs et même message que la synchro manuelle
-                    // (nouveautés, fin ou échec) : le verrou d'indicateur est requis comme
-                    // dans doSyncNow, sinon ni flèche ni bandeau bleu pendant la synchro.
-                    lockSync()
-                    try {
-                        syncMsg = try {
-                            if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
-                            else finishSync(repo.syncPipeline())
-                        } catch (e: Exception) {
-                            failSync()
+    fun syncOnLaunch() {
+        // Un travail déjà en cours (synchro manuelle, ou synchro du lancement précédent) :
+        // le relancer l'annulerait au milieu — il recule lui-même `LAST_SYNC_AT` à sa fin.
+        if (syncJob?.isActive == true) return
+        launchSync {
+            repo.withSyncLock {
+                val prefs = repo.prefs
+                // Lecture directe du réglage, pas du StateFlow : au démarrage celui-ci vaut encore son
+                // initial (vrai) tant que le DataStore n'a pas émis — l'option coupée serait ignorée.
+                if (prefs.flow(Prefs.SYNC_ON_LAUNCH, true).first()) {
+                    val last = prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
+                    val windowMin = prefs.flow(Prefs.SYNC_INTERVAL_MIN, Prefs.SYNC_INTERVAL_DEFAULT).first()
+                    val now = System.currentTimeMillis()
+                    val ageMin = if (last > 0L) (now - last) / 60_000L else -1L
+                    if (isSyncFresh(last, now, windowMin)) {
+                        android.util.Log.i("PressIA", "sync au lancement sautée (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
+                    } else if (!repo.hasSources()) {
+                        android.util.Log.i("PressIA", "sync au lancement sautée (aucune source : ni compte ni flux)")
+                    } else {
+                        android.util.Log.i("PressIA", "sync au lancement (dernière synchro il y a $ageMin min, fenêtre $windowMin min)")
+                        // Même contenu, mêmes indicateurs et même message que la synchro manuelle
+                        // (nouveautés, fin ou échec) : le verrou d'indicateur est requis comme
+                        // dans doSyncNow, sinon ni flèche ni bandeau bleu pendant la synchro.
+                        lockSync()
+                        try {
+                            syncMsg = try {
+                                if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
+                                else finishSync(repo.syncPipeline())
+                            } catch (e: Exception) {
+                                failSync()
+                            }
+                        } finally {
+                            unlockSync()
                         }
-                    } finally {
-                        unlockSync()
                     }
                 }
             }

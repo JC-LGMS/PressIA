@@ -87,9 +87,21 @@ class MainActivity : ComponentActivity() {
                 vm.authMsg = handleOAuthDeepLink(vm, uri)
                 vm.refresh()
             }
-            LaunchedEffect(Unit) {
-                vm.syncOnLaunch()
-                vm.refresh()
+            // La synchro au lancement ne partait qu'à la **création** de l'activité : une
+            // application laissée en arrière-plan puis rouverte (processus toujours vivant,
+            // `onCreate` non rappelé) ne resynchronisait jamais, même des heures plus tard, et
+            // « Dernière synchro » restait figé. Chaque retour au premier plan repasse donc par
+            // la même porte, qui revérifie l'option et la fraîcheur (voir `syncOnLaunch`).
+            val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        vm.syncOnLaunch()
+                        vm.refresh()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
             PressIATheme(theme, accent, bg) {
                 // Réglage « page d'accueil » pas encore lu (DataStore répond de façon
