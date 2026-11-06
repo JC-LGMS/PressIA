@@ -675,13 +675,19 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   100 Mo et plus sur une base nourrie, la base plusieurs Mo ; le fichier de métadonnées, quelques
   kilo-octets. Les règles ne savent pas exclure une colonne : exclure le HTML, c'est exclure la base.
 - **La copie automatique (`data/AutoBackup.kt`) est ce qui remplace la base dans la sauvegarde.**
-  `writeAutoBackup()` exporte `Sections.ACCOUNTS` + `Sections.READ` — dossiers et flux **locaux**,
-  étoiles PressIA, lus des flux locaux, jamais le contenu — vers `files/sauvegarde-auto.json`, en
+  `writeAutoBackup()` exporte `Sections.ACCOUNTS` + `Sections.READ` — dossiers et flux **locaux
+  seulement** (`exportJson(..., localFeedsOnly = true)` ; un flux de compte y perdrait son dossier,
+  les dossiers des comptes n'étant pas exportés), étoiles PressIA, lus des flux locaux, jamais le
+  contenu — vers `files/sauvegarde-auto.json`, en
   écriture atomique (temporaire + renommage). Elle est **réécrite au passage en arrière-plan et à la
   fin de chaque synchro** : la sauvegarde Google tourne elle aussi écran éteint, elle trouve donc
   toujours une copie à jour. `restoreAutoBackupIfEmpty()` la réimporte **au début de
-  `syncOnLaunch`, avant le test de fraîcheur**, et seulement s'il n'y a ni flux local ni favori en
-  base (sinon une bibliothèque vidée exprès ressusciterait au redémarrage). Trois pièges, tous
+  `syncOnLaunch`, avant le test de fraîcheur**, et seulement si **la base est vide**
+  (`autoBackupWorthRestoring` : aucun abonnement et aucun favori). Le garde précédent — « aucun
+  flux local » — laissait passer une bibliothèque d'un seul compte (Feedly) sans favori :
+  réimportée à chaque lancement, elle détachait tous les flux de leurs dossiers (le fichier ne
+  porte que les dossiers locaux) et remettait `LAST_SYNC_AT` à zéro, donc « Jamais synchronisé »
+  jusqu'à la synchro suivante. Trois autres pièges, tous
   constatés en simulation (base supprimée, fichier conservé) :
   - `LAST_SYNC_AT` **est restauré par Google** (il vit dans DataStore) : sans le remettre à zéro,
     la première synchro est jugée « récente » et sautée — écran vide, et les lus/favoris attendent

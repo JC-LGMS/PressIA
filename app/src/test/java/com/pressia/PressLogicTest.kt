@@ -1385,6 +1385,33 @@ class PressLogicTest {
         assertTrue(com.pressia.data.markAllReadPush(emptyList()).nothing)
     }
 
+    @Test fun `copie automatique restauree seulement sur une base vide`() {
+        // Une bibliothèque vivante (les flux d'un compte, aucun favori) ne doit PAS déclencher
+        // l'import de la copie automatique : elle ne contient que les dossiers locaux, donc
+        // l'importer détachait chaque flux de son dossier, et la date de synchro repassait à
+        // « jamais synchronisé » à chaque lancement.
+        assertTrue(com.pressia.data.autoBackupWorthRestoring(subscriptions = 0, starred = 0))
+        assertFalse(com.pressia.data.autoBackupWorthRestoring(subscriptions = 27, starred = 0))
+        assertFalse(com.pressia.data.autoBackupWorthRestoring(subscriptions = 0, starred = 3))
+    }
+
+    @Test fun `copie automatique ne garde que les flux locaux`() {
+        fun sub(id: String, provider: String, cat: String?) = com.pressia.data.local.SubscriptionEntity(
+            id = id, title = id, url = "https://ex.com/$id", provider = provider, categoryId = cat
+        )
+        val subs = listOf(sub("f1", "feedly:acc", "c-feedly"), sub("l1", "local", null))
+        // Copie automatique : les flux de compte en sortent (la synchro les rendra).
+        assertEquals(
+            listOf("l1"),
+            com.pressia.data.backupSubscriptionsFor(subs, emptySet(), localFeedsOnly = true).map { it.id }
+        )
+        // Fichier choisi par l'utilisateur : tout est gardé, un dossier non sauvegardé (compte)
+        // laisse simplement le flux sans dossier (la synchro le rattachera).
+        val manual = com.pressia.data.backupSubscriptionsFor(subs, emptySet())
+        assertEquals(listOf("f1", "l1"), manual.map { it.id })
+        assertNull(manual.first { it.id == "f1" }.categoryId)
+    }
+
     @Test fun `tout marquer lu part vers tous les comptes cloud`() {
         fun row(feed: String?) =
             com.pressia.data.local.SyncActionEntity(articleId = "", feedId = feed, kind = "markAllRead")

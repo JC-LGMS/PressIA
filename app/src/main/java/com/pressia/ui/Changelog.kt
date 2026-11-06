@@ -48,6 +48,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.38",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Dossiers et date de synchro perdus à chaque relance (copie automatique)",
+                "La copie automatique était réimportée à chaque lancement dès qu'on n'avait ni flux " +
+                    "local ni favori — cas d'un compte Feedly seul. Comme elle ne contient que les " +
+                    "dossiers locaux, chaque flux du compte perdait son dossier (ils tombaient tous " +
+                    "dans « Flux sans dossier ») et la date de dernière synchro repassait à " +
+                    "« Jamais synchronisé » ; la synchro suivante les remettait en place. Elle n'est " +
+                    "plus réimportée que si la base est vraiment vide (aucun abonnement, aucun " +
+                    "favori), et le fichier ne contient plus que les flux locaux.",
+                time = "00:21"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.37",
         listOf(
             ChangelogItem(

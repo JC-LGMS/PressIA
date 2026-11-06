@@ -35,7 +35,10 @@ fun PressRepository.autoBackupFile(): File = File(appCtx.filesDir, AUTO_BACKUP_N
  */
 suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
     runCatching {
-        val json = exportJson(AUTO_SECTIONS)
+        // Flux locaux seulement : la base exclue de la sauvegarde Google ne contient de toute
+        // façon que les leurs (dossiers locaux), et y mêler ceux des comptes les détacherait de
+        // leurs dossiers au premier réimport.
+        val json = exportJson(AUTO_SECTIONS, localFeedsOnly = true)
         val target = autoBackupFile()
         val tmp = File(target.parentFile, target.name + ".tmp")
         tmp.writeText(json)
@@ -61,10 +64,21 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
  * mis en file (`RESTORED_STARRED`, `RESTORED_READ`) et rejoués à leur arrivée, exactement comme
  * pour la restauration manuelle.
  */
+/**
+ * La copie automatique ne sert que si **la base est vide** : aucun abonnement et aucun favori.
+ *
+ * C'est le vrai signal d'une restauration Google (la base n'est pas revenue, le petit fichier
+ * si). Le garde précédent — « aucun flux local » — laissait passer une bibliothèque vivante
+ * composée d'un seul compte (Feedly) sans favori : le fichier était alors réimporté à **chaque**
+ * lancement, et comme il ne contient que les dossiers **locaux**, chaque flux du compte perdait
+ * son dossier (`categoryId` remis à zéro) jusqu'à la fin de la synchro suivante. Pur, testé.
+ */
+fun autoBackupWorthRestoring(subscriptions: Int, starred: Int): Boolean =
+    subscriptions == 0 && starred == 0
+
 suspend fun PressRepository.restoreAutoBackupIfEmpty(): Boolean = withContext(Dispatchers.IO) {
     val dao = db.dao()
-    if (dao.subscriptions().any { isLocalProvider(it.provider) }) return@withContext false
-    if (dao.starredCount() > 0) return@withContext false
+    if (!autoBackupWorthRestoring(dao.subscriptions().size, dao.starredCount())) return@withContext false
     val file = autoBackupFile()
     if (!file.exists()) return@withContext false
     val json = runCatching { file.readText() }.getOrNull() ?: return@withContext false

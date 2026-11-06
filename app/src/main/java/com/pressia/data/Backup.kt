@@ -105,9 +105,17 @@ data class ImportReport(
 }
 
 /** Sérialise l'état demandé vers une chaîne JSON (pretty-print pour rester lisible à la main). */
-suspend fun PressRepository.exportJson(sections: List<String>, includeTokens: Boolean = false): String = sauvegardeJson(sections, includeTokens)
+suspend fun PressRepository.exportJson(
+    sections: List<String>,
+    includeTokens: Boolean = false,
+    localFeedsOnly: Boolean = false
+): String = sauvegardeJson(sections, includeTokens, localFeedsOnly)
 
-suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens: Boolean = false): String = withContext(Dispatchers.IO) {
+suspend fun PressRepository.sauvegardeJson(
+    sections: List<String>,
+    includeTokens: Boolean = false,
+    localFeedsOnly: Boolean = false
+): String = withContext(Dispatchers.IO) {
     val dao = db.dao()
     val root = JSONObject()
     // En-tête volontairement minimal : un lecteur n'a besoin que de `sections` (et de
@@ -156,7 +164,7 @@ suspend fun PressRepository.sauvegardeJson(sections: List<String>, includeTokens
             // `unreadCount` est un cache recalculé par la synchro : pas exporté.
             // Un flux rangé dans un dossier non sauvegardé (compte) sort sans dossier :
             // la synchro lui rendra le sien, et un `categoryId` orphelin casserait l'import.
-            backupSubscriptions(dao.subscriptions(), keptIds).forEach { s ->
+            backupSubscriptionsFor(dao.subscriptions(), keptIds, localFeedsOnly).forEach { s ->
                 put(
                     JSONObject()
                         .put("id", s.id).put("title", s.title).put("url", s.url).put("siteUrl", s.siteUrl)
@@ -367,6 +375,22 @@ fun backupCategories(cats: List<CategoryEntity>): List<CategoryEntity> =
  */
 fun backupSubscriptions(subs: List<SubscriptionEntity>, keptCatIds: Set<String>): List<SubscriptionEntity> =
     subs.map { s -> if (s.categoryId != null && s.categoryId !in keptCatIds) s.copy(categoryId = null) else s }
+
+/**
+ * Abonnements portés par une copie de sauvegarde.
+ *
+ * [localFeedsOnly] est celui de la **copie automatique** : elle ne contient que les dossiers
+ * locaux, donc les flux des comptes y perdaient leur dossier — réimportée, elle les détachait
+ * tous. Le fichier choisi par l'utilisateur garde tous les flux (la synchro leur rend leur
+ * dossier), la copie automatique ne garde que les flux locaux, qui sont les seuls à ne pas
+ * revenir autrement.
+ */
+fun backupSubscriptionsFor(
+    subs: List<SubscriptionEntity>,
+    keptCatIds: Set<String>,
+    localFeedsOnly: Boolean = false
+): List<SubscriptionEntity> =
+    backupSubscriptions(if (localFeedsOnly) subs.filter { isLocalProvider(it.provider) } else subs, keptCatIds)
 
 // ----- Conversions JSON -----
 
