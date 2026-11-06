@@ -602,6 +602,14 @@ class PressLogicTest {
             .filterIsInstance<com.pressia.ui.ABlock.T>().first()
         val hl = marked.spans.single { it.highlight }
         assertEquals("mot", marked.text.substring(hl.start, hl.end))
+        // Le soulignement vient de la balise `u`/`ins` ou d'un style en ligne.
+        val underlined = com.pressia.ui.articleBlocks(
+            "<p>Un <u>souligne</u> et un <span style=\"text-decoration: underline\">par style</span>.</p>",
+            "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        val ul = underlined.spans.filter { it.underline }
+        assertEquals(2, ul.size)
+        assertEquals(listOf("souligne", "par style"), ul.map { underlined.text.substring(it.start, it.end) })
     }
     @Test fun `blocs article - tableau`() {
         // Un tableau était perdu entièrement : il devient un bloc, en-tête (th) à part.

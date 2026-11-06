@@ -826,13 +826,14 @@ sealed interface ABlock {
     /** Plage cliquable d'un texte : [start] inclus, [end] exclu, et l'URL qu'elle ouvre. */
     data class Link(val start: Int, val end: Int, val url: String)
 
-    /** Plage de mise en forme (gras, italique, surlignage) d'un texte, mêmes bornes que [Link]. */
+    /** Plage de mise en forme (gras, italique, surlignage, soulignement) d'un texte. */
     data class Span(
         val start: Int,
         val end: Int,
         val bold: Boolean = false,
         val italic: Boolean = false,
-        val highlight: Boolean = false
+        val highlight: Boolean = false,
+        val underline: Boolean = false
     )
 }
 
@@ -843,6 +844,15 @@ private val ARTICLE_BLOCK_TAGS =
 /** Sélecteur des blocs de contenu : les conteneurs de texte, plus les médias et les tableaux. */
 private val ARTICLE_SELECTOR =
     (ARTICLE_BLOCK_TAGS + listOf("img", "video", "iframe", "table")).joinToString(", ")
+
+/**
+ * Texte souligné ? Balises `u` et `ins`, ou style en ligne `text-decoration: underline` (les flux
+ * emploient les deux ; Readability retire les styles, pas les balises). La détection remonte à
+ * tous les descendants de l'élément.
+ */
+private fun isUnderlined(el: org.jsoup.nodes.Element): Boolean =
+    el.tagName() in setOf("u", "ins") ||
+        Regex("text-decoration[^;]*underline", RegexOption.IGNORE_CASE).containsMatchIn(el.attr("style"))
 
 /** Genre de bloc d'un conteneur de texte (voir [ARTICLE_BLOCK_TAGS]). */
 private fun blockKind(tag: String): ABlock.Kind = when (tag) {
@@ -894,7 +904,8 @@ private fun blockText(b: ABlock.T, linkColor: Color, markColor: Color): Annotate
                 SpanStyle(
                     fontWeight = if (s.bold) FontWeight.Bold else null,
                     fontStyle = if (s.italic) FontStyle.Italic else null,
-                    background = if (s.highlight) markColor else Color.Unspecified
+                    background = if (s.highlight) markColor else Color.Unspecified,
+                    textDecoration = if (s.underline) TextDecoration.Underline else null
                 ),
                 start,
                 end
@@ -1074,22 +1085,25 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 return lo to hi
             }
             /**
-             * Parcourt un conteneur. [bold]/[italic]/[mark] viennent des éléments en ligne
-             * rencontrés au-dessus (strong, em, mark…) : chaque morceau de texte est enregistré
-             * avec son style, ce qui donne des plages qui ne se chevauchent pas.
+             * Parcourt un conteneur. [bold]/[italic]/[mark]/[underline] viennent des éléments en
+             * ligne rencontrés au-dessus (strong, em, mark, u…) et des styles en ligne : chaque
+             * morceau de texte est enregistré avec son style, ce qui donne des plages qui ne se
+             * chevauchent pas.
              */
             fun walk(
                 el: org.jsoup.nodes.Element,
                 kind: ABlock.Kind,
                 bold: Boolean,
                 italic: Boolean,
-                mark: Boolean = false
+                mark: Boolean = false,
+                underline: Boolean = false
             ) {
+                val ul = underline || isUnderlined(el)
                 el.childNodes().forEach { node ->
                     when {
                         node is org.jsoup.nodes.TextNode -> {
                             val (lo, hi) = appendText(node.wholeText)
-                            if (hi > lo && (bold || italic || mark)) spans += ABlock.Span(lo, hi, bold, italic, mark)
+                            if (hi > lo && (bold || italic || mark || ul)) spans += ABlock.Span(lo, hi, bold, italic, mark, ul)
                         }
                         node is org.jsoup.nodes.Element -> when (node.tagName()) {
                             "br" -> sb.append('\n')
@@ -1098,7 +1112,7 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                                 if (t.isNotBlank()) {
                                     val (lo, hi) = appendText(t)
                                     if (hi > lo) {
-                                        if (bold || italic || mark) spans += ABlock.Span(lo, hi, bold, italic, mark)
+                                        if (bold || italic || mark || ul) spans += ABlock.Span(lo, hi, bold, italic, mark, ul)
                                         linkUrl(node.absUrl("href").ifBlank { node.attr("href") })
                                             ?.let { links += ABlock.Link(lo, hi, it) }
                                     }
@@ -1126,13 +1140,13 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                             // impose le sien (un <h3> dans une citation est un titre).
                             in ARTICLE_BLOCK_TAGS -> {
                                 flush(kind)
-                                walk(node, blockKind(node.tagName()).takeIf { it != ABlock.Kind.Body } ?: kind, bold, italic, mark)
+                                walk(node, blockKind(node.tagName()).takeIf { it != ABlock.Kind.Body } ?: kind, bold, italic, mark, ul)
                                 flush(kind)
                             }
-                            "strong", "b" -> walk(node, kind, true, italic, mark)
-                            "em", "i", "cite" -> walk(node, kind, bold, true, mark)
-                            "mark" -> walk(node, kind, bold, italic, true)
-                            else -> walk(node, kind, bold, italic, mark)
+                            "strong", "b" -> walk(node, kind, true, italic, mark, ul)
+                            "em", "i", "cite" -> walk(node, kind, bold, true, mark, ul)
+                            "mark" -> walk(node, kind, bold, italic, true, ul)
+                            else -> walk(node, kind, bold, italic, mark, ul)
                         }
                     }
                 }

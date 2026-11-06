@@ -47,6 +47,19 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.32",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Soulignement des articles",
+                "Le texte souligné s'affiche comme tel : balises <u> et <ins> des flux, et style " +
+                    "en ligne text-decoration: underline. La mise en forme ne coupe pas la " +
+                    "phrase : c'est une plage du texte, comme le gras et l'italique.",
+                time = "19:25"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.31",
         listOf(
             ChangelogItem(

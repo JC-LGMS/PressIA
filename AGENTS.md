@@ -268,11 +268,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   dans un `li` reste une puce) sauf si sa balise en impose un (un `h3` dans une citation est un
   titre). Avant, tout était rendu en paragraphe : un titre avait la taille d'une phrase, et un
   `figcaption` ou un `table` disparaissait entièrement.
-- **Le gras, l'italique et le surlignage sont des plages du texte** (`ABlock.Span`, champ
-  `highlight` pour `<mark>`) : `strong`/`b`, `em`/`i`/`cite` et `mark` ne coupent pas la phrase,
-  ils s'ajoutent aux annotations de `blockText` (avec les liens) — le surlignage prend
-  `primaryContainer` en fond, qui suit le thème et le fond choisi. Chaque morceau de texte est
-  enregistré avec le style en cours, si bien que les plages ne se chevauchent pas.
+- **Le gras, l'italique, le surlignage et le soulignement sont des plages du texte**
+  (`ABlock.Span`, champs `highlight` pour `<mark>` et `underline`) : `strong`/`b`, `em`/`i`/`cite`,
+  `mark`, `u`/`ins` ne coupent pas la phrase, ils s'ajoutent aux annotations de `blockText` (avec
+  les liens) — le surlignage prend `primaryContainer` en fond, qui suit le thème et le fond
+  choisi. `isUnderlined` reconnaît aussi le style en ligne (`text-decoration: underline`, fréquent
+  dans les flux ; Readability retire les styles, pas les balises) et s'applique à tous les
+  descendants de l'élément. Chaque morceau de texte est enregistré avec le style en cours, si
+  bien que les plages ne se chevauchent pas.
 - **Un `table` devient `ABlock.Table(head, rows)`** : `th` de la première ligne en en-tête (gras,
   fond plus marqué), lignes suivantes sur fond alterné, filets et colonnes de largeur égale. Les
   fonds sont dérivés de `onSurface` en transparence (et non de `surfaceVariant`, qui vaut le fond
