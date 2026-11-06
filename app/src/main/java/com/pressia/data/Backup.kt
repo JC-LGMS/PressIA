@@ -327,7 +327,9 @@ suspend fun PressRepository.restaurationJson(
                 }
             }
             if (starred.isNotEmpty()) {
-                dao.markStarred(starred.toList())
+                // Par paquets : une sauvegarde de plusieurs milliers de favoris dépasse la
+                // limite de variables de SQLite (~999 sur les anciens Android).
+                starred.chunked(500).forEach { dao.markStarred(it) }
                 // Les favoris importés sont mémorisés : sur une installation neuve les articles
                 // arrivent plus tard, et l'UPDATE ci-dessus n'aurait porté sur aucune ligne.
                 // La file **s'additionne** : restaurer un second fichier alors que les articles

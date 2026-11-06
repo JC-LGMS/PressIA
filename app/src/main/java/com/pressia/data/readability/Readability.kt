@@ -1,5 +1,6 @@
 package com.pressia.data.readability
 
+import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -72,8 +73,7 @@ object Readability {
                 val body = r.body ?: return@withContext FullResult.Failed
                 // Plafond : une page énorme (archive, image encodée, réponse sans fin) partait
                 // entière en mémoire puis dans jsoup. Au-delà, l'extraction est un échec.
-                val bytes = com.pressia.data.local.ThumbStore
-                    .readCapped(body.byteStream(), MAX_PAGE_BYTES)
+                val bytes = readCapped(body.byteStream(), MAX_PAGE_BYTES)
                     ?: return@withContext FullResult.Failed
                 val html = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
                 if (isBlockedPage(html)) return@withContext FullResult.Blocked

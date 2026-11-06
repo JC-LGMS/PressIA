@@ -129,14 +129,16 @@ fun ArticleScreen(
     // « Rechercher sur Internet » et « Traduire ».
     val textToolbar = remember { ArticleTextToolbar() }
 
-    // Voisins dans la liste courante (ordre du plus récent au plus ancien) : le balayage
-    // horizontal navigue vers eux. Figés à l'ouverture : la liste peut se reconstruire en
-    // fond (synchro, filtre), le swipe de l'article en cours ne doit pas mourir avec elle.
-    // Hors liste (recherche, favoris), pas de voisin. Rattrapés tant qu'ils sont vides : à la
-    // reprise après mort du processus, `vm.scanIds` arrive après la première composition —
-    // sans ce rattrapage, plus aucun balayage de navigation pour cet article.
-    var ids by remember(articleId) { mutableStateOf(vm.scanIds) }
-    LaunchedEffect(articleId, vm.scanIds) {
+    // Voisins du balayage horizontal (ordre du plus récent au plus ancien) : la liste de l'écran
+    // qui a ouvert l'article — celle des favoris quand on vient des Favoris, sinon celle du flux
+    // principal. Sans elle, un favori absent du périmètre du flux n'avait aucun voisin, et le
+    // geste revenait en arrière au lieu de passer au favori suivant ou précédent.
+    // Fixée pour la durée de l'écran et non par article : le balayage change d'article sans
+    // changer d'écran, et la liste peut se reconstruire en fond (synchro, filtre).
+    // Rattrapée tant qu'elle est vide : à la reprise après mort du processus, `vm.scanIds`
+    // arrive après la première composition — sans quoi plus aucun balayage de navigation.
+    var ids by remember { mutableStateOf(vm.takeArticleNeighbours() ?: vm.scanIds) }
+    LaunchedEffect(vm.scanIds) {
         if (ids.isEmpty()) ids = vm.scanIds
     }
     val idx = ids.indexOf(articleId)
@@ -1454,9 +1456,6 @@ internal fun youtubePlayerScript(css: String): String =
         "if(!s){s=document.createElement('style');s.id='pressia-yt';" +
         "(document.head||document.documentElement).appendChild(s);}" +
         "s.textContent=css;};" +
-        // La page peut se réappliquer l'habillage (YouTube remplace parfois la feuille de style) ;
-        // `pressiaApplyCss` le lui permet depuis les contrôles.
-        "window.pressiaApplyCss=apply;" +
         "apply();setTimeout(apply,700);setTimeout(apply,2200);setTimeout(apply,5000);" +
         "})()"
 
@@ -2097,7 +2096,6 @@ fun YoutubePlayer(
                 wv.evaluateJavascript(
                     "document.documentElement.classList.remove('pressia-full');" +
                         "window.pressiaFull=false;" +
-                        "if(window.pressiaPaint){window.pressiaPaint()};" +
                         // La page a été mise à la taille de l'écran par la classe : sans cet
                         // événement, YouTube garde sa mise en page plein écran dans le bloc.
                         "window.dispatchEvent(new Event('resize'));",

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -138,22 +139,6 @@ object ThumbStore {
                 false
             }
         }
-
-    /** Lit au plus [cap] octets, `null` si le corps dépasse. Pur JVM, testé en unitaire. */
-    fun readCapped(stream: java.io.InputStream, cap: Int): ByteArray? {
-        if (cap <= 0) return null
-        val out = java.io.ByteArrayOutputStream(minOf(cap, 256 * 1024))
-        val buf = ByteArray(32 * 1024)
-        var total = 0
-        while (true) {
-            val n = stream.read(buf)
-            if (n < 0) break
-            total += n
-            if (total > cap) return null
-            out.write(buf, 0, n)
-        }
-        return out.toByteArray()
-    }
 
     /** Taille occupée par les miniatures, en octets. */
     suspend fun sizeBytes(ctx: Context): Long = withContext(Dispatchers.IO) {

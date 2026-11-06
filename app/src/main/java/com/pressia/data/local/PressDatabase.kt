@@ -233,8 +233,6 @@ interface PressDao {
      */
     @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
-    @Query("SELECT COUNT(*) FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND unread = 1")
-    suspend fun unreadCount(feedId: String?): Int
     @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId")
     suspend fun articleCount(feedId: String): Int
     @Query("SELECT feedId AS feedId, COUNT(*) AS c FROM articles WHERE unread = 1 GROUP BY feedId")
@@ -278,7 +276,7 @@ interface PressDao {
     suspend fun markAllRead(now: Long)
     /**
      * Non-lus à ne JAMAIS passer en lu en masse : étoiles PressIA + tableau « Read later ».
-     * Deux variantes car `IN ()` est invalide (voir `deleteExtractEventsOfFeeds`).
+     * Deux variantes car `IN ()` est invalide.
      */
     @Query("SELECT id FROM articles WHERE unread = 1 AND (starred = 1 OR laterSaved = 1)")
     suspend fun allUnreadExcludedIds(): List<String>
@@ -349,20 +347,6 @@ interface PressDao {
     @Query("UPDATE articles SET content = :html, fullFetched = 0 WHERE id = :id")
     suspend fun revertFullContent(id: String, html: String)
     /**
-     * Traces d'extraction et de lecture d'un flux parti (désabonnement, compte supprimé).
-     *
-     * **Plus appelées depuis qu'un flux supprimé ne remet plus les statistiques à zéro** : elles
-     * ne servent qu'aux stats, qui doivent survivre à la disparition du flux (voir
-     * `PressRepository.resetStats`, qui les efface quand l'utilisateur le demande vraiment).
-     * Conservées ici pour que la décision reste réversible en un seul endroit.
-     *
-     * Ne jamais appeler avec une liste vide (`IN ()` invalide) — l'appelant garde le cas courant.
-     */
-    @Query("DELETE FROM extract_events WHERE feedId IN (:feedIds)")
-    suspend fun deleteExtractEventsOfFeeds(feedIds: List<String>): Int
-    @Query("DELETE FROM reading_events WHERE feedId IN (:feedIds)")
-    suspend fun deleteReadingEventsOfFeeds(feedIds: List<String>): Int
-    /**
      * Articles dont les images restent à récupérer — miniature déclarée **et** images du corps :
      * les plus récents d'abord (ordre d'affichage), sans borne, la première synchronisation
      * télécharge tout le stock et les suivantes ne récupèrent que les nouveautés. Les colonnes
@@ -423,9 +407,9 @@ interface PressDao {
     /** Cache vidé : tout est à récupérer à la prochaine synchronisation. */
     @Query("UPDATE articles SET imageCached = 0")
     suspend fun resetThumbsCached()
-    /** Purge : les favoris et le « Read later » du compte sont toujours conservés. */
-    @Query("DELETE FROM articles WHERE published < :olderThan AND starred = 0 AND laterSaved = 0")
-    suspend fun prune(olderThan: Long): Int
+    /** Au moins un favori PressIA ? (garde de la restauration automatique, voir `AutoBackup.kt`.) */
+    @Query("SELECT COUNT(*) FROM articles WHERE starred = 1")
+    suspend fun starredCount(): Int
     /**
      * Flux dépassant le quota d'articles conservés (hors favoris et « Read later ») : seuls
      * ceux-là justifient une passe de suppression. Une requête au lieu d'une par flux à

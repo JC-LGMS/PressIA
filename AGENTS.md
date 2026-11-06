@@ -247,8 +247,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   synchronisé (n articles) » et « flux ajouté mais aucun article reçu » ; l'échec HTTP est
   journalisé (`flux local <id> : HTTP 404`). La suppression d'un flux local est décrite plus bas
   (`deleteLocalFeed`).
-- **Un corps de flux ou une page d'article est lu sous plafond** (`ThumbStore.readCapped`, le
-  helper des miniatures) : 5 Mo pour un flux (`LocalRssFetcher.MAX_FEED_BYTES`), 8 Mo pour une
+- **Un corps de flux ou une page d'article est lu sous plafond** (`readCapped`, dans
+  `data/Bytes.kt` ; même helper pour les miniatures) : 5 Mo pour un flux (`LocalRssFetcher.MAX_FEED_BYTES`), 8 Mo pour une
   page d'article (`Readability.MAX_PAGE_BYTES`). Huit flux sont interrogés en parallèle, et une
   page peut être énorme (archive, réponse sans fin, URL hostile) : sans plafond, la synchro
   mourait en `OutOfMemoryError`. Un dépassement est un **échec de récupération** (erreur

@@ -1,6 +1,7 @@
 package com.pressia.data.remote
 
 import com.pressia.data.local.ArticleEntity
+import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -87,8 +88,7 @@ object LocalRssFetcher {
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body ?: return@withContext LocalFeedFetch(feedId, error = "réponse vide")
-                        val bytes = com.pressia.data.local.ThumbStore
-                            .readCapped(body.byteStream(), MAX_FEED_BYTES)
+                        val bytes = readCapped(body.byteStream(), MAX_FEED_BYTES)
                             ?: return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
                         val xml = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
                         val parsed = parseFeed(xml, feedId)

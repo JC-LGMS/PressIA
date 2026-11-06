@@ -11,6 +11,8 @@ import com.pressia.data.rateLimitMessage
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
 import com.pressia.data.isLocalProvider
+import com.pressia.data.restoreAutoBackupIfEmpty
+import com.pressia.data.writeAutoBackup
 import com.pressia.data.local.*
 import com.pressia.data.statsRange
 import kotlinx.coroutines.flow.*
@@ -157,6 +159,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * HTML compris, à chaque rafraîchissement. Les listes, elles, sont réactives.
      */
     var scanIds by mutableStateOf<List<String>>(emptyList())
+    /**
+     * Voisins du balayage pour l'écran article qui va s'ouvrir : la liste réellement affichée
+     * par l'écran appelant (Favoris), consommée une fois par [ArticleScreen]. Sans elle, le
+     * balayage suit le périmètre du flux principal : un favori absent de ce périmètre n'a
+     * aucun voisin, et le geste revenait en arrière au lieu de passer au favori suivant.
+     */
+    private var articleNeighbours: List<String>? = null
+    fun openArticleWith(neighbours: List<String>) { articleNeighbours = neighbours }
+    fun takeArticleNeighbours(): List<String>? = articleNeighbours.also { articleNeighbours = null }
     var categories by mutableStateOf<List<CategoryEntity>>(emptyList())
     /** Dossiers affichés (un par dossier, ou fusionnés entre comptes selon [mergeFolders]). */
     var folders by mutableStateOf<List<PressRepository.Folder>>(emptyList())
@@ -488,6 +499,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     fun refresh() = viewModelScope.launch { refreshNow() }
 
+    /**
+     * Copie automatique (flux locaux, favoris, lus des flux locaux) réécrite dans `files/` :
+     * c'est elle que la sauvegarde Google emporte, la base en étant exclue. Appelée quand
+     * l'application passe en arrière-plan ; la fin de synchro l'écrit aussi (voir `AutoBackup.kt`).
+     */
+    fun autoBackup() = viewModelScope.launch { repo.writeAutoBackup() }
+
+
+
     /** Remplit l'état local depuis la base (version suspendable de [refresh]). */
     private suspend fun refreshNow() {
         try {
@@ -771,6 +791,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (syncJob?.isActive == true) return
         launchSync {
             repo.withSyncLock {
+                // Restauration Google d'abord : la base n'est pas revenue, donc les garde-fous
+                // qu'elle portait non plus. À faire avant de juger la fraîcheur, sinon la
+                // première passe est sautée (bibliothèque vide à l'écran) et les lus/favoris
+                // attendent la suivante.
+                if (repo.restoreAutoBackupIfEmpty()) refreshNow()
                 val prefs = repo.prefs
                 // Lecture directe du réglage, pas du StateFlow : au démarrage celui-ci vaut encore son
                 // initial (vrai) tant que le DataStore n'a pas émis — l'option coupée serait ignorée.

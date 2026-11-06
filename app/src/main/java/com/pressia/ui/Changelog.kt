@@ -47,6 +47,32 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.34",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Sauvegarde Google des données locales, balayage des favoris et nettoyages",
+                "La sauvegarde Google garde les jetons de compte mais plus le contenu des " +
+                    "articles : la base (HTML) et les miniatures sont exclues, sinon les 25 Mo " +
+                    "de quota faisaient sauter la sauvegarde entière. Les flux RSS locaux, les " +
+                    "favoris PressIA et les lus de ces flux sont recopiés dans un petit fichier " +
+                    "(files/sauvegarde-auto.json), réécrit à chaque mise en arrière-plan et " +
+                    "après chaque synchro, puis réimporté à la première ouverture après une " +
+                    "restauration ; les garde-fous de synchro de l'ancienne base sont remis à " +
+                    "zéro, sinon la première passe était jugée « récente » et sautée. Le " +
+                    "balayage d'un article ouvert depuis les Favoris suit désormais la liste " +
+                    "des favoris (il revenait en arrière au lieu de passer au favori suivant). " +
+                    "Nettoyages : deux crochets JavaScript morts du lecteur YouTube, quatre " +
+                    "méthodes DAO sans appelant, trois dépendances Paging inutilisées, " +
+                    "identifiant impossible pour le dossier vide (NUL plutôt que chaîne vide), " +
+                    "et readCapped déplacé dans data/Bytes.kt. La restauration d'un gros jeu de " +
+                    "favoris est découpée par paquets de 500 (limite de variables SQLite des " +
+                    "anciens Android).",
+                time = "22:18"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.33",
         listOf(
             ChangelogItem(

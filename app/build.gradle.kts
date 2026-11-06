@@ -186,12 +186,9 @@ dependencies {
     // Room (offline)
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    implementation("androidx.room:room-paging:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
-    // Paging + DataStore
-    implementation("androidx.paging:paging-runtime:3.3.2")
-    implementation("androidx.paging:paging-compose:3.3.2")
+    // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // WorkManager : conservé uniquement pour annuler le travail planifié hérité
@@ -217,5 +214,4 @@ dependencies {
     // org.json n'existe que comme stub Android dans les tests unitaires JVM : la bibliothèque
     // réelle est nécessaire pour tester le registre de comptes (et la sauvegarde).
     testImplementation("org.json:json:20240303")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

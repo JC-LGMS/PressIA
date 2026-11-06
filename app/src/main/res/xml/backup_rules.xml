@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sauvegarde cloud et transfert téléphone-à-téléphone (Android 12+). Mêmes exclusions que
+  `backup_content.xml` — voir son commentaire pour le pourquoi : jetons inclus, contenu lourd
+  exclu, le quota de 25 Mo par application étant global.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="thumbs" />
+        <exclude domain="database" path="pressia.db" />
+        <exclude domain="database" path="pressia.db-wal" />
+        <exclude domain="database" path="pressia.db-shm" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="thumbs" />
+        <exclude domain="database" path="pressia.db" />
+        <exclude domain="database" path="pressia.db-wal" />
+        <exclude domain="database" path="pressia.db-shm" />
+    </device-transfer>
+</data-extraction-rules>

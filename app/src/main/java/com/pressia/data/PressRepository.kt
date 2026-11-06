@@ -923,10 +923,15 @@ class PressRepository(
      * Un dossier **sans flux** rend une liste impossible plutôt que `([] , 1)` : le drapeau
      * « pas de dossier » se confondait avec « dossier vide », et un dossier vide affichait donc
      * tous les articles de l'application (liste, recherche).
+     *
+     * L'identifiant impossible est `NUL` : aucune URL ni identifiant de compte ne peut le porter
+     * (les caractères de contrôle sont retirés à la saisie). Une chaîne vide suffisait presque,
+     * mais une ligne à identifiant vide (sauvegarde abîmée, import à la main) aurait réaffiché
+     * un article dans le dossier vide — le bug corrigé, par la porte de service.
      */
     private suspend fun catScope(catId: String?): Pair<List<String>, Int> =
         if (catId == null) emptyList<String>() to 1
-        else folderFeeds(catId).ifEmpty { listOf("") } to 0
+        else folderFeeds(catId).ifEmpty { listOf("\u0000") } to 0
 
     suspend fun article(id: String) = dao.article(id)
     /**
@@ -1217,6 +1222,9 @@ class PressRepository(
         // Toute synchro bien finie recule le garde-fou : le lancement suivant saute si
         // elle date de moins de X minutes.
         prefs.set(Prefs.LAST_SYNC_AT, System.currentTimeMillis())
+        // Copie automatique (flux locaux, favoris, lus) : c'est elle que la sauvegarde Google
+        // emporte, la base en étant exclue. Réécrite après chaque passe réussie.
+        writeAutoBackup()
         // Chronométrage par phase (poussée, descente, images+tableau, favicons) : la descente
         // et les images dominent à tour de rôle selon les nouveautés — sans lui on optimise à l'aveugle.
         android.util.Log.i("PressIA", "pipeline: montée=${tDown - tPush}ms descente=${tImg - tDown}ms images+tableau=${tFav - tImg}ms favicons=${System.currentTimeMillis() - tFav}ms total=${System.currentTimeMillis() - t0}ms")
@@ -2329,9 +2337,11 @@ class PressRepository(
     private suspend fun replayRestoredStarred() {
         val pending = parseRestoredStarred(prefs.flow(Prefs.RESTORED_STARRED, "").first())
         if (pending.isEmpty()) return
-        val arrived = dao.existingIds(pending).toSet()
+        // Paquets de 500 : la file peut porter des milliers d'identifiants après une
+        // restauration, et SQLite n'accepte pas autant de variables sur les anciens Android.
+        val arrived = pending.chunked(500).flatMap { dao.existingIds(it) }.toSet()
         if (arrived.isEmpty()) return
-        dao.markStarred(arrived.toList())
+        arrived.chunked(500).forEach { dao.markStarred(it) }
         val stillWaiting = pending - arrived
         prefs.set(Prefs.RESTORED_STARRED, encodeRestoredStarred(stillWaiting))
     }

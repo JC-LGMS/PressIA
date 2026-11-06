@@ -2,6 +2,7 @@ package com.pressia
 
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
+import com.pressia.data.readCapped
 import com.pressia.ui.parseArticleActions
 import com.pressia.ui.keptIds
 import com.pressia.ui.KEEP_MAX
@@ -32,13 +33,13 @@ import org.junit.Test
 class PressLogicTest {
     @Test fun `readCapped lit en entier sous le plafond`() {
         val data = ByteArray(1000) { it.toByte() }
-        val out = ThumbStore.readCapped(java.io.ByteArrayInputStream(data), 10 * 1024)
+        val out = readCapped(java.io.ByteArrayInputStream(data), 10 * 1024)
         assertNotNull(out)
         assertArrayEquals(data, out)
     }
     @Test fun `readCapped refuse au-dela du plafond`() {
         val data = ByteArray(3000) { it.toByte() }
-        assertNull(ThumbStore.readCapped(java.io.ByteArrayInputStream(data), 1000))
+        assertNull(readCapped(java.io.ByteArrayInputStream(data), 1000))
     }
     @Test fun `reconcile sautee si rien n'a bouge`() {
         assertTrue(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 42))

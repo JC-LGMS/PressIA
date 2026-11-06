@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sauvegarde Google pour Android 11 et antérieurs (et repli des versions suivantes).
+
+  Les jetons de compte restent inclus : la sauvegarde Google est chiffrée et rattachée au
+  compte de l'utilisateur. Ce qui pèse lourd ne l'est pas, parce que le quota est de 25 Mo par
+  application et qu'un dépassement fait sauter la sauvegarde **entière** (jetons compris).
+
+  - `thumbs/` : miniatures, toutes re-téléchargeables depuis les flux.
+  - `pressia.db*` : la base porte le HTML des articles (colonne `content`) et c'est elle qui
+    ferait dépasser le quota. Les images du corps sont dans le cache Coil (`cache/`), déjà
+    exclu par le système.
+
+  Les flux RSS locaux, les favoris et les états de lecture ne sont pas perdus pour autant :
+  ils sont recopiés dans `files/sauvegarde-auto.json` (de la liste, pas du contenu, donc petit)
+  et réimportés à la première ouverture — voir `data/AutoBackup.kt`.
+-->
+<full-backup-content>
+    <exclude domain="file" path="thumbs" />
+    <exclude domain="database" path="pressia.db" />
+    <exclude domain="database" path="pressia.db-wal" />
+    <exclude domain="database" path="pressia.db-shm" />
+</full-backup-content>

@@ -103,7 +103,12 @@ class MainActivity : ComponentActivity() {
                             vm.refresh()
                             vm.startSyncTicker()
                         }
-                        androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> vm.stopSyncTicker()
+                        androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
+                            vm.stopSyncTicker()
+                            // La sauvegarde Google tourne écran éteint : la copie des flux
+                            // locaux, des favoris et des lus doit être à jour à ce moment-là.
+                            vm.autoBackup()
+                        }
                         else -> Unit
                     }
                 }
