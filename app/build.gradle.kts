@@ -162,7 +162,10 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.00")
+    // Plafond imposé par `compileSdk 34` : Compose 1.7.8 est la dernière version dont l'AAR
+    // accepte le SDK 34 (1.8+ exige `minCompileSdk=35`). Material3 1.3.2 est le dernier de sa
+    // ligne, lui aussi SDK 34.
+    val composeBom = platform("androidx.compose:compose-bom:2025.03.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
@@ -177,8 +180,10 @@ dependencies {
     // Compose Material3
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3:1.3.1")
-    implementation("androidx.compose.material:material-icons-extended:1.6.8")
+    implementation("androidx.compose.material3:material3:1.3.2")
+    // Épinglé : cette bibliothèque n'est plus publiée au-delà de 1.7.8 (elle n'est plus dans le
+    // BOM). Ses icônes sont des ImageVector, sans dépendance runtime au reste de Compose.
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.compose.foundation:foundation")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

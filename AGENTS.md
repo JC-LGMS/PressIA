@@ -11,6 +11,10 @@ aucun `res/layout`, aucun ViewHolder/Adapter, aucun `viewBinding`. Les 4 vues ar
 - activité launcher : `com.pressia.MainActivity`
 - compileSdk / targetSdk 34, minSdk 26
 - AGP 8.5.2, Kotlin 2.0.20, KSP 2.0.20-1.0.25, Gradle 8.7
+- Compose : BOM `2025.03.01` (**1.7.8**), Material3 **1.3.2**. Le `compileSdk 34` est le plafond :
+  Compose 1.8+ exige `minCompileSdk=35`, Compose 1.12 exige 37 **et** AGP 9.1. Deux dépendances
+  restent épinglées pour la même raison : `material-icons-extended:1.7.8` (plus publiée au-delà)
+  et Kotlin/AGP (non touchés lors de la montée Compose).
 - tests unitaires dans `app/src/test/java/com/pressia/` (`PressLogicTest.kt`,
   `FeedlyAutoReadTest.kt`, `ReconnectShortcutTest.kt`) ; **aucun androidTest**
 

@@ -48,6 +48,21 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.36",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Compose 1.7.8 et Material3 1.3.2 (plafond du SDK 34)",
+                "Compose passe de 1.7.4 à 1.7.8 (BOM 2025.03.01) et Material3 de 1.3.1 à 1.3.2, " +
+                    "les icônes Material suivent en 1.7.8 (dernière version publiée). C'est le " +
+                    "maximum compatible avec compileSdk 34 : Compose 1.8 exige le SDK 35, " +
+                    "Compose 1.12 le SDK 37 et AGP 9.1. Kotlin, AGP, Gradle et targetSdk sont " +
+                    "inchangés, d'où aucun changement de comportement attendu.",
+                time = "23:31"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.35",
         listOf(
             ChangelogItem(
