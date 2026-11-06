@@ -610,6 +610,21 @@ class PressLogicTest {
         val ul = underlined.spans.filter { it.underline }
         assertEquals(2, ul.size)
         assertEquals(listOf("souligne", "par style"), ul.map { underlined.text.substring(it.start, it.end) })
+        // Le barré vient des balises `s`/`del` ou du style `line-through`.
+        val struck = com.pressia.ui.articleBlocks(
+            "<p>Un <del>barre</del>, un <s>obsolete</s> et un " +
+                "<span style=\"text-decoration: line-through\">par style</span>.</p>",
+            "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        assertEquals(
+            listOf("barre", "obsolete", "par style"),
+            struck.spans.filter { it.strike }.map { struck.text.substring(it.start, it.end) }
+        )
+        // Souligné et barré à la fois (style qui demande les deux traits) : une seule plage.
+        val both = com.pressia.ui.articleBlocks(
+            "<p><span style=\"text-decoration: underline line-through\">deux</span></p>", "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.T>().first().spans.single()
+        assertTrue(both.underline && both.strike)
     }
     @Test fun `blocs article - tableau`() {
         // Un tableau était perdu entièrement : il devient un bloc, en-tête (th) à part.

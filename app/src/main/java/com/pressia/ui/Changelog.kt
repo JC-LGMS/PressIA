@@ -47,6 +47,19 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.33",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Texte barré des articles",
+                "Le texte barré s'affiche comme tel : balises <s>, <del> et <strike> des flux, " +
+                    "et style en ligne line-through. Les deux traits (souligné et barré) se " +
+                    "combinent dans la même plage.",
+                time = "19:37"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.32",
         listOf(
             ChangelogItem(
