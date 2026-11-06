@@ -128,7 +128,10 @@ object Readability {
     /** Le vrai corps d'article porte souvent une classe explicite : on le cherche d'abord. */
     private val CONTENT_SELECTORS = listOf(
         "div.article-content", "div.entry-content", "div.post-content", "div.post-body",
-        "div.story-content", "div.field--name-body", "[itemprop=articleBody]"
+        "div.story-content", "div.field--name-body", "[itemprop=articleBody]",
+        // Next : le corps est dans #next-single-post ; son conteneur `article` embarque aussi les
+        // commentaires, qui gonflaient l'extrait (37 810 car. contre 4 811 pour le vrai corps).
+        "#next-single-post"
     )
 
     /** Un bloc « contenu » ne doit jamais être écarté comme bruit (ex. `article-content--has-sidebar`). */

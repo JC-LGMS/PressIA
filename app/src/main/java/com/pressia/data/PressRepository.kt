@@ -1061,31 +1061,40 @@ class PressRepository(
     }
 
     // ----- Article complet (double-tap) -----
-    data class FullFetch(val html: String?, val blocked: Boolean)
+    /** Issue d'une demande d'article complet : l'écran en tire le message affiché. */
+    enum class FullOutcome { OK, BLOCKED, FAILED }
+
+    /**
+     * [html] n'est renseigné que sur [FullOutcome.OK] : en cas d'échec l'écran reste sur la version
+     * du flux (voir `feedHtml`), plutôt que d'afficher un extrait tronqué ou un cache vérolé.
+     */
+    data class FullFetch(val html: String?, val outcome: FullOutcome = FullOutcome.FAILED)
 
     suspend fun ensureFull(id: String): FullFetch = withContext(Dispatchers.IO) {
-        val a = dao.article(id) ?: return@withContext FullFetch(null, false)
+        val a = dao.article(id) ?: return@withContext FullFetch(null, FullOutcome.OK)
         if (a.fullFetched && Readability.isUsableFull(a.content)) {
-            return@withContext FullFetch(a.content, false)
+            return@withContext FullFetch(a.content, FullOutcome.OK)
         }
-        if (a.url.isBlank()) return@withContext FullFetch(a.content, false)
+        if (a.url.isBlank()) return@withContext FullFetch(null, FullOutcome.BLOCKED)
         return@withContext when (val r = Readability.fetchFullResult(a.url)) {
             is Readability.FullResult.Ok -> {
                 // La version du flux est mise de côté avant d'être écrasée (voir le DAO) : c'est
                 // elle que « Revenir à l'extrait RSS » doit retrouver, pas le petit extrait.
                 dao.saveExtractedContent(id, r.html, fromFeed = !a.fullFetched)
                 dao.logExtract(ExtractEventEntity(articleId = id, feedId = a.feedId, ok = true))
-                FullFetch(r.html, false)
+                FullFetch(r.html, FullOutcome.OK)
             }
             is Readability.FullResult.Blocked -> {
-                // Purge un éventuel boilerplate paywall mis en cache précédemment
-                if (!a.summary.isNullOrBlank()) dao.saveFullContent(id, a.summary)
+                // Purge une extraction vérolée restée en cache — mais pas un contenu de flux :
+                // un flux « complet » en donne plus que l'extrait RSS, et le remplacer par lui
+                // perdrait le corps de l'article (cas de Next).
+                if (a.fullFetched && !a.summary.isNullOrBlank()) dao.revertFullContent(id, a.summary)
                 dao.logExtract(ExtractEventEntity(articleId = id, feedId = a.feedId, ok = false))
-                FullFetch(a.summary ?: a.content, true)
+                FullFetch(null, FullOutcome.BLOCKED)
             }
             is Readability.FullResult.Failed -> {
                 dao.logExtract(ExtractEventEntity(articleId = id, feedId = a.feedId, ok = false))
-                FullFetch(a.content ?: a.summary, false)
+                FullFetch(null, FullOutcome.FAILED)
             }
         }
     }

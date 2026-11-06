@@ -187,6 +187,24 @@ class PressLogicTest {
         val out = Readability.extract(html, "https://ex.com")
         assertTrue(out.contains("deux"))
     }
+    @Test fun `readability next - le corps du post, pas les commentaires`() {
+        // Page Next : le corps est dans #next-single-post, les commentaires dans un autre
+        // conteneur (`article` les englobe tous et ramenait 37 810 car. pour 4 811 de vrai corps).
+        val comments = (1..6).joinToString("") { "<p>Commentaire $it, avis d'un lecteur sur la taxe.</p>" }
+        val html = """<html><body><article>
+            <div class="next-comments" id="comments">$comments</div>
+            <div id="next-single-post">
+                <p>Premier paragraphe du corps de l'article, avec le contenu journalistique.</p>
+                <p>Second paragraphe du corps, lui aussi détaillé et informatif.</p>
+                <h3>Un sous-titre du corps</h3>
+                <ul><li>Un point de la liste</li></ul>
+            </div>
+        </article></body></html>"""
+        val out = Readability.extract(html, "https://next.ink/264997/x/")
+        assertTrue("le corps doit être extrait", out.contains("Premier paragraphe du corps"))
+        assertTrue("les titres et listes du corps suivent", out.contains("sous-titre"))
+        assertFalse("les commentaires ne doivent pas être extraits", out.contains("Commentaire"))
+    }
     @Test fun `readability prefere le corps d'article au formulaire newsletter (cas Frandroid)`() {
         // `article-content--has-sidebar` contient « sidebar » : le filtre anti-bruit ne doit pas
         // l'écarter, sinon c'est le formulaire newsletter (texte « consentement ») qui gagne et
@@ -553,6 +571,47 @@ class PressLogicTest {
         // Deux paragraphes dans une citation restent deux blocs.
         val quoted = com.pressia.ui.articleBlocks("<blockquote><p>Un</p><p>Deux</p></blockquote>", "https://ex.com")
         assertEquals(2, quoted.size)
+    }
+    @Test fun `blocs article - genres de bloc et styles en ligne`() {
+        // Le genre du bloc vient de la balise : un titre n'est pas un paragraphe, une puce porte
+        // son point, une légende d'image se centre sous la photo.
+        val html = "<h1>Titre 1</h1><h2>Titre 2</h2><h4>Titre 4</h4><ul><li>Point</li></ul>" +
+            "<figure><img src=\"https://ex.com/a.jpg\"/><figcaption>Légende</figcaption></figure>" +
+            "<blockquote>Citation</blockquote>"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        fun kindOf(text: String) = blocks.filterIsInstance<com.pressia.ui.ABlock.T>()
+            .first { it.text.contains(text) }.kind
+        assertEquals(com.pressia.ui.ABlock.Kind.Title1, kindOf("Titre 1"))
+        assertEquals(com.pressia.ui.ABlock.Kind.Title2, kindOf("Titre 2"))
+        assertEquals(com.pressia.ui.ABlock.Kind.Title3, kindOf("Titre 4"))
+        assertEquals(com.pressia.ui.ABlock.Kind.Bullet, kindOf("Point"))
+        assertEquals(com.pressia.ui.ABlock.Kind.Caption, kindOf("Légende"))
+        assertEquals(com.pressia.ui.ABlock.Kind.Quote, kindOf("Citation"))
+        // Le gras et l'italique sont des plages du texte, pas des blocs à part.
+        val styled = com.pressia.ui.articleBlocks(
+            "<p>Un <strong>gras</strong> et un <em>italique</em>.</p>", "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        assertEquals("Un gras et un italique.", styled.text)
+        assertEquals(2, styled.spans.size)
+        val bold = styled.spans.first { it.bold }
+        assertEquals("gras", styled.text.substring(bold.start, bold.end))
+        val italic = styled.spans.first { it.italic }
+        assertEquals("italique", styled.text.substring(italic.start, italic.end))
+    }
+    @Test fun `blocs article - tableau`() {
+        // Un tableau était perdu entièrement : il devient un bloc, en-tête (th) à part.
+        val html = "<p>Avant</p><table><tr><th>Col A</th><th>Col B</th></tr>" +
+            "<tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></table>"
+        val blocks = com.pressia.ui.articleBlocks(html, "https://ex.com")
+        val table = blocks.filterIsInstance<com.pressia.ui.ABlock.Table>().single()
+        assertEquals(listOf("Col A", "Col B"), table.head)
+        assertEquals(listOf(listOf("1", "2"), listOf("3", "4")), table.rows)
+        // Sans <th>, tout est dans les lignes.
+        val plain = com.pressia.ui.articleBlocks(
+            "<table><tr><td>a</td><td>b</td></tr></table>", "https://ex.com"
+        ).filterIsInstance<com.pressia.ui.ABlock.Table>().single()
+        assertTrue(plain.head.isEmpty())
+        assertEquals(listOf(listOf("a", "b")), plain.rows)
     }
     @Test fun `blocs article - video et iframe youtube`() {
         // Balise <video> : l'URL est celle de la vidéo, le poster est l'affiche.

@@ -3,6 +3,7 @@ package com.pressia.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -49,12 +50,16 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.LifecycleEventObserver
+import com.pressia.data.PressRepository
 import com.pressia.data.local.ArticleEntity
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -105,7 +110,8 @@ fun ArticleScreen(
     var html by remember { mutableStateOf<String?>(null) }
     var fullMode by remember { mutableStateOf(false) }
     var loadingFull by remember { mutableStateOf(false) }
-    var blockedNotice by remember { mutableStateOf(false) }
+    // Message d'échec de l'extraction (« rester en mode flux RSS ») ; null quand tout va bien.
+    var fullIssue by remember { mutableStateOf<String?>(null) }
     val fontSize by vm.fontSize.collectAsState()
     val titleSp by vm.articleTitle.collectAsState()
     // Icônes configurées en Réglages, dans l'ordre choisi (le menu reste toujours en dernier).
@@ -151,25 +157,40 @@ fun ArticleScreen(
     /**
      * Extraction de l'article complet (voir `ensureFull`). En ouverture automatique (mode
      * épinglé), pas de toast de succès : un toast par article ouvert serait du bruit — seul
-     * l'échec reste visible (pastille + message).
+     * l'échec reste visible (carte + message).
+     *
+     * En cas d'échec l'écran **reste sur la version du flux** ([feedHtml]) : le message explique
+     * pourquoi, et l'extrait RSS n'est jamais remplacé par un contenu tronqué.
      */
     suspend fun loadFull(quiet: Boolean = false) {
         val a = article ?: return
         loadingFull = true
         try {
             val res = vm.repo.ensureFull(a.id)
-            blockedNotice = res.blocked
-            if (!res.html.isNullOrBlank()) { html = res.html; fullMode = !res.blocked }
-            if (!quiet) {
-                toast(
-                    ctx,
-                    when {
-                        res.blocked -> "Extraction bloquée par le site — extrait RSS conservé"
-                        fullMode -> "Article complet affiché"
-                        else -> "Contenu complet indisponible"
-                    }
-                )
+            // La base a pu changer (extraction enregistrée, cache vérolé purgé) : c'est elle qui
+            // dit quelle version du texte s'affiche.
+            val fresh = vm.repo.article(a.id) ?: a
+            article = fresh
+            fullIssue = when (res.outcome) {
+                PressRepository.FullOutcome.OK -> null
+                PressRepository.FullOutcome.BLOCKED ->
+                    "Extraction impossible sur ce site (protection anti-robot, abonnement ou page JavaScript). " +
+                        "L'article reste affiché dans sa version du flux RSS."
+                PressRepository.FullOutcome.FAILED ->
+                    "Extraction impossible (site injoignable ou page illisible). " +
+                        "L'article reste affiché dans sa version du flux RSS."
             }
+            if (res.outcome == PressRepository.FullOutcome.OK && !res.html.isNullOrBlank()) {
+                html = res.html
+                fullMode = true
+            } else {
+                html = feedHtml(fresh)
+                fullMode = false
+                // L'épingle Readability vaut pour tous les articles : un site qui refuse
+                // l'extraction la relâche, sinon elle resterait posée sans effet.
+                if (quiet) vm.readabilityOn = false
+            }
+            if (!quiet) toast(ctx, fullIssue ?: "Article complet affiché")
         } finally { loadingFull = false }
     }
 
@@ -183,6 +204,8 @@ fun ArticleScreen(
         val extracted = if (a != null && a.fullFetched && com.pressia.data.readability.Readability.isUsableFull(a.content)) a.content else null
         html = extracted ?: feedHtml(a)
         fullMode = extracted != null
+        // Le message d'échec vaut pour l'article où il a été produit : changer d'article l'efface.
+        fullIssue = null
         if (a != null) {
             feedName = vm.repo.feedTitle(a.feedId)
             feedSub = vm.repo.subscription(a.feedId)
@@ -223,7 +246,7 @@ fun ArticleScreen(
             val back = feedHtml(a)
             html = back
             fullMode = false
-            blockedNotice = false
+            fullIssue = null
             vm.readabilityOn = false
             // La coupe est persistée : l'article rouvert affiche la version du flux, pas la copie
             // Readability restée en base (l'épingle de session, elle, suit `readabilityOn`).
@@ -424,14 +447,13 @@ fun ArticleScreen(
             }
             Spacer(Modifier.height(8.dp))
             if (loadingFull) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (blockedNotice) {
+            fullIssue?.let { msg ->
                 Card(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
                     Text(
-                        "Extraction impossible sur ce site (protection anti-robot, abonnement ou page JavaScript). " +
-                            "L'extrait RSS est conservé — ouvrez l'article dans le navigateur pour le lire en entier.",
+                        "$msg Ouvrez l'article dans le navigateur pour le lire en entier.",
                         Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -461,15 +483,10 @@ fun ArticleScreen(
             }
             blocks.forEach { b ->
                 when (b) {
-                    is ABlock.T -> Text(
-                        // Les liens du paragraphe sont dans le texte (annotations de lien) : la
-                        // phrase reste d'un seul tenant, le lien ne passe plus à la ligne.
-                        text = blockText(b, MaterialTheme.colorScheme.primary),
-                        fontSize = fontSize.sp,
-                        lineHeight = (fontSize + 6).sp,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
+                    // Les liens du paragraphe sont dans le texte (annotations de lien) : la phrase
+                    // reste d'un seul tenant, le lien ne passe plus à la ligne.
+                    is ABlock.T -> ArticleTextBlock(b, MaterialTheme.colorScheme.primary, fontSize)
+                    is ABlock.Table -> ArticleTable(b, fontSize)
                     is ABlock.I -> coil.compose.AsyncImage(thumbModel(ctx, b.url), null,
                         Modifier.fillMaxWidth().padding(vertical = 8.dp)
                             .combinedClickable(
@@ -780,26 +797,56 @@ fun stripHtml(html: String): String {
     return try { org.jsoup.Jsoup.parse(html).text().replace(Regex(" +"), " ").trim() } catch (_: Exception) { html }
 }
 
-/** Blocs de contenu ordonnés (texte / images / liens / vidéos) pour un rendu fidèle. */
+/** Blocs de contenu ordonnés (texte / images / liens / vidéos / tableaux) pour un rendu fidèle. */
 sealed interface ABlock {
+    /** Genre d'un bloc de texte : c'est lui qui donne sa taille et sa place dans l'article. */
+    enum class Kind { Body, Title1, Title2, Title3, Bullet, Quote, Caption }
+
     /**
      * Texte d'un bloc. Les liens qu'il contient sont **dans le flux** du texte : [links] donne
      * leurs plages (index dans [text]) et leur cible, au lieu d'un bloc à part qui ferait passer
-     * le lien à la ligne au milieu de la phrase.
+     * le lien à la ligne au milieu de la phrase. [spans] porte la mise en forme en ligne (gras,
+     * italique), qui ne coupe pas davantage le texte.
      */
-    data class T(val text: String, val links: List<Link> = emptyList()) : ABlock
+    data class T(
+        val text: String,
+        val links: List<Link> = emptyList(),
+        val spans: List<Span> = emptyList(),
+        val kind: Kind = Kind.Body
+    ) : ABlock
     data class I(val url: String) : ABlock
     /** Lien isolé, hors de tout paragraphe : bloc à part entière, faute de texte où le couler. */
     data class L(val text: String, val url: String) : ABlock
     /** Vidéo embarquée (balise <video> ou <iframe> YouTube/Vimeo…). */
     data class V(val url: String, val poster: String?, val embed: Boolean = false) : ABlock
+    /** Tableau : [head] est la ligne d'en-tête (`th`), vide quand le tableau n'en a pas. */
+    data class Table(val head: List<String> = emptyList(), val rows: List<List<String>>) : ABlock
 
     /** Plage cliquable d'un texte : [start] inclus, [end] exclu, et l'URL qu'elle ouvre. */
     data class Link(val start: Int, val end: Int, val url: String)
+
+    /** Plage de mise en forme (gras, italique) d'un texte, mêmes bornes que [Link]. */
+    data class Span(val start: Int, val end: Int, val bold: Boolean = false, val italic: Boolean = false)
 }
 
-/** Tags qui font un bloc de texte : chacun est coulé d'un seul tenant, liens compris. */
-private val ARTICLE_BLOCK_TAGS = setOf("p", "li", "h1", "h2", "h3", "pre", "blockquote")
+/** Tags qui font un bloc de texte : chacun est coulé d'un seul tenant, liens et styles compris. */
+private val ARTICLE_BLOCK_TAGS =
+    setOf("p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "figcaption")
+
+/** Sélecteur des blocs de contenu : les conteneurs de texte, plus les médias et les tableaux. */
+private val ARTICLE_SELECTOR =
+    (ARTICLE_BLOCK_TAGS + listOf("img", "video", "iframe", "table")).joinToString(", ")
+
+/** Genre de bloc d'un conteneur de texte (voir [ARTICLE_BLOCK_TAGS]). */
+private fun blockKind(tag: String): ABlock.Kind = when (tag) {
+    "h1" -> ABlock.Kind.Title1
+    "h2" -> ABlock.Kind.Title2
+    "h3", "h4", "h5", "h6" -> ABlock.Kind.Title3
+    "li" -> ABlock.Kind.Bullet
+    "blockquote" -> ABlock.Kind.Quote
+    "figcaption" -> ABlock.Kind.Caption
+    else -> ABlock.Kind.Body
+}
 
 /**
  * Texte d'un bloc avec ses liens : chaque plage ([ABlock.Link]) devient une **annotation de
@@ -830,6 +877,88 @@ private fun blockText(b: ABlock.T, linkColor: Color): AnnotatedString = remember
             at = end
         }
         if (at < text.length) append(text.substring(at))
+        // Mise en forme en ligne (gras, italique) : des annotations sur le texte déjà construit,
+        // pour ne pas découper la phrase.
+        b.spans.forEach { s ->
+            val start = s.start.coerceIn(0, text.length)
+            val end = s.end.coerceIn(start, text.length)
+            if (end > start) addStyle(
+                SpanStyle(
+                    fontWeight = if (s.bold) FontWeight.Bold else null,
+                    fontStyle = if (s.italic) FontStyle.Italic else null
+                ),
+                start,
+                end
+            )
+        }
+    }
+}
+
+/**
+ * Rendu d'un bloc de texte : le genre ([ABlock.Kind]) donne taille, graisse et place — un titre
+ * n'est plus un paragraphe, une puce porte son point, une légende se centre en petit.
+ */
+@Composable
+private fun ArticleTextBlock(b: ABlock.T, linkColor: Color, size: Int) {
+    val base = MaterialTheme.typography.bodyLarge
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val (fs, lh, style) = when (b.kind) {
+        ABlock.Kind.Title1 -> Triple(size + 10, size + 16, base.copy(fontWeight = FontWeight.Bold))
+        ABlock.Kind.Title2 -> Triple(size + 5, size + 11, base.copy(fontWeight = FontWeight.Bold))
+        ABlock.Kind.Title3 -> Triple(size + 2, size + 8, base.copy(fontWeight = FontWeight.Bold))
+        ABlock.Kind.Caption -> Triple(size - 2, size + 3, base.copy(color = muted))
+        ABlock.Kind.Quote -> Triple(size, size + 6, base.copy(fontStyle = FontStyle.Italic))
+        else -> Triple(size, size + 6, base)
+    }
+    val text = blockText(b, linkColor)
+    when (b.kind) {
+        ABlock.Kind.Bullet -> Row(Modifier.padding(bottom = 8.dp).fillMaxWidth()) {
+            Text("•", fontSize = fs.sp, style = style, modifier = Modifier.padding(end = 8.dp))
+            Text(text, fontSize = fs.sp, lineHeight = lh.sp, style = style, modifier = Modifier.weight(1f))
+        }
+        ABlock.Kind.Caption -> Text(
+            text, fontSize = fs.sp, lineHeight = lh.sp, style = style,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+        )
+        else -> Text(
+            text, fontSize = fs.sp, lineHeight = lh.sp, style = style,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+    }
+}
+
+/** Tableau du corps : en-tête gras, filets fins, colonnes de largeur égale. */
+@Composable
+private fun ArticleTable(t: ABlock.Table, size: Int) {
+    val line = MaterialTheme.colorScheme.outlineVariant
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .border(1.dp, line, RoundedCornerShape(4.dp))
+    ) {
+        if (t.head.isNotEmpty()) {
+            ArticleTableRow(t.head, header = true, size = size)
+            HorizontalDivider(color = line)
+        }
+        t.rows.forEachIndexed { i, row ->
+            if (i > 0) HorizontalDivider(color = line)
+            ArticleTableRow(row, header = false, size = size)
+        }
+    }
+}
+
+@Composable
+private fun ArticleTableRow(cells: List<String>, header: Boolean, size: Int) {
+    Row(Modifier.fillMaxWidth()) {
+        cells.forEach { c ->
+            Text(
+                c,
+                fontSize = (size - 1).sp,
+                lineHeight = (size + 3).sp,
+                fontWeight = if (header) FontWeight.Bold else null,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp)
+            )
+        }
     }
 }
 
@@ -871,23 +1000,29 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
         // part le ferait passer à la ligne au milieu d'une phrase. Les médias rencontrés (img,
         // video, iframe) coupent le texte : ce qui précède est publié, le média prend sa place, la
         // suite reprend. La mise en forme en ligne (strong, em, span…) ne coupe rien.
-        fun processFlow(root: org.jsoup.nodes.Element) {
+        fun processFlow(root: org.jsoup.nodes.Element, kind: ABlock.Kind = blockKind(root.tagName())) {
             val sb = StringBuilder()
             val links = mutableListOf<ABlock.Link>()
+            val spans = mutableListOf<ABlock.Span>()
             // Publie le texte accumulé. Les plages sont recalculées après rognage : celles
             // enregistrées valent pour la chaîne brute, espaces de tête compris.
-            fun flush() {
+            fun flush(k: ABlock.Kind) {
                 val raw = sb.toString()
                 val start = raw.indexOfFirst { !it.isWhitespace() }
-                if (start < 0) { sb.clear(); links.clear(); return }
+                if (start < 0) { sb.clear(); links.clear(); spans.clear(); return }
                 val text = raw.trim()
                 val kept = links.mapNotNull { l ->
                     val s = (l.start - start).coerceIn(0, text.length)
                     val e = (l.end - start).coerceIn(0, text.length)
                     if (e > s) ABlock.Link(s, e, l.url) else null
                 }
-                out += ABlock.T(text, kept)
-                sb.clear(); links.clear()
+                val styled = spans.mapNotNull { sp ->
+                    val s = (sp.start - start).coerceIn(0, text.length)
+                    val e = (sp.end - start).coerceIn(0, text.length)
+                    if (e > s) sp.copy(start = s, end = e) else null
+                }
+                out += ABlock.T(text, kept, styled, k)
+                sb.clear(); links.clear(); spans.clear()
             }
             // Texte d'un élément en ligne, espaces compris : `wholeText` (et non `text`, que jsoup
             // rogne des deux côtés) permet de recoller le texte de part et d'autre d'un lien sans
@@ -920,10 +1055,18 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 while (hi > lo && sb[hi - 1].isWhitespace()) hi--
                 return lo to hi
             }
-            fun walk(el: org.jsoup.nodes.Element) {
+            /**
+             * Parcourt un conteneur. [bold]/[italic] viennent des éléments en ligne rencontrés
+             * au-dessus (strong, em…) : chaque morceau de texte est enregistré avec son style,
+             * ce qui donne des plages qui ne se chevauchent pas.
+             */
+            fun walk(el: org.jsoup.nodes.Element, kind: ABlock.Kind, bold: Boolean, italic: Boolean) {
                 el.childNodes().forEach { node ->
                     when {
-                        node is org.jsoup.nodes.TextNode -> appendText(node.wholeText)
+                        node is org.jsoup.nodes.TextNode -> {
+                            val (lo, hi) = appendText(node.wholeText)
+                            if (hi > lo && (bold || italic)) spans += ABlock.Span(lo, hi, bold, italic)
+                        }
                         node is org.jsoup.nodes.Element -> when (node.tagName()) {
                             "br" -> sb.append('\n')
                             "a" -> {
@@ -931,34 +1074,43 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                                 if (t.isNotBlank()) {
                                     val (lo, hi) = appendText(t)
                                     if (hi > lo) {
+                                        if (bold || italic) spans += ABlock.Span(lo, hi, bold, italic)
                                         linkUrl(node.absUrl("href").ifBlank { node.attr("href") })
                                             ?.let { links += ABlock.Link(lo, hi, it) }
                                     }
                                 }
                             }
                             "img" -> {
-                                flush()
+                                flush(kind)
                                 abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.I(it) }
                             }
                             "video" -> {
-                                flush()
+                                flush(kind)
                                 val poster = node.attr("poster").takeIf { it.isNotBlank() }
                                 abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.V(it, poster) }
                             }
                             "iframe" -> {
-                                flush()
+                                flush(kind)
                                 abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.V(it, youtubePoster(it), embed = true) }
                             }
                             // Sous-bloc (un <p> dans un <li>, deux <p> dans une citation) : chacun
-                            // reste un bloc de texte à part, sans être recollé au précédent.
-                            in ARTICLE_BLOCK_TAGS -> { flush(); walk(node); flush() }
-                            else -> walk(node)
+                            // reste un bloc de texte à part, sans être recollé au précédent. Il
+                            // garde le genre du parent (une puce reste une puce) sauf si la balise
+                            // impose le sien (un <h3> dans une citation est un titre).
+                            in ARTICLE_BLOCK_TAGS -> {
+                                flush(kind)
+                                walk(node, blockKind(node.tagName()).takeIf { it != ABlock.Kind.Body } ?: kind, bold, italic)
+                                flush(kind)
+                            }
+                            "strong", "b" -> walk(node, kind, true, italic)
+                            "em", "i", "cite" -> walk(node, kind, bold, true)
+                            else -> walk(node, kind, bold, italic)
                         }
                     }
                 }
             }
-            walk(root)
-            flush()
+            walk(root, kind, bold = false, italic = false)
+            flush(kind)
         }
         // Médias et liens isolés (hors conteneur de texte) : leur propre bloc.
         fun processBlock(el: org.jsoup.nodes.Element) {
@@ -988,15 +1140,28 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                         out += ABlock.V(it, youtubePoster(it), embed = true)
                     }
                 }
+                // Tableau : une ligne par <tr>, l'en-tête étant la première quand elle porte des
+                // <th>. Les cellules sont lues en texte (une cellule peut contenir un paragraphe).
+                "table" -> {
+                    val trs = el.select("tr")
+                    val head = trs.firstOrNull()?.takeIf { it.select("th").isNotEmpty() }
+                    val rows = trs.map { tr -> tr.select("th, td").map { c -> c.text().trim() } }
+                        .filter { row -> row.any { it.isNotBlank() } }
+                    if (rows.isNotEmpty()) {
+                        out += if (head != null) ABlock.Table(rows.first(), rows.drop(1))
+                        else ABlock.Table(rows = rows)
+                    }
+                }
                 // Conteneur de texte : coulé d'un seul tenant, liens compris.
                 else -> processFlow(el)
             }
         }
         // Un conteneur de texte imbriqué dans un autre (un <p> dans un <li>) est déjà pris par son
-        // parent : le sélectionner en plus dupliquerait son texte.
+        // parent : le sélectionner en plus dupliquerait son texte. Un tableau en fait autant de
+        // ses cellules.
         fun isNestedBlock(el: org.jsoup.nodes.Element): Boolean =
-            el.parents().any { it.tagName() in ARTICLE_BLOCK_TAGS }
-        doc.body()?.select("p, li, h1, h2, h3, pre, blockquote, img, video, iframe")?.forEach { el ->
+            el.parents().any { it.tagName() in ARTICLE_BLOCK_TAGS || it.tagName() == "table" }
+        doc.body()?.select(ARTICLE_SELECTOR)?.forEach { el ->
             if (el.tagName() !in ARTICLE_BLOCK_TAGS || !isNestedBlock(el)) processBlock(el)
         }
         // Les <a>, <img>, <video>, <iframe> isolés au niveau du corps (hors conteneur de bloc)

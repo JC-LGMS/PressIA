@@ -47,6 +47,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.30",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Balises HTML des articles, extraction Next et échec Readability",
+                "Le HTML du flux est mieux rendu : titres (h1 à h6), gras, italique, listes à " +
+                    "puces, citations et légendes d'image ont leur style. Un tableau était perdu " +
+                    "entièrement, il s'affiche désormais en lignes et colonnes, en-tête compris. " +
+                    "Readability extrait le corps des articles de Next sans y mêler les " +
+                    "commentaires. Et quand l'extraction échoue, l'article reste affiché dans sa " +
+                    "version du flux RSS avec un message qui explique pourquoi (protection du " +
+                    "site ou page injoignable) - au lieu de remplacer le texte par un extrait " +
+                    "tronqué, et en relâchant l'épingle Readability.",
+                time = "08:04"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.29",
         listOf(
             ChangelogItem(

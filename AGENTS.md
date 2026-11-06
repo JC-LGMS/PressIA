@@ -259,9 +259,22 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 
 - Le contenu affiché vient de `feedHtml(article)` (résumé/contenu du flux, ou copie Readability)
   puis de `articleBlocks(html, baseUrl)` (`ui/ArticleScreen.kt`), qui le découpe en `ABlock` :
-  `T` texte, `I` image, `L` lien isolé, `V` vidéo. **Le HTML du flux n'est pas rendu tel quel** :
-  les balises sont interprétées bloc par bloc (sélecteur `p, li, h1..h3, pre, blockquote, img,
-  video, iframe`).
+  `T` texte, `I` image, `L` lien isolé, `V` vidéo, `Table` tableau. **Le HTML du flux n'est pas
+  rendu tel quel** : les balises sont interprétées bloc par bloc (sélecteur `ARTICLE_SELECTOR` :
+  `p, li, h1..h6, pre, blockquote, figcaption`, plus `img, video, iframe, table`).
+- **Chaque bloc de texte a un genre** (`ABlock.Kind`) qui pilote son rendu : `Title1/2/3`
+  (`h1`, `h2`, `h3..h6`), `Bullet` (`li`, puce), `Quote` (`blockquote`, italique), `Caption`
+  (`figcaption`, petit et centré), `Body` sinon. Un sous-bloc garde le genre du parent (un `p`
+  dans un `li` reste une puce) sauf si sa balise en impose un (un `h3` dans une citation est un
+  titre). Avant, tout était rendu en paragraphe : un titre avait la taille d'une phrase, et un
+  `figcaption` ou un `table` disparaissait entièrement.
+- **Le gras et l'italique sont des plages du texte** (`ABlock.Span`) : `strong`/`b` et
+  `em`/`i`/`cite` ne coupent pas la phrase, ils s'ajoutent aux annotations de `blockText` (avec
+  les liens). Chaque morceau de texte est enregistré avec le style en cours, si bien que les
+  plages ne se chevauchent pas.
+- **Un `table` devient `ABlock.Table(head, rows)`** : `th` de la première ligne en en-tête (gras,
+  filet), chaque cellule lue en texte, colonnes de largeur égale. Ses cellules ne sont pas
+  traitées comme des blocs à part (`isNestedBlock` écarte tout ce qui est sous un `table`).
 - **Les liens restent dans le flux du texte.** Un conteneur (`p`, `li`, `h1..h3`, `pre`,
   `blockquote`) est coulé **d'un seul tenant** : ses liens ne sont pas des blocs à part (ils
   passaient à la ligne au milieu d'une phrase) mais des plages cliquables d'un `ABlock.T`
@@ -323,6 +336,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     horizontal pour un défilement et l'annule (`pointercancel` au bout de ~15 px) ; et un doigt
     posé sur le lecteur sort du balayage d'article (`detectArticleSwipe`, repère `playerGesture`)
     — sinon tirer la barre d'avancée changeait d'article.
+    **Titre sous le lecteur** : `YoutubeTitleRow` l'affiche et l'ouvre dans YouTube ; il vient
+    d'oEmbed (`youtubeTitle`, sans clé d'API, mis en cache dans `youtubeTitles`). La WebView est
+    mise en pause avec l'écran (`onPause`/`onResume` sur `ON_PAUSE`/`ON_RESUME`) : sans cela le
+    son continuait après un changement d'article.
   - **La touche Retour doit être rendue à l'application.** Quand la vidéo joue, l'appui est
     **consommé par la hiérarchie de vues** : ni la WebView, ni la vue plein écran, ni le
     `BackHandler` de l'écran, ni `onBackPressed` ne le reçoivent (constaté : `Activity.dispatchKeyEvent`
@@ -342,7 +359,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     `FrameLayout` posé sur la racine de la fenêtre — même page, même instant de lecture ; la
     recréer relancerait la vidéo au début. La classe `pressia-full` étire l'image sur toute la
     hauteur, l'activité passe en paysage et les barres système s'effacent ; ✕ en haut à gauche, et
-    `release()` sur `onRelease` comme sur `onDispose`. Déplacer la vue coupe le média :
+    la vue plein écran est libérée dans l'`onRelease` de l'`AndroidView` (`screen.release()`, qui
+    couvre aussi la sortie de composition). Déplacer la vue coupe le média :
     `pressiaResume` est rappelé au retour (150/600/1500/3000 ms).
     **Un aller-retour en plein écran se voit à l'écran**, et se vérifie en trois points : la classe
     `pressia-full` et `window.pressiaFull` (page), l'icône du bouton sous la vidéo (agrandir →
@@ -558,9 +576,21 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `content`/`summary` avec les valeurs du serveur (`upsertArticles` remplace la ligne) :
   l'extraction ne survit pas à une synchro, et c'est la version du flux qui revient — comportement
   voulu.
-- `articleBlocks` ne retient que `p, li, h1..h3, pre, blockquote, img` : certains flux livrent le
-  corps en texte nu (`…texte…<br><img …>`, cas des Numériques). Les nœuds texte de premier niveau
-  sont enveloppés dans un `<p>` avant sélection, sinon l'article s'affichait sans son texte.
+- **Un échec d'extraction ne remplace plus le texte.** `ensureFull` rend un `FullFetch(html,
+  outcome)` (`FullOutcome.OK / BLOCKED / FAILED`) : l'écran n'affiche `html` que sur `OK`, sinon
+  il revient à `feedHtml(a)` — la version du flux, jamais le petit `summary` seul — et montre une
+  carte qui distingue « site protégé » (anti-robot, abonnement, page JavaScript) de « site
+  injoignable ou page illisible ». En ouverture automatique (épingle Readability), l'échec
+  relâche l'épingle (`readabilityOn = false`). Côté base, `BLOCKED` ne purge une extraction
+  vérolée **que si** `a.fullFetched` : purger un contenu de flux (Next) lui faisait perdre son
+  corps au profit du petit extrait.
+- `Readability.CONTENT_SELECTORS` porte `#next-single-post` : sur Next le corps est là, alors
+  que le conteneur `article` embarque les commentaires (37 810 car. extraits contre 4 811 de vrai
+  corps).
+- `articleBlocks` ne retient que `p, li, h1..h6, pre, blockquote, figcaption, img, video, iframe,
+  table` : certains flux livrent le corps en texte nu (`…texte…<br><img …>`, cas des Numériques).
+  Les nœuds texte de premier niveau sont enveloppés dans un `<p>` avant sélection, sinon
+  l'article s'affichait sans son texte.
 - Flux RSS locaux (`provider = "local"`, identifiant = l'URL) : leur état lu est **purement local**
   (aucun serveur ne le renvoie). `syncDown` appelle donc `storeArticles(…, keepRead = true)` pour
   eux : `upsertArticles` remplace la ligne entière, et sans ce drapeau chaque synchronisation
