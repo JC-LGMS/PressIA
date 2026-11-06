@@ -268,13 +268,22 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   dans un `li` reste une puce) sauf si sa balise en impose un (un `h3` dans une citation est un
   titre). Avant, tout était rendu en paragraphe : un titre avait la taille d'une phrase, et un
   `figcaption` ou un `table` disparaissait entièrement.
-- **Le gras et l'italique sont des plages du texte** (`ABlock.Span`) : `strong`/`b` et
-  `em`/`i`/`cite` ne coupent pas la phrase, ils s'ajoutent aux annotations de `blockText` (avec
-  les liens). Chaque morceau de texte est enregistré avec le style en cours, si bien que les
-  plages ne se chevauchent pas.
+- **Le gras, l'italique et le surlignage sont des plages du texte** (`ABlock.Span`, champ
+  `highlight` pour `<mark>`) : `strong`/`b`, `em`/`i`/`cite` et `mark` ne coupent pas la phrase,
+  ils s'ajoutent aux annotations de `blockText` (avec les liens) — le surlignage prend
+  `primaryContainer` en fond, qui suit le thème et le fond choisi. Chaque morceau de texte est
+  enregistré avec le style en cours, si bien que les plages ne se chevauchent pas.
 - **Un `table` devient `ABlock.Table(head, rows)`** : `th` de la première ligne en en-tête (gras,
-  filet), chaque cellule lue en texte, colonnes de largeur égale. Ses cellules ne sont pas
-  traitées comme des blocs à part (`isNestedBlock` écarte tout ce qui est sous un `table`).
+  fond plus marqué), lignes suivantes sur fond alterné, filets et colonnes de largeur égale. Les
+  fonds sont dérivés de `onSurface` en transparence (et non de `surfaceVariant`, qui vaut le fond
+  quand une couleur de fond est choisie). Ses cellules ne sont pas traitées comme des blocs à part
+  (`isNestedBlock` écarte tout ce qui est sous un `table`).
+- **Une `iframe` n'est pas forcément une vidéo** : seuls YouTube (toutes ses écritures) et les
+  hôtes de lecteur connus (`isVideoEmbed` : Vimeo, Dailymotion, Twitch) donnent un
+  `ABlock.V(embed = true)`. Toute autre iframe — carte d'un autre article
+  (`wp-embedded-content` chez MiniMachines), formulaire, commentaires — devient un `ABlock.L`
+  (son attribut `title`, à défaut l'hôte) : elle affichait sinon un bloc lecteur noir pour une
+  page qui n'est pas une vidéo.
 - **Les liens restent dans le flux du texte.** Un conteneur (`p`, `li`, `h1..h3`, `pre`,
   `blockquote`) est coulé **d'un seul tenant** : ses liens ne sont pas des blocs à part (ils
   passaient à la ligne au milieu d'une phrase) mais des plages cliquables d'un `ABlock.T`

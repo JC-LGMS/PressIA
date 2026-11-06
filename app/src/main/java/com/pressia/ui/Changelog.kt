@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 val CHANGELOG: List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.31",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "Iframe non vidéo, tableaux lisibles et surlignage",
+                "Une iframe d'article n'est plus prise pour une vidéo : seuls YouTube, Vimeo, " +
+                    "Dailymotion et Twitch donnent un lecteur, les autres (carte d'un autre " +
+                    "article, formulaire, commentaires) s'affichent en lien. Un tableau a " +
+                    "désormais une ligne d'en-tête sur fond plus marqué et des lignes au fond " +
+                    "alterné. Le surlignage des articles (balise <mark>) est rendu avec la " +
+                    "couleur du thème.",
+                time = "10:44"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.30",
         listOf(
             ChangelogItem(

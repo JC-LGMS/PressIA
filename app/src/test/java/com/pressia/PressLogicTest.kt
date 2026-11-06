@@ -597,6 +597,11 @@ class PressLogicTest {
         assertEquals("gras", styled.text.substring(bold.start, bold.end))
         val italic = styled.spans.first { it.italic }
         assertEquals("italique", styled.text.substring(italic.start, italic.end))
+        // Le surlignage est une plage du texte, comme le gras et l'italique.
+        val marked = com.pressia.ui.articleBlocks("<p>Un <mark>mot</mark> surligné.</p>", "https://ex.com")
+            .filterIsInstance<com.pressia.ui.ABlock.T>().first()
+        val hl = marked.spans.single { it.highlight }
+        assertEquals("mot", marked.text.substring(hl.start, hl.end))
     }
     @Test fun `blocs article - tableau`() {
         // Un tableau était perdu entièrement : il devient un bloc, en-tête (th) à part.
@@ -634,6 +639,23 @@ class PressLogicTest {
         assertTrue(yt.embed)
         // Une balise <video>, elle, pointe un fichier média : lecteur intégré.
         assertFalse(video!!.embed)
+        // Une iframe n'est pas forcément une vidéo : MiniMachines y met la carte d'un autre de ses
+        // articles (`wp-embedded-content`), avec son titre. Elle doit donner un lien, pas un
+        // lecteur noir que le tap ouvrirait dans le navigateur.
+        val card = com.pressia.ui.articleBlocks(
+            "<iframe src=\"https://www.minimachines.net/actu/x-141/embed#?secret=abc\" " +
+                "title=\"MSI Cubi NUC WCG, un MiniPC Wildcat Lake\"></iframe>",
+            "https://ex.com"
+        )
+        assertTrue(card.none { it is com.pressia.ui.ABlock.V })
+        val link = card.filterIsInstance<com.pressia.ui.ABlock.L>().single()
+        assertEquals("MSI Cubi NUC WCG, un MiniPC Wildcat Lake", link.text)
+        assertTrue(link.url.startsWith("https://www.minimachines.net/actu/x-141/embed"))
+        // Un vrai hôte de vidéo (Vimeo) garde, lui, le bloc lecteur.
+        assertTrue(
+            com.pressia.ui.articleBlocks("<iframe src=\"https://player.vimeo.com/video/123\"></iframe>", "https://ex.com")
+                .any { it is com.pressia.ui.ABlock.V }
+        )
     }
     @Test fun `identifiant youtube - toutes les formes d'url`() {
         // Les flux emploient toutes les écritures : il faut en extraire l'identifiant pour

@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.verticalScroll
@@ -817,7 +818,7 @@ sealed interface ABlock {
     data class I(val url: String) : ABlock
     /** Lien isolé, hors de tout paragraphe : bloc à part entière, faute de texte où le couler. */
     data class L(val text: String, val url: String) : ABlock
-    /** Vidéo embarquée (balise <video> ou <iframe> YouTube/Vimeo…). */
+    /** Vidéo embarquée (balise <video>, ou <iframe> d'un hôte de vidéo). */
     data class V(val url: String, val poster: String?, val embed: Boolean = false) : ABlock
     /** Tableau : [head] est la ligne d'en-tête (`th`), vide quand le tableau n'en a pas. */
     data class Table(val head: List<String> = emptyList(), val rows: List<List<String>>) : ABlock
@@ -825,8 +826,14 @@ sealed interface ABlock {
     /** Plage cliquable d'un texte : [start] inclus, [end] exclu, et l'URL qu'elle ouvre. */
     data class Link(val start: Int, val end: Int, val url: String)
 
-    /** Plage de mise en forme (gras, italique) d'un texte, mêmes bornes que [Link]. */
-    data class Span(val start: Int, val end: Int, val bold: Boolean = false, val italic: Boolean = false)
+    /** Plage de mise en forme (gras, italique, surlignage) d'un texte, mêmes bornes que [Link]. */
+    data class Span(
+        val start: Int,
+        val end: Int,
+        val bold: Boolean = false,
+        val italic: Boolean = false,
+        val highlight: Boolean = false
+    )
 }
 
 /** Tags qui font un bloc de texte : chacun est coulé d'un seul tenant, liens et styles compris. */
@@ -856,7 +863,8 @@ private fun blockKind(tag: String): ABlock.Kind = when (tag) {
  * passer à la ligne. Construit une fois par texte ; la couleur du thème en fait partie.
  */
 @Composable
-private fun blockText(b: ABlock.T, linkColor: Color): AnnotatedString = remember(b, linkColor) {
+private fun blockText(b: ABlock.T, linkColor: Color, markColor: Color): AnnotatedString =
+    remember(b, linkColor, markColor) {
     buildAnnotatedString {
         val text = b.text
         var at = 0
@@ -885,7 +893,8 @@ private fun blockText(b: ABlock.T, linkColor: Color): AnnotatedString = remember
             if (end > start) addStyle(
                 SpanStyle(
                     fontWeight = if (s.bold) FontWeight.Bold else null,
-                    fontStyle = if (s.italic) FontStyle.Italic else null
+                    fontStyle = if (s.italic) FontStyle.Italic else null,
+                    background = if (s.highlight) markColor else Color.Unspecified
                 ),
                 start,
                 end
@@ -910,7 +919,7 @@ private fun ArticleTextBlock(b: ABlock.T, linkColor: Color, size: Int) {
         ABlock.Kind.Quote -> Triple(size, size + 6, base.copy(fontStyle = FontStyle.Italic))
         else -> Triple(size, size + 6, base)
     }
-    val text = blockText(b, linkColor)
+    val text = blockText(b, linkColor, MaterialTheme.colorScheme.primaryContainer)
     when (b.kind) {
         ABlock.Kind.Bullet -> Row(Modifier.padding(bottom = 8.dp).fillMaxWidth()) {
             Text("•", fontSize = fs.sp, style = style, modifier = Modifier.padding(end = 8.dp))
@@ -928,28 +937,37 @@ private fun ArticleTextBlock(b: ABlock.T, linkColor: Color, size: Int) {
     }
 }
 
-/** Tableau du corps : en-tête gras, filets fins, colonnes de largeur égale. */
+/**
+ * Tableau du corps : en-tête sur fond plus marqué, lignes alternées sur un fond plus clair,
+ * filets fins, colonnes de largeur égale. Les fonds viennent de `onSurface` en transparence :
+ * ils suivent donc le thème et la couleur de fond choisie (où `surfaceVariant` vaut le fond).
+ */
 @Composable
 private fun ArticleTable(t: ABlock.Table, size: Int) {
     val line = MaterialTheme.colorScheme.outlineVariant
+    val headBg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+    val rowBg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
     Column(
         Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .clip(RoundedCornerShape(4.dp))
             .border(1.dp, line, RoundedCornerShape(4.dp))
     ) {
         if (t.head.isNotEmpty()) {
-            ArticleTableRow(t.head, header = true, size = size)
+            ArticleTableRow(t.head, header = true, size = size, tint = headBg)
             HorizontalDivider(color = line)
         }
         t.rows.forEachIndexed { i, row ->
             if (i > 0) HorizontalDivider(color = line)
-            ArticleTableRow(row, header = false, size = size)
+            ArticleTableRow(row, header = false, size = size, tint = if (i % 2 == 1) rowBg else null)
         }
     }
 }
 
 @Composable
-private fun ArticleTableRow(cells: List<String>, header: Boolean, size: Int) {
-    Row(Modifier.fillMaxWidth()) {
+private fun ArticleTableRow(cells: List<String>, header: Boolean, size: Int, tint: Color?) {
+    Row(
+        Modifier.fillMaxWidth().then(if (tint != null) Modifier.background(tint) else Modifier)
+    ) {
         cells.forEach { c ->
             Text(
                 c,
@@ -1056,16 +1074,22 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 return lo to hi
             }
             /**
-             * Parcourt un conteneur. [bold]/[italic] viennent des éléments en ligne rencontrés
-             * au-dessus (strong, em…) : chaque morceau de texte est enregistré avec son style,
-             * ce qui donne des plages qui ne se chevauchent pas.
+             * Parcourt un conteneur. [bold]/[italic]/[mark] viennent des éléments en ligne
+             * rencontrés au-dessus (strong, em, mark…) : chaque morceau de texte est enregistré
+             * avec son style, ce qui donne des plages qui ne se chevauchent pas.
              */
-            fun walk(el: org.jsoup.nodes.Element, kind: ABlock.Kind, bold: Boolean, italic: Boolean) {
+            fun walk(
+                el: org.jsoup.nodes.Element,
+                kind: ABlock.Kind,
+                bold: Boolean,
+                italic: Boolean,
+                mark: Boolean = false
+            ) {
                 el.childNodes().forEach { node ->
                     when {
                         node is org.jsoup.nodes.TextNode -> {
                             val (lo, hi) = appendText(node.wholeText)
-                            if (hi > lo && (bold || italic)) spans += ABlock.Span(lo, hi, bold, italic)
+                            if (hi > lo && (bold || italic || mark)) spans += ABlock.Span(lo, hi, bold, italic, mark)
                         }
                         node is org.jsoup.nodes.Element -> when (node.tagName()) {
                             "br" -> sb.append('\n')
@@ -1074,7 +1098,7 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                                 if (t.isNotBlank()) {
                                     val (lo, hi) = appendText(t)
                                     if (hi > lo) {
-                                        if (bold || italic) spans += ABlock.Span(lo, hi, bold, italic)
+                                        if (bold || italic || mark) spans += ABlock.Span(lo, hi, bold, italic, mark)
                                         linkUrl(node.absUrl("href").ifBlank { node.attr("href") })
                                             ?.let { links += ABlock.Link(lo, hi, it) }
                                     }
@@ -1091,7 +1115,10 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                             }
                             "iframe" -> {
                                 flush(kind)
-                                abs(node.absUrl("src").ifBlank { node.attr("src") })?.let { out += ABlock.V(it, youtubePoster(it), embed = true) }
+                                abs(node.absUrl("src").ifBlank { node.attr("src") })?.let {
+                                    if (isVideoEmbed(it)) out += ABlock.V(it, youtubePoster(it), embed = true)
+                                    else out += embedLink(node, it)
+                                }
                             }
                             // Sous-bloc (un <p> dans un <li>, deux <p> dans une citation) : chacun
                             // reste un bloc de texte à part, sans être recollé au précédent. Il
@@ -1099,12 +1126,13 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                             // impose le sien (un <h3> dans une citation est un titre).
                             in ARTICLE_BLOCK_TAGS -> {
                                 flush(kind)
-                                walk(node, blockKind(node.tagName()).takeIf { it != ABlock.Kind.Body } ?: kind, bold, italic)
+                                walk(node, blockKind(node.tagName()).takeIf { it != ABlock.Kind.Body } ?: kind, bold, italic, mark)
                                 flush(kind)
                             }
-                            "strong", "b" -> walk(node, kind, true, italic)
-                            "em", "i", "cite" -> walk(node, kind, bold, true)
-                            else -> walk(node, kind, bold, italic)
+                            "strong", "b" -> walk(node, kind, true, italic, mark)
+                            "em", "i", "cite" -> walk(node, kind, bold, true, mark)
+                            "mark" -> walk(node, kind, bold, italic, true)
+                            else -> walk(node, kind, bold, italic, mark)
                         }
                     }
                 }
@@ -1134,10 +1162,12 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
                 "iframe" -> {
                     val src = el.absUrl("src").ifBlank { el.attr("src") }
                     abs(src)?.let {
-                        // YouTube embed : on construit une miniature d'affiche pour le bloc vidéo.
-                        // C'est une PAGE web, pas un fichier média : le lecteur intégré ne peut pas
-                        // la lire — le tap ouvre donc la vidéo dans le navigateur.
-                        out += ABlock.V(it, youtubePoster(it), embed = true)
+                        // Une iframe n'est pas forcément une vidéo : MiniMachines y met une carte
+                        // vers un autre de ses articles (wp-embedded-content). Seuls les hôtes de
+                        // vidéo ont droit au bloc lecteur ; les autres deviennent un lien, sinon
+                        // l'article montrait un lecteur noir pour une page qui n'en est pas une.
+                        if (isVideoEmbed(it)) out += ABlock.V(it, youtubePoster(it), embed = true)
+                        else out += embedLink(el, it)
                     }
                 }
                 // Tableau : une ligne par <tr>, l'en-tête étant la première quand elle porte des
@@ -1173,6 +1203,27 @@ fun articleBlocks(html: String, baseUrl: String): List<ABlock> {
         }
         if (out.isEmpty()) listOf(ABlock.T(stripHtml(html))) else out
     } catch (_: Exception) { listOf(ABlock.T(stripHtml(html))) }
+}
+
+/**
+ * Une iframe porte-t-elle une vidéo ?
+ *
+ * Seuls YouTube (toutes ses écritures, reconnues par [youtubeVideoId]) et les lecteurs vidéo
+ * connus ont droit au bloc lecteur. Tout le reste — carte d'un autre article, formulaire,
+ * commentaires — est une page intégrée, rendue comme un simple lien : l'article affichait sinon
+ * un lecteur noir pour une iframe qui n'est pas une vidéo.
+ */
+fun isVideoEmbed(url: String): Boolean {
+    if (youtubeVideoId(url) != null) return true
+    val host = runCatching { java.net.URI(url.trim()) }.getOrNull()?.host
+        ?.removePrefix("www.").orEmpty()
+    return listOf("vimeo.com", "dailymotion.com", "twitch.tv").any { host == it || host.endsWith(".$it") }
+}
+
+/** Lien d'une iframe qui n'est pas une vidéo : son titre, à défaut la page visée. */
+private fun embedLink(el: org.jsoup.nodes.Element, url: String): ABlock.L {
+    val title = el.attr("title").trim().takeIf { it.isNotEmpty() }
+    return ABlock.L(title ?: (runCatching { java.net.URI(url.trim()).host }.getOrNull() ?: url), url)
 }
 
 /**
