@@ -1537,10 +1537,18 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             }
             Spacer(Modifier.height(16.dp))
             Text(
-                "Lecteur RSS Android développé grâce à OpenCode et Muse Spark 1.3 free par " +
-                    "Jean-Cyril Poiraud (inspiré par Press) : Feedly ou flux locaux, " +
-                    "100 % Jetpack Compose, lecture hors-ligne et article complet via Readability.",
+                "Lecteur RSS Android développé grâce à OpenCode, Muse Spark 1.3 free et " +
+                    "DeepSeek 4.1 Flash par Jean-Cyril Poiraud (inspiré par Press) : Feedly ou " +
+                    "flux locaux, 100 % Jetpack Compose, lecture hors-ligne et article complet " +
+                    "via Readability.",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            // minSdk 26 (app/build.gradle.kts) : Android 8.0 Oreo.
+            Text(
+                "Nécessite Android 8.0 (API 26) ou plus récent.",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(16.dp))
@@ -1600,14 +1608,20 @@ private val ABOUT_TOPICS = listOf(
         "Comptes : Feedly, Inoreader, flux locaux",
         "Feedly et Inoreader se connectent sur leur page officielle intégrée (le jeton ou le cookie de " +
             "session est repris automatiquement), et les flux RSS/Atom saisis à la main restent dans PressIA " +
-            "sans compte. Plusieurs comptes coexistent, l'actif est synchronisé en premier ; reconnecter le " +
-            "même utilisateur remplace son jeton sans doublon : dossiers, abonnements et articles restent."
+            "sans compte (HTTP accepté comme HTTPS, un serveur qui répond 5xx ou 429 est retenté une fois, et " +
+            "le flux prend le nom que son fichier annonce). Plusieurs comptes coexistent, l'actif est " +
+            "synchronisé en premier ; reconnecter le " +
+            "même utilisateur remplace son jeton sans doublon : dossiers, abonnements et articles restent. " +
+            "Les identifiants d'application Inoreader (App ID, App Key, en-tête d'autorisation) se saisissent " +
+            "et se remplacent dans Comptes."
     ),
     AboutTopic(
-        "Synchronisation : bouton, lancement, geste",
+        "Synchronisation : bouton, lancement, fréquence",
         "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
             "récupèrent la même chose : nouveaux articles, tableau « Read later » et images des articles " +
-            "(miniature déclarée et images du corps, une seule requête par image même partagée). Les favicons, " +
+            "(miniature déclarée et images du corps, une seule requête par image même partagée). Application " +
+            "ouverte, la synchronisation repart d'elle-même à la fréquence réglée (10 minutes par défaut, " +
+            "0 = manuelle) ; fermée, il n'y en a aucune. Les favicons, " +
             "eux, ne se téléchargent que lorsqu'ils manquent ou que le mois a passé : première synchronisation, " +
             "flux arrivé depuis, cache vidé, puis une fois par mois (et à la demande avec « Actualiser " +
             "favicons »). Sans compte ni flux, la synchro manuelle le dit au lieu de tourner à vide ; " +
@@ -1617,7 +1631,18 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Lecture hors-ligne et article complet",
         "Extraits, images et articles complets (extraits via Readability) sont conservés pour lire sans réseau. " +
-            "« Images hors-ligne » et « Wi-Fi uniquement » règlent ce qui se télécharge et quand."
+            "« Images hors-ligne » et « Wi-Fi uniquement » règlent ce qui se télécharge et quand. Quand " +
+            "l'extraction échoue (site protégé ou injoignable), l'article reste affiché dans sa version du " +
+            "flux, avec un message qui dit pourquoi."
+    ),
+    AboutTopic(
+        "Écran article : texte, tableaux, vidéos",
+        "Le contenu du flux est mis en forme : titres, gras, italique, souligné, barré, surligné, listes, " +
+            "citations, légendes et tableaux (en-tête et lignes alternées). Un lien reste dans sa phrase. " +
+            "Le texte se sélectionne (appui long) avec deux actions en plus de Copier : « Rechercher sur " +
+            "Internet » et « Traduire ». Une vidéo YouTube se lit dans l'article (plein écran par le bouton " +
+            "d'agrandir, titre sous le lecteur) ; une iframe qui n'est pas une vidéo — carte d'un autre " +
+            "article, formulaire — s'affiche en lien, jamais comme un lecteur."
     ),
     AboutTopic(
         "Images : grand format sans re-téléchargement",
@@ -1657,7 +1682,9 @@ private val ABOUT_TOPICS = listOf(
         "Gestes configurables",
         "Balayage vers la gauche ou la droite (favori, lu/non-lu, partage, Instapaper), bouton de fin de ligne, " +
             "icônes de l'écran article : tout se règle. Dans l'article ouvert, double-tap, balayage gauche " +
-            "et balayage droit se choisissent aussi (navigation entre articles par défaut) ; sur une image, " +
+            "et balayage droit se choisissent aussi (navigation entre articles par défaut) ; les articles " +
+            "parcourus sont ceux de la liste d'où l'on vient — le flux, mais aussi les Favoris, les résultats " +
+            "de la Recherche et les Doublons ; sur une image, " +
             "un simple tap l'ouvre en grand et un double-tap déclenche l'action réglée pour le double-tap. " +
             "Toucher le favicon ou la miniature marque lu sans ouvrir (désactivable)."
     ),
@@ -1685,13 +1712,23 @@ private val ABOUT_TOPICS = listOf(
             "lu sauf le plus récent."
     ),
     AboutTopic(
+        "Ce qui reste non lu",
+        "Un article ouvert devient lu, et son retour en non lu est possible depuis l'en-tête de l'article. " +
+            "Feedly, lui, marque lu tout seul au-delà de 31 jours : PressIA garde donc l'état local " +
+            "des articles plus vieux déjà connus (désactivable dans Réglages, « Feedly : garder non lu au-delà " +
+            "de 31 jours »). Les favoris et le Read later ne sont jamais marqués lus en masse."
+    ),
+    AboutTopic(
         "Sauvegarde et restauration",
         "Un seul fichier : options, statistiques, abonnements et favoris/lus, au choix ; les jetons ne partent " +
             "que si on les inclut. L'export n'annonce « Sauvegarde effectuée » qu'après avoir vérifié ce qui " +
             "est réellement écrit dans le fichier. Restaurer deux fichiers d'affilée ne perd rien : les favoris " +
             "et les lus de flux locaux dont les articles ne sont pas encore arrivés s'ajoutent à ceux du " +
             "fichier précédent, en attente d'une synchronisation. Seuls les dossiers créés en local sont " +
-            "sauvegardés : ceux des comptes sont re-créés par la synchronisation."
+            "sauvegardés : ceux des comptes sont re-créés par la synchronisation. En plus, la sauvegarde " +
+            "Google du téléphone garde les réglages et les jetons de compte, mais jamais le contenu des " +
+            "articles (trop lourd pour son quota) : flux locaux, favoris et lus sont recopiés dans un petit " +
+            "fichier, réécrit en arrière-plan et après chaque synchronisation."
     ),
     AboutTopic(
         "Cache, favicons, déconnexion",
@@ -1715,6 +1752,13 @@ private val ABOUT_TOPICS = listOf(
             "« Reconnecter » qui ouvre directement la page de connexion du compte concerné. Reconnecter un " +
             "compte déjà connu dont la dernière synchro réussie a moins d'un mois relance une synchronisation " +
             "normale, sans retélécharger tout l'historique."
+    ),
+    AboutTopic(
+        "Statistiques de lecture",
+        "L'écran Stats compte les articles ouverts, le temps de lecture par flux et les ouvertures par jour, sur " +
+            "une journée, 7 jours, 30 jours, une année ou tout l'historique. Les traces de lecture survivent à la " +
+            "suppression d'un flux ou d'un compte (elles s'affichent alors sous « Flux supprimé ») : la remise à " +
+            "zéro est un bouton de cet écran, avec confirmation, et les compteurs repartent de là."
     ),
     AboutTopic(
         "Version et journal des modifications",

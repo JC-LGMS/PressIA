@@ -48,6 +48,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.37",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "À propos à jour, journal plus large",
+                "L'écran À propos crédite DeepSeek 4.1 Flash et indique Android 8.0 (API 26) comme " +
+                    "minimum. Le résumé « Fonctionnalités et règles » a été relu et complété : " +
+                    "synchronisation à la fréquence réglée tant que l'application est ouverte, " +
+                    "mise en forme et tableaux de l'article, vidéos YouTube et iframes non vidéo, " +
+                    "balayage qui suit la liste d'où l'on vient (Favoris, Recherche, Doublons), " +
+                    "règle Feedly des 31 jours, sauvegarde Google, statistiques, identifiants " +
+                    "Inoreader et flux locaux en HTTP. Dans le journal des modifications, le " +
+                    "nombre de changements par version disparaît et la colonne de date se " +
+                    "resserre au profit du texte.",
+                time = "23:46"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.36",
         listOf(
             ChangelogItem(
@@ -750,11 +769,6 @@ fun ChangelogScreen() {
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            "${entry.items.size} changement(s)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                         Spacer(Modifier.height(8.dp))
                     }
                     items(entry.items) { item -> ChangelogRow(item) }
@@ -827,8 +841,9 @@ private fun ChangelogScrollBar(state: LazyListState, modifier: Modifier = Modifi
 @Composable
 private fun ChangelogRow(item: ChangelogItem) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
-        // Colonne étroite : la date sur une ligne, l'heure juste en dessous.
-        Column(Modifier.width(84.dp).padding(top = 2.dp, end = 6.dp)) {
+        // Colonne étroite : la date sur une ligne, l'heure juste en dessous. Réduite au strict
+        // nécessaire (« 2026-11-06 » en 11 sp ≈ 64 dp) pour laisser la place au texte.
+        Column(Modifier.width(70.dp).padding(top = 2.dp, end = 4.dp)) {
             Text(
                 item.date,
                 style = MaterialTheme.typography.labelSmall,
