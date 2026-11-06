@@ -12,7 +12,7 @@ aucun `res/layout`, aucun ViewHolder/Adapter, aucun `viewBinding`. Les 4 vues ar
 - compileSdk / targetSdk 34, minSdk 26
 - AGP 8.5.2, Kotlin 2.0.20, KSP 2.0.20-1.0.25, Gradle 8.7
 - tests unitaires dans `app/src/test/java/com/pressia/` (`PressLogicTest.kt`,
-  `ReconnectShortcutTest.kt`) ; **aucun androidTest**
+  `FeedlyAutoReadTest.kt`, `ReconnectShortcutTest.kt`) ; **aucun androidTest**
 
 ## Chaîne d'outils (machine-specific)
 
@@ -578,7 +578,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   d'évènements une fois par article.
 - **L'écran article ne lit plus d'articles pour son balayage** : `PressVM.scanIds`
   (`dao.streamIds` → `SELECT id …`) donne les voisins. `SELECT *` chargeait 2000 articles complets,
-  HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants.
+  HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants. **L'écran Favoris
+  fournit sa propre liste** (`PressVM.openArticleWith` → `takeArticleNeighbours`, consommée une
+  fois) : sans elle, un favori absent du périmètre du flux n'avait aucun voisin et le geste
+  revenait en arrière au lieu de passer au favori suivant. Côté écran article, la liste est
+  `remember` **sans clé** : le balayage change d'article sans changer d'écran, une liste
+  re-dérivée par article repartirait du périmètre du flux au premier swipe.
 - Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`
   dit laquelle. Couper le mode (icône, pastille, double-tap) doit **réécrire** `content` avec la
   version du flux et remettre `fullFetched` à 0 : sans cette écriture la copie Readability restait
@@ -638,13 +643,47 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `setFeedTitle` (flux local qui annonce son nom) met aussi à jour les articles du flux.
 - **Un dossier vide n'affiche rien, et n'a pas de « tout le compte ».** Les requêtes de liste
   prennent `catEmpty = 1` pour « aucun dossier demandé » : `PressRepository.catScope` ne le pose
-  que si `catId == null`, et rend une liste impossible (`listOf("")`) pour un dossier sans flux.
+  que si `catId == null`, et rend une liste impossible (`listOf("\u0000")`, un identifiant qu'aucune
+  URL ni aucun compte ne peut porter) pour un dossier sans flux.
   Avant, les deux cas se confondaient : un dossier vide affichait tous les articles de
   l'application, et « tout marquer lu » y marquait tout le compte (`PressVM.markAllRead` sort
   désormais sans rien faire).
 - Articles « collants » de la session (`PressVM.keepIds`) : bornés à `KEEP_MAX` (400, les plus
   récents gardés). La requête les lie un par un (`id IN (:keepIds)`), une session en accumulait
   des milliers.
+- **Sauvegarde Google : les jetons partent, le contenu des articles non.** `allowBackup="true"`
+  avec `dataExtractionRules` (`res/xml/backup_rules.xml`, Android 12+ et transfert
+  téléphone-à-téléphone) et `fullBackupContent` (`res/xml/backup_content.xml`, Android 11-) :
+  `files/datastore` (comptes, jetons, réglages), `files/sauvegarde-auto.json` et le profil WebView
+  sont sauvegardés ; `databases/pressia.db*` (la base porte le HTML des articles) et
+  `files/thumbs/` sont exclus. Ce n'est pas du zèle : le quota est de **25 Mo par application**, et
+  un dépassement fait sauter la sauvegarde **entière**, jetons compris. Les miniatures pèsent
+  100 Mo et plus sur une base nourrie, la base plusieurs Mo ; le fichier de métadonnées, quelques
+  kilo-octets. Les règles ne savent pas exclure une colonne : exclure le HTML, c'est exclure la base.
+- **La copie automatique (`data/AutoBackup.kt`) est ce qui remplace la base dans la sauvegarde.**
+  `writeAutoBackup()` exporte `Sections.ACCOUNTS` + `Sections.READ` — dossiers et flux **locaux**,
+  étoiles PressIA, lus des flux locaux, jamais le contenu — vers `files/sauvegarde-auto.json`, en
+  écriture atomique (temporaire + renommage). Elle est **réécrite au passage en arrière-plan et à la
+  fin de chaque synchro** : la sauvegarde Google tourne elle aussi écran éteint, elle trouve donc
+  toujours une copie à jour. `restoreAutoBackupIfEmpty()` la réimporte **au début de
+  `syncOnLaunch`, avant le test de fraîcheur**, et seulement s'il n'y a ni flux local ni favori en
+  base (sinon une bibliothèque vidée exprès ressusciterait au redémarrage). Trois pièges, tous
+  constatés en simulation (base supprimée, fichier conservé) :
+  - `LAST_SYNC_AT` **est restauré par Google** (il vit dans DataStore) : sans le remettre à zéro,
+    la première synchro est jugée « récente » et sautée — écran vide, et les lus/favoris attendent
+    une passe qui ne vient pas. `RECONCILE_TOTALS` et `READLATER_HASHES` sont remis à zéro pour la
+    même raison (calculés sur la base qui n'est pas revenue, ils feraient sauter la réconciliation
+    et l'import du « Read later »).
+  - **Ne pas réécrire la copie juste après l'import** : les articles ne sont pas revenus, écrire
+    l'état de la base effacerait les lus/favoris encore en file. Elle est réécrite à la fin de la
+    synchro, quand `RESTORED_STARRED` / `RESTORED_READ` ont été rejoués (limite assumée : un
+    article sorti du flux entre-temps perd son état).
+  - `markStarred` et `existingIds` sont **découpés par paquets de 500** dans la restauration : un
+    gros jeu de favoris dépasse la limite de variables SQLite des anciens Android (~999).
+- **La sauvegarde de l'application (écran Sauvegarde/Restauration, `Backup.kt`) reste le chemin
+  complet** : elle exporte par sections (réglages, stats, comptes, favoris et lus) vers un fichier
+  choisi par l'utilisateur, jetons exclus tant qu'il ne coche pas la case. La copie automatique
+  ci-dessus n'en est qu'un sous-ensemble silencieux, pour la sauvegarde Google.
 
 ## Pièges connus — interface, navigation et gestes
 
