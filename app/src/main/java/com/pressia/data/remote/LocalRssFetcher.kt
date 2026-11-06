@@ -1,6 +1,7 @@
 package com.pressia.data.remote
 
 import com.pressia.data.local.ArticleEntity
+import com.pressia.data.exceedsCap
 import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -88,6 +89,10 @@ object LocalRssFetcher {
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body ?: return@withContext LocalFeedFetch(feedId, error = "réponse vide")
+                        // Taille annoncée au-delà du plafond : inutile de la télécharger.
+                        if (exceedsCap(body.contentLength(), MAX_FEED_BYTES)) {
+                            return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
+                        }
                         val bytes = readCapped(body.byteStream(), MAX_FEED_BYTES)
                             ?: return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
                         val xml = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)

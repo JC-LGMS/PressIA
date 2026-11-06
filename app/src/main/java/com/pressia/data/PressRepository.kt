@@ -35,13 +35,6 @@ import java.util.concurrent.atomic.AtomicLong
 const val MERGED_PREFIX = "merged:"
 
 /**
- * Pages de file montante poussées en un appel de [PressRepository.pushQueue]. La file se sert
- * par pages de 100 (`pendingSync`) : une seule page par appel laissait les gros marquages
- * groupés en attente plusieurs synchros durant. Plafond de sécurité (réseau lent, quota).
- */
-private const val PUSH_MAX_PAGES = 20
-
-/**
  * Libellé des lectures rattachées à un flux qui n'existe plus (compte supprimé, désabonnement) :
  * leurs traces sont conservées pour que les statistiques ne repartent pas de zéro, et l'écran
  * Stats les regroupe sous ce nom faute de titre en base.
@@ -223,6 +216,16 @@ fun markAllReadPush(rows: List<SyncActionEntity>): MarkAllReadPush = MarkAllRead
     feedIds = rows.mapNotNull { it.feedId?.takeIf { it.isNotBlank() } }.distinct(),
     global = rows.any { it.feedId.isNullOrBlank() }
 )
+
+/**
+ * Comptes cloud servis par le marquage « tout le compte » d'un segment.
+ *
+ * Une ligne **sans flux** vaut pour **tous** les comptes cloud, pas seulement celui de la ligne :
+ * rattachée au premier, elle laissait les articles des autres non lus côté serveur, que la
+ * réconciliation suivante rouvrait localement. Pur (aucun réseau), testé.
+ */
+fun markAllReadTargets(push: MarkAllReadPush, accounts: List<CloudAccount>): List<CloudAccount> =
+    if (push.global) accounts else emptyList()
 
 /**
  * Flux sous-approvisionnés à rattraper : le compte dit plus de non-lus que le local n'en
@@ -2390,10 +2393,11 @@ class PressRepository(
         val accounts = cloudAccounts()
         var done = 0
         var pages = 0
-        // La file se sert par pages (`pendingSync` en rend 100) : s'arrêter à la première
-        // laissait un marquage groupé de plusieurs centaines d'articles aux trois quarts dans
-        // la file, et la synchro suivante rouvrait ce que le serveur n'avait pas encore vu.
-        while (pages < PUSH_MAX_PAGES) {
+        // La file se sert par pages (`pendingSync` en rend 100) : on les enchaîne **jusqu'à ce
+        // qu'elle soit vide**. Chaque tour retire au moins une ligne (ou n'en retire aucune, et
+        // on s'arrête) : un marquage groupé de plusieurs milliers d'articles part en entier, au
+        // lieu de rester aux trois quarts dans la file et d'être rouvert par la synchro suivante.
+        while (true) {
             val pending = dao.pendingSync()
             if (pending.isEmpty()) break
             val processed = if (accounts.isEmpty()) {
@@ -2476,16 +2480,15 @@ class PressRepository(
                     // articles ») : la jeter sans réseau perdait silencieusement le marquage.
                     "markAllRead" -> {
                         val push = markAllReadPush(run)
+                        val targets = markAllReadTargets(push, accounts)
                         if (push.nothing) drop(run)
                         else runCatching {
                             if (push.feedIds.isNotEmpty()) p.markAllRead(account.token, push.feedIds)
                             // « Tout le compte » (ligne sans flux) vaut pour **tous** les comptes
-                            // cloud : rattachée au premier seulement, elle laissait les articles
-                            // des autres non lus côté serveur, que la réconciliation suivante
-                            // rouvrait localement. Chaque compte part donc séparément ; un échec
-                            // reporte la ligne entière — le marquage est idempotent, les comptes
-                            // déjà servis le seront à nouveau sans dommage.
-                            if (push.global) accounts.forEach { acc ->
+                            // cloud (voir `markAllReadTargets`) : chaque compte part séparément ;
+                            // un échec reporte la ligne entière — le marquage est idempotent, les
+                            // comptes déjà servis le seront à nouveau sans dommage.
+                            targets.forEach { acc ->
                                 runCatching { providerFor(acc.provider).markAllReadGlobal(acc.token) }
                                     .onSuccess { clearAccountExpired(acc.id) }
                                     .onFailure { e ->

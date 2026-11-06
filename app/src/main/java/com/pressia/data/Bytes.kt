@@ -27,3 +27,12 @@ fun readCapped(stream: InputStream, cap: Int): ByteArray? {
     }
     return out.toByteArray()
 }
+
+/**
+ * Le plafond est-il déjà dépassé d'après la taille **annoncée** (`Content-Length`) ?
+ *
+ * Permet d'échouer avant même de lire quand le serveur déclare une archive de 200 Mo ; une
+ * longueur inconnue (`-1`) ne dit rien, et c'est [readCapped] qui tranche pendant la lecture.
+ * Pur JVM : testé en unitaire.
+ */
+fun exceedsCap(contentLength: Long, cap: Int): Boolean = contentLength > cap

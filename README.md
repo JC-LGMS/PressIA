@@ -64,4 +64,4 @@ $env:FEEDLY_CLIENT_ID="..."
 ./gradlew :app:testDebugUnitTest
 ```
 
-Min SDK 26, target/compile 34, Kotlin 2.0, Compose BOM 2024.10, Material3 1.3, Room 2.6.1, Paging 3.3, DataStore 1.1, WorkManager 2.9, Coil 2.6, Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.
+Min SDK 26, target/compile 34, Kotlin 2.0, Compose BOM 2024.10, Material3 1.3, Room 2.6.1, DataStore 1.1, WorkManager 2.9 (annulation des synchros planifiées d'anciennes versions), Coil 2.6, Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.

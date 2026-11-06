@@ -41,6 +41,15 @@ class PressLogicTest {
         val data = ByteArray(3000) { it.toByte() }
         assertNull(readCapped(java.io.ByteArrayInputStream(data), 1000))
     }
+    @Test fun `plafond connu avant lecture par la taille annoncee`() {
+        // Le plafond se voit dans l'en-tête `Content-Length` : inutile de télécharger 200 Mo.
+        assertTrue(com.pressia.data.exceedsCap(200L * 1024 * 1024, 8 * 1024 * 1024))
+        // Taille annoncée sous le plafond : on lit (une réponse sans en-tête vaut -1, inconnue).
+        assertFalse(com.pressia.data.exceedsCap(1000, 8 * 1024 * 1024))
+        assertFalse(com.pressia.data.exceedsCap(-1, 8 * 1024 * 1024))
+        // Exactement au plafond : accepté, comme readCapped (qui refuse au-delà seulement).
+        assertFalse(com.pressia.data.exceedsCap(8L * 1024 * 1024, 8 * 1024 * 1024))
+    }
     @Test fun `reconcile sautee si rien n'a bouge`() {
         assertTrue(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = 42))
     }
@@ -1374,6 +1383,30 @@ class PressLogicTest {
         assertTrue(com.pressia.data.markAllReadPush(listOf(row(""))).global)
         // Aucune cible : rien à pousser (la ligne sera simplement vidée).
         assertTrue(com.pressia.data.markAllReadPush(emptyList()).nothing)
+    }
+
+    @Test fun `tout marquer lu part vers tous les comptes cloud`() {
+        fun row(feed: String?) =
+            com.pressia.data.local.SyncActionEntity(articleId = "", feedId = feed, kind = "markAllRead")
+        fun account(id: String) = com.pressia.data.CloudAccount(
+            id = id, provider = "feedly", token = "t-$id", name = id
+        )
+        val accounts = listOf(account("a"), account("b"), account("c"))
+        // Ligne sans flux (« Tout les articles ») : le marquage global part vers **tous** les
+        // comptes cloud. Rattaché au premier seulement, il laissait les articles des autres non
+        // lus côté serveur, que la réconciliation suivante rouvrait.
+        assertEquals(accounts, com.pressia.data.markAllReadTargets(
+            com.pressia.data.markAllReadPush(listOf(row(null))), accounts
+        ))
+        // Vue d'un flux : c'est l'appel par flux qui part (au compte de la ligne), aucun marquage
+        // global — sinon « tout marquer lu » d'un flux marquerait tout le compte.
+        assertTrue(com.pressia.data.markAllReadTargets(
+            com.pressia.data.markAllReadPush(listOf(row("f1"))), accounts
+        ).isEmpty())
+        // Aucun compte cloud (tout en RSS local) : rien à servir, la ligne sera vidée.
+        assertTrue(com.pressia.data.markAllReadTargets(
+            com.pressia.data.markAllReadPush(listOf(row(null))), emptyList()
+        ).isEmpty())
     }
 
     @Test fun `tout marquer lu Feedly passe par les identifiants`() {

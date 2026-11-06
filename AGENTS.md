@@ -95,7 +95,9 @@ APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
 - **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
   le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
   chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,
-  titre, détail = le message de commit) **en tête de la version courante** de `CHANGELOG` :
+  titre, détail = le message de commit) **en tête de la version courante** de `changelog()`
+  (`Changelog.kt` ; l'historique de 208 commits est à part, dans `changelogHistory()` de
+  `ChangelogHistory.kt`, jamais édité) :
   compléter l'entrée existante si la version n'a pas changé, en créer une si le build l'a déjà
   incrémentée. Un commit sans entrée laisse la page mentir sur ce qui a changé. **L'heure est
   celle du commit**, pas celle du build : la noter en dernier, puis recompiler une fois
@@ -253,7 +255,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   page peut être énorme (archive, réponse sans fin, URL hostile) : sans plafond, la synchro
   mourait en `OutOfMemoryError`. Un dépassement est un **échec de récupération** (erreur
   journalisée côté flux local, `FullResult.Failed` côté Readability). Le corps est décodé avec
-  le charset du `Content-Type`, jamais par `body.string()`, qui lit tout.
+  le charset du `Content-Type`, jamais par `body.string()`, qui lit tout. `readCapped` lit
+  jusqu'au bout d'un flux plus petit que le plafond (il ne s'arrête qu'au-delà) et ne connaît pas
+  la taille à l'avance : quand le serveur l'annonce, `exceedsCap(body.contentLength(), …)` échoue
+  **avant** la lecture, aux trois appelants (miniature, flux, page).
 
 ## Contenu HTML de l'article (texte, liens, vidéos)
 
@@ -350,7 +355,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     posé sur le lecteur sort du balayage d'article (`detectArticleSwipe`, repère `playerGesture`)
     — sinon tirer la barre d'avancée changeait d'article.
     **Titre sous le lecteur** : `YoutubeTitleRow` l'affiche et l'ouvre dans YouTube ; il vient
-    d'oEmbed (`youtubeTitle`, sans clé d'API, mis en cache dans `youtubeTitles`). La WebView est
+    d'oEmbed (`youtubeTitle`, sans clé d'API, mis en cache dans `youtubeTitles`, lui-même borné à
+    200 titres en LRU : une session qui parcourt des dizaines de vidéos n'accumule pas un titre
+    par vidéo pour la vie du processus). La WebView est
     mise en pause avec l'écran (`onPause`/`onResume` sur `ON_PAUSE`/`ON_RESUME`) : sans cela le
     son continuait après un changement d'article.
   - **La touche Retour doit être rendue à l'application.** Quand la vidéo joue, l'appui est
@@ -520,11 +527,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - File montante : `pendingSync()` est une **page** (`LIMIT 100`), pas la file. Tout code qui
   raisonne sur « les actions en attente » doit passer par une requête dédiée (`pendingReadIds`,
   `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue` enchaîne les pages
-  (plafond `PUSH_MAX_PAGES`). Ne jamais vider la file sur un état initial de `provider`
+  **jusqu'à ce que la file soit vide** (pas de plafond de pages : chaque tour retire au moins une
+  ligne, sinon il s'arrête). Ne jamais vider la file sur un état initial de `provider`
   (`drop(1)`), et une ligne sans flux vaut « tout le compte », pas « à jeter » — `pushPage` la
-  pousse à **tous** les comptes cloud (branche « markAllRead »), le premier ne servant qu'à porter
-  le groupe (`accountFor`) : la rattacher au seul premier laissait les articles des autres non lus
-  côté serveur, rouverts par la réconciliation suivante.
+  pousse à **tous** les comptes cloud (branche « markAllRead », cibles données par
+  `markAllReadTargets`, fonction pure testée), le premier ne servant qu'à porter le groupe
+  (`accountFor`) : la rattacher au seul premier laissait les articles des autres non lus côté
+  serveur, rouverts par la réconciliation suivante.
 - `pushQueue` passe par `pushMutex` — pas `syncMutex`, non réentrant, que `syncPipeline` détient
   déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
   article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et poussaient
@@ -578,10 +587,11 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   d'évènements une fois par article.
 - **L'écran article ne lit plus d'articles pour son balayage** : `PressVM.scanIds`
   (`dao.streamIds` → `SELECT id …`) donne les voisins. `SELECT *` chargeait 2000 articles complets,
-  HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants. **L'écran Favoris
-  fournit sa propre liste** (`PressVM.openArticleWith` → `takeArticleNeighbours`, consommée une
-  fois) : sans elle, un favori absent du périmètre du flux n'avait aucun voisin et le geste
-  revenait en arrière au lieu de passer au favori suivant. Côté écran article, la liste est
+  HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants. **Chaque écran à
+  liste propre fournit la sienne** (`PressVM.openArticleWith` → `takeArticleNeighbours`, consommée
+  une fois) : Favoris, Recherche (ses résultats) et Doublons (les groupes affichés, à plat) — sans
+  elle, un article absent du périmètre du flux n'avait aucun voisin et le geste revenait en arrière
+  au lieu de passer au suivant. Côté écran article, la liste est
   `remember` **sans clé** : le balayage change d'article sans changer d'écran, une liste
   re-dérivée par article repartirait du périmètre du flux au premier swipe.
 - Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`

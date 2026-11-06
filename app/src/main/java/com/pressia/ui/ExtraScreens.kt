@@ -199,7 +199,11 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             key(vm.searchEpoch) {
                 ArticleList(
-                    vm.searchResults, "list", onOpen, vm,
+                    vm.searchResults, "list",
+                    // Le balayage de l'article suit les RÉSULTATS : un article trouvé hors du
+                    // périmètre du flux n'avait aucun voisin et le geste revenait à la liste.
+                    { a -> vm.openArticleWith(vm.searchResults.map { it.id }); onOpen(a) },
+                    vm,
                     showSource = vm.searchScope.feedId == null
                 )
             }
@@ -222,6 +226,10 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     val scope = rememberCoroutineScope()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val totalDup = vm.dups.sumOf { it.size - 1 }
+    // Balayage de l'article : la liste des doublons affichés, dans l'ordre de l'écran (une
+    // retombée est souvent hors du périmètre du flux principal — sans voisins, le geste revenait
+    // aussitôt à la liste).
+    val dupIds = remember(vm.dups) { vm.dups.flatten().map { it.id } }
     // Analyse en cours : le bouton se désactive et affiche un spinner tant que le scan n'est pas
     // fini (sans cela, deux appuis lançaient deux analyses concurrentes).
     var scanning by remember { mutableStateOf(false) }
@@ -312,7 +320,11 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                             Modifier.fillMaxWidth().padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(Modifier.weight(1f).clickable { onOpen(a) }) {
+                            Column(
+                                Modifier.weight(1f).clickable {
+                                    vm.openArticleWith(dupIds); onOpen(a)
+                                }
+                            ) {
                                 Text(
                                     com.pressia.data.remote.cleanTitle(a.title).take(60), maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     fontWeight = if (newest) FontWeight.Bold else FontWeight.Normal

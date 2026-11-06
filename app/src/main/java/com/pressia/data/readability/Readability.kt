@@ -1,5 +1,6 @@
 package com.pressia.data.readability
 
+import com.pressia.data.exceedsCap
 import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -71,6 +72,8 @@ object Readability {
             client.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) return@withContext FullResult.Failed
                 val body = r.body ?: return@withContext FullResult.Failed
+                // Taille annoncée : échouer avant de lire (une page de 200 Mo n'a pas à défiler).
+                if (exceedsCap(body.contentLength(), MAX_PAGE_BYTES)) return@withContext FullResult.Failed
                 // Plafond : une page énorme (archive, image encodée, réponse sans fin) partait
                 // entière en mémoire puis dans jsoup. Au-delà, l'extraction est un échec.
                 val bytes = readCapped(body.byteStream(), MAX_PAGE_BYTES)

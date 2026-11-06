@@ -43,9 +43,28 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  * message de commit. Le numéro de version, lui, avance tout seul au build suivant
  * (`version.properties`) ; c'est donc la version affichée par [ChangelogScreen] qu'il faut
  * reprendre dans l'entrée. L'historique d'avant le journal (208 commits) est dans
- * [CHANGELOG_HISTORY], généré une fois depuis `git log` et à ne plus modifier.
+ * [changelogHistory], généré une fois depuis `git log` et à ne plus modifier — il n'est lu qu'à
+ * l'ouverture de la page ([changelog] n'est pas une constante chargée au démarrage).
  */
-val CHANGELOG: List<ChangelogEntry> = listOf(
+fun changelog(): List<ChangelogEntry> = listOf(
+    ChangelogEntry(
+        "1.0.35",
+        listOf(
+            ChangelogItem(
+                "2026-11-06",
+                "File montante vidée jusqu'au bout, balayage Recherche et Doublons, plafonds",
+                "La file des modifications en attente n'a plus de plafond de pages : elle est " +
+                    "poussée jusqu'à ce qu'elle soit vide (un gros marquage groupé ne reste plus " +
+                    "aux trois quarts en attente). Le balayage d'un article ouvert depuis la " +
+                    "Recherche ou les Doublons suit désormais la liste de l'écran, comme les " +
+                    "Favoris. Les titres de vidéos YouTube sont gardés en cache borné (200) au " +
+                    "lieu de s'accumuler. Un flux ou une page dont la taille annoncée dépasse le " +
+                    "plafond est refusé avant même d'être téléchargé. Le journal des modifications " +
+                    "n'est plus construit qu'à l'ouverture de sa page.",
+                time = "22:58"
+            )
+        )
+    ),
     ChangelogEntry(
         "1.0.34",
         listOf(
@@ -652,7 +671,7 @@ val CHANGELOG: List<ChangelogEntry> = listOf(
                     "de l'application : plus besoin d'y penser.",
                 time = "01:29"
             )
-        ) + CHANGELOG_HISTORY
+        ) + changelogHistory()
     )
 )
 
@@ -664,7 +683,11 @@ val CHANGELOG: List<ChangelogEntry> = listOf(
 fun ChangelogScreen() {
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }
-    val total = remember { CHANGELOG.sumOf { it.items.size } }
+    // Journal (et son historique de 208 entrées) construit **à l'ouverture de cette page**, et
+    // seulement retenu tant qu'elle est affichée : la liste repart à la fermeture, rien ne reste
+    // en mémoire pour une page consultée une fois.
+    val entries = remember { changelog() }
+    val total = remember { entries.sumOf { it.items.size } }
     val listState = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp)) {
@@ -704,7 +727,7 @@ fun ChangelogScreen() {
                 state = listState,
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp)
             ) {
-                CHANGELOG.forEach { entry ->
+                entries.forEach { entry ->
                     item {
                         Text(
                             "Version ${entry.version}",

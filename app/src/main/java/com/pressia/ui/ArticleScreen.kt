@@ -1901,8 +1901,23 @@ private class PlayerFullscreen {
     }
 }
 
-/** Titres déjà obtenus (oEmbed) : une vidéo vue une fois ne redemande rien. */
-private val youtubeTitles = java.util.concurrent.ConcurrentHashMap<String, String>()
+/**
+ * Titres déjà obtenus (oEmbed) : une vidéo vue une fois ne redemande rien.
+ *
+ * **Borné** comme les autres caches de session : un parcours d'articles vidéo en accumulait un
+ * par vidéo rencontrée, pour la vie du processus. Au-delà de [YOUTUBE_TITLES_MAX], les titres les
+ * moins récemment demandés partent (LRU par accès) ; un titre oublié se redemande, il n'est pas
+ * perdu.
+ */
+private const val YOUTUBE_TITLES_MAX = 200
+private val youtubeTitles: MutableMap<String, String> =
+    java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, String>(16, 0.75f, true) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, String>?
+            ): Boolean = size > YOUTUBE_TITLES_MAX
+        }
+    )
 
 /**
  * Titre d'une vidéo YouTube, par oEmbed — la seule source publique qui ne réclame pas de clé

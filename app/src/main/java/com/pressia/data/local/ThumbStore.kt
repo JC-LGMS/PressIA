@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import com.pressia.data.exceedsCap
 import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -98,6 +99,8 @@ object ThumbStore {
                     .execute().use { resp ->
                         if (!resp.isSuccessful) return@withContext false
                         val body = resp.body ?: return@withContext false
+                        // Taille annoncée au-delà du plafond : inutile de la télécharger.
+                        if (exceedsCap(body.contentLength(), MAX_SOURCE_BYTES)) return@withContext false
                         // Plafond : charger 10 Mo en RAM pour une vignette de ~100 Ko ne sert à rien.
                         readCapped(body.byteStream(), MAX_SOURCE_BYTES)?.takeIf { it.isNotEmpty() }
                             ?: return@withContext false
