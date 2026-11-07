@@ -134,7 +134,13 @@ fun SubscriptionsScreen(
                 },
                 modifier = Modifier.fillMaxSize().graphicsLayer { translationX = swipe.drag }
             ) {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    // Les boutons haut/bas flottent en bas au centre : sans cette marge, le
+                    // dernier flux restait dessous et ne pouvait pas être vu en entier.
+                    contentPadding = PaddingValues(bottom = 72.dp)
+                ) {
                     if (vm.subs.isEmpty() && vm.loaded && !vm.syncing) {
                         item {
                             Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

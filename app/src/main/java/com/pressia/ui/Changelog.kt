@@ -48,6 +48,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.40",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Accueil : espace sous le dernier flux ; flux local déjà abonné ; synchro locale nommée",
+                "- Accueil : 72 dp de marge en bas de la liste, le dernier flux ne passe plus sous " +
+                    "les boutons haut/bas.\n" +
+                    "- Ajout d'un flux local : une URL déjà abonnée ne fait plus rien (ni " +
+                    "déplacement de dossier, ni resynchronisation) et le dit (toast dans Comptes, " +
+                    "message sous le champ).\n" +
+                    "- Synchro des flux locaux : le bandeau nomme le flux reçu au fil de l'eau " +
+                    "(« Réception des articles… (flux locaux 2/3 : MiniMachines.net) ») et affiche " +
+                    "le nombre d'images téléchargées, comme pour les agrégateurs.\n" +
+                    "- AGENTS.md : chemin du JDK 17 complet (la copie 17.0.20.1 n'a plus javac).",
+                time = "21:34"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.39",
         listOf(
             ChangelogItem(

@@ -200,6 +200,19 @@ fun syncActionRuns(actions: List<SyncActionEntity>): List<List<SyncActionEntity>
 }
 
 /**
+ * Résultat de l'ajout d'un flux RSS local.
+ *
+ * [AlreadyExists] évite deux dégâts de l'ancien `upsert` : le flux était rangé dans le
+ * dossier demandé (déplacé au passage) et sa première synchronisation était relancée en
+ * entier, alors que rien ne manquait.
+ */
+sealed interface LocalFeedAdd {
+    data class Added(val id: String) : LocalFeedAdd
+    data object AlreadyExists : LocalFeedAdd
+    data object InvalidUrl : LocalFeedAdd
+}
+
+/**
  * Cibles d'un segment de « tout marquer lu » : les flux listés, et/ou tout le compte.
  *
  * Une ligne **sans flux** (`feedId` nul ou vide) est un « tout le compte » (vue « Tous les
@@ -1261,7 +1274,13 @@ class PressRepository(
             // interne (« feed/… ») que le lecteur local ne sait pas interroger.
             local.feeds = repairLocalFeeds(dao.subscriptions().filter { isLocalProvider(it.provider) })
             if (local.feeds.isNotEmpty()) onSource?.invoke("flux locaux")
+            // Un flux nommé au fil de la réception : sans cela le bandeau restait sur
+            // « flux locaux » pendant que plusieurs dizaines de flux défilaient.
+            local.onFeed = { label, done, total ->
+                syncStep.value = "Réception des articles… (flux locaux $done/$total : $label)"
+            }
             val page = local.stream(null, feedId, categoryId, max)
+            local.onFeed = null
             android.util.Log.i("PressIA", "flux locaux : ${local.feeds.size} flux interrogés, ${page.articles.size} articles")
             // Nom du flux : il remplace l'URL, seule étiquette possible d'un flux saisi à la main
             // (« youtube.com » → « Talks with a Spy »).
@@ -1309,8 +1328,9 @@ class PressRepository(
         // pas la fin de la synchronisation. Les listes d'articles, elles, sont réactives.
         pokeLists()
         // Les images peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
-        // par défaut elles suivent les articles, comme avant.
-        if (withThumbs) syncImages()
+        // par défaut elles suivent les articles, comme avant. Le compteur s'affiche aussi ici
+        // (ajout d'un flux local), sinon la première synchronisation restait muette des minutes.
+        if (withThumbs) syncImages { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
         android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
         added
     }
@@ -2948,14 +2968,17 @@ class PressRepository(
      * `…%00`, le serveur répondait 404, et le flux restait vide sans le moindre message.
      * Une URL d'un autre protocole que http(s) est refusée.
      */
-    suspend fun addLocalFeed(url: String, folderId: String? = null): String? = withContext(Dispatchers.IO) {
+    suspend fun addLocalFeed(url: String, folderId: String? = null): LocalFeedAdd = withContext(Dispatchers.IO) {
         val link = sanitizeFeedUrl(url)
-        if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext null
+        if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext LocalFeedAdd.InvalidUrl
+        // Même identifiant = même flux (l'identifiant d'un flux local est son URL) : ne rien
+        // toucher, ni le dossier, ni les articles déjà reçus.
+        if (dao.subscription(link) != null) return@withContext LocalFeedAdd.AlreadyExists
         dao.upsertSubscriptions(
             listOf(SubscriptionEntity(id = link, title = link, url = link, siteUrl = link, provider = LOCAL_PROVIDER))
         )
         if (folderId != null) dao.moveFeeds(listOf(link), folderId)
-        link
+        LocalFeedAdd.Added(link)
     }
 
     /**

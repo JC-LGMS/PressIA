@@ -275,7 +275,9 @@ fun LoginScreen(
                 scope.launch {
                     vm.addLocalFeed(url) { res ->
                         msg = res.message
-                        if (res.added) rssUrl = ""
+                        // Un flux déjà abonné (ou refusé) ne change rien : le toast le dit,
+                        // l'URL saisie reste en place pour être corrigée.
+                        if (res.added) rssUrl = "" else toast(ctx, res.message)
                     }
                 }
             },

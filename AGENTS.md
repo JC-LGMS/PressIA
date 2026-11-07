@@ -27,7 +27,7 @@ tools temporaire :
 
 | Outil | Chemin |
 |---|---|
-| JDK 17 | `%LOCALAPPDATA%\Temp\opencode\tools\jdk-17.0.20.1+1` |
+| JDK 17 | `%LOCALAPPDATA%\Temp\opencode\tools\jdk-17.0.21+9` (la copie `jdk-17.0.20.1+1` n'a plus `javac`, KSP échoue : « does not provide the required capabilities: [JAVA_COMPILER] ») |
 | Gradle 8.7 | `%LOCALAPPDATA%\Temp\opencode\tools\gradle-8.7\bin\gradle.bat` |
 | Android SDK | `%LOCALAPPDATA%\Android\Sdk` (cf. `local.properties`) |
 | adb | `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe` |
@@ -42,7 +42,7 @@ dépôt de distributions : `~\.gradle\wrapper\dists\gradle-8.10.2-bin\<haché>\g
 Préambule PowerShell avant tout appel Gradle :
 
 ```powershell
-$env:JAVA_HOME = "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.20.1+1"
+$env:JAVA_HOME = "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.21+9"
 $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 $g = "$env:LOCALAPPDATA\Temp\opencode\tools\gradle-8.7\bin\gradle.bat"
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
@@ -813,6 +813,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   l'enregistrement **et** cette sync (bouton désactivé, `done` appelé dans tous les cas) — sans
   quoi l'ajout restait muet pendant le premier téléchargement et un second appui relançait tout.
   `SubscriptionsScreen` (ajout dans un dossier) ferme sa boîte de dialogue et signale par un toast.
+  Une URL **déjà abonnée** ne fait rien (`LocalFeedAdd.AlreadyExists` : ni déplacement de dossier,
+  ni resynchronisation) et le dit — toast dans Comptes, message sous le champ.
+- **Synchro des flux locaux** : `LocalProvider.onFeed` est appelé à chaque flux reçu (8 en
+  parallèle, compteur des flux terminés) et `syncDown` en fait « Réception des articles… (flux
+  locaux 2/3 : MiniMachines.net) ». Les miniatures de `syncDown(withThumbs = true)` (ajout d'un
+  flux) publient leur compteur dans `syncStep` comme le pipeline — sans cela la première synchro
+  restait muette pendant le téléchargement des images.
+- Listes : les boutons haut/bas flottent en bas au centre, les listes qui en ont laissent 72 dp de
+  `contentPadding` sous le dernier élément (articles, Accueil) pour qu'il reste lisible.
 - Périmètre orphelin (`MainActivity`) : quand le flux ou le dossier courant vient d'être supprimé
   depuis un autre écran (compte déconnecté, flux désabonné), un `LaunchedEffect` remet le périmètre
   sur « Tous les articles » et `lastContent` sur l'accueil — sinon le retour arrière remontait sur

@@ -517,6 +517,11 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
 class LocalProvider : FeedProvider {
     override val id = "local"
     var feeds: List<SubscriptionEntity> = emptyList() // injecté depuis Room
+    /**
+     * Appelé à chaque flux terminé (libellé, rang, total) : le bandeau de synchro nomme le
+     * flux en cours. Les flux partent 8 en parallèle, l'ordre d'arrivée varie.
+     */
+    var onFeed: ((label: String, done: Int, total: Int) -> Unit)? = null
     override suspend fun categories(token: String?) = emptyList<CategoryEntity>()
     override suspend fun subscriptions(token: String?) = feeds
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
@@ -527,6 +532,7 @@ class LocalProvider : FeedProvider {
         // voulu, le parallélisme borné suffit à tenir le rythme (un `take(30)` en laissait
         // silencieusement une partie sans articles).
         val permits = Semaphore(8)
+        val done = java.util.concurrent.atomic.AtomicInteger(0)
         val results = coroutineScope {
             targets.map { f ->
                 async {
@@ -535,6 +541,7 @@ class LocalProvider : FeedProvider {
                         // Un flux qui échoue ne doit pas disparaître dans le silence : c'est
                         // ainsi qu'une URL enregistrée avec un caractère parasite restait invisible.
                         if (res.error != null) android.util.Log.w("PressIA", "flux local ${f.id} : ${res.error}")
+                        onFeed?.invoke(f.title.ifBlank { f.id }, done.incrementAndGet(), targets.size)
                         res
                     }
                 }

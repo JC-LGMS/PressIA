@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
+import com.pressia.data.LocalFeedAdd
 import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
 import com.pressia.data.rateLimitMessage
@@ -562,19 +563,23 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         localFeedAdding = true
         var result = LocalFeedResult(false, "Flux non ajouté.")
         try {
-            val link = repo.addLocalFeed(url, folderId)
-            if (link == null) {
-                result = LocalFeedResult(false, "URL de flux invalide (http ou https attendu).")
-            } else {
-                lockSync()
-                try {
-                    syncMsg = "Réception des articles du nouveau flux…"
-                    repo.syncDown(link)
-                    val n = repo.countArticlesOfFeed(link)
-                    result = if (n > 0) LocalFeedResult(true, "Flux ajouté et synchronisé ($n articles).")
-                    else LocalFeedResult(true, "Flux ajouté, mais aucun article reçu : l'URL est-elle exacte ?")
-                } finally {
-                    unlockSync()
+            when (val added = repo.addLocalFeed(url, folderId)) {
+                LocalFeedAdd.InvalidUrl ->
+                    result = LocalFeedResult(false, "URL de flux invalide (http ou https attendu).")
+                LocalFeedAdd.AlreadyExists ->
+                    result = LocalFeedResult(false, "Ce flux est déjà abonné.")
+                is LocalFeedAdd.Added -> {
+                    val link = added.id
+                    lockSync()
+                    try {
+                        syncMsg = "Réception des articles du nouveau flux…"
+                        repo.syncDown(link)
+                        val n = repo.countArticlesOfFeed(link)
+                        result = if (n > 0) LocalFeedResult(true, "Flux ajouté et synchronisé ($n articles).")
+                        else LocalFeedResult(true, "Flux ajouté, mais aucun article reçu : l'URL est-elle exacte ?")
+                    } finally {
+                        unlockSync()
+                    }
                 }
             }
         } finally {
