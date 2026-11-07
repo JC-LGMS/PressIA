@@ -833,7 +833,10 @@ class PressRepository(
         val ids = resolveCategoryIds(categoryId).orEmpty()
         if (ids.isEmpty()) return@withContext
         val cats = dao.categories().filter { it.id in ids }
-        if (cats.isEmpty()) return@withContext dao.moveFeeds(feedIds, ids.first())
+        // Un identifiant affiché peut ne plus exister (dossier fusionné recomposé, dossier
+        // supprimé depuis un autre écran) : l'écrire tel quel dans `subscriptions.categoryId`
+        // violait la clé étrangère et faisait planter l'application.
+        if (cats.isEmpty()) return@withContext
         val subs = dao.subscriptions().filter { it.id in feedIds }.associateBy { it.id }
         feedIds.forEach { feedId ->
             val owner = subs[feedId]?.provider ?: LOCAL_PROVIDER
@@ -2977,7 +2980,10 @@ class PressRepository(
         dao.upsertSubscriptions(
             listOf(SubscriptionEntity(id = link, title = link, url = link, siteUrl = link, provider = LOCAL_PROVIDER))
         )
-        if (folderId != null) dao.moveFeeds(listOf(link), folderId)
+        // Par le chemin commun : un dossier affiché peut être fusionné (`merged:…`), et son
+        // identifiant n'existe pas dans `categories` — l'écrire tel quel faisait planter
+        // l'application sur la clé étrangère.
+        if (folderId != null) moveFeedsToFolder(listOf(link), folderId)
         LocalFeedAdd.Added(link)
     }
 

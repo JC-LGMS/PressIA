@@ -48,6 +48,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.41",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Ajout d'un flux local dans un dossier fusionné : plus de plantage",
+                "L'ajout écrivait le dossier choisi tel quel dans subscriptions.categoryId, alors " +
+                    "qu'un dossier fusionné n'a pas d'identifiant en base (« merged:informatique ») : " +
+                    "la clé étrangère refusait l'écriture et l'application se fermait " +
+                    "(SQLiteConstraintException). L'ajout passe désormais par le déplacement commun " +
+                    "(moveFeedsToFolder), qui retrouve le dossier réel du flux et le crée en local " +
+                    "s'il n'existe que chez un compte ; un identifiant devenu inconnu ne fait " +
+                    "simplement plus rien au lieu de faire planter la base.",
+                time = "22:27"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.40",
         listOf(
             ChangelogItem(
