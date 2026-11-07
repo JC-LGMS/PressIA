@@ -48,6 +48,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.39",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Marquer lu : la file montante se vide enfin (réponses texte d'Inoreader)",
+                "Les deux appels d'Inoreader qui répondent en texte brut — edit-tag (« OK ») et le " +
+                    "jeton CSRF — étaient déclarés en String, donc confiés au convertisseur JSON : " +
+                    "chaque poussée d'un lu échouait sur JsonDecodingException alors que le serveur " +
+                    "avait bien appliqué le marquage. La ligne restait dans la file, réessayée à " +
+                    "chaque synchro sans jamais aboutir, et le lu local était repris par la " +
+                    "synchronisation suivante. edit-tag ne rend plus rien (Unit) et le jeton CSRF " +
+                    "est lu en texte ; un échec de poussée est désormais journalisé au lieu de " +
+                    "rester muet. Constaté en direct sur une session cookie Inoreader.",
+                time = "16:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.38",
         listOf(
             ChangelogItem(

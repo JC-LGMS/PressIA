@@ -373,7 +373,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
             // Le jeton CSRF de l'endpoint est cherché avec le même en-tête : il va de pair
             // avec le jeton d'accès, pas avec lui. Il vaut pour la session : le redemander à
             // chaque article doublait les requêtes (un GET token + un POST edit-tag par article).
-            val t = try { api.token(h) } catch (_: Exception) { "" }
+            val t = try { api.token(h).string().trim() } catch (_: Exception) { "" }
             ids.forEach { api.editTag(h, it, add, remove, t) }
         }
     }

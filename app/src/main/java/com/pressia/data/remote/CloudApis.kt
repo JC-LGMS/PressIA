@@ -4,6 +4,7 @@ import com.pressia.BuildConfig
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -131,6 +132,10 @@ interface InoreaderService {
         /** État à exclure (ex. `user/-/state/com.google/read` = non-lus seuls). */
         @Query("xt") xt: String? = null
     ): InoreaderStream
+    // Réponse texte (« OK »), pas du JSON : `Unit` laisse Retrofit la consommer tel quel.
+    // Déclarée `String`, elle passait par le convertisseur kotlinx et levait une
+    // JsonDecodingException — la ligne restait dans la file alors que le serveur avait
+    // bien marqué l'article (constaté en direct sur une session cookie).
     @FormUrlEncoded @POST("reader/api/0/edit-tag")
     suspend fun editTag(
         @HeaderMap h: Map<String, String>,
@@ -138,9 +143,10 @@ interface InoreaderService {
         @Field("a") add: String? = null,
         @Field("r") remove: String? = null,
         @Field("T") token: String
-    ): String
+    )
+    /** Jeton CSRF : texte nu, d'où `ResponseBody` (le convertisseur JSON le refuserait). */
     @GET("reader/api/0/token")
-    suspend fun token(@HeaderMap h: Map<String, String>): String
+    suspend fun token(@HeaderMap h: Map<String, String>): ResponseBody
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
     suspend fun userInfo(@HeaderMap h: Map<String, String>): InoreaderUserInfo

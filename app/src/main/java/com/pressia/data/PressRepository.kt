@@ -2435,6 +2435,7 @@ class PressRepository(
                 clearAccountExpired(account.id)
             }
             suspend fun postpone(rows: List<SyncActionEntity>, e: Throwable) {
+                android.util.Log.w("PressIA", "file: ${rows.size} ${rows.firstOrNull()?.kind} reportée : ${e::class.java.simpleName} ${e.message}")
                 noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
                 rows.forEach { dao.bumpTry(it.rowId) }
