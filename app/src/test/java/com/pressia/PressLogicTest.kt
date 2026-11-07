@@ -127,6 +127,23 @@ class PressLogicTest {
         assertTrue(isSupportedFeedUrl(sanitizeFeedUrl("ex.com/flux.xml")))
         assertFalse(isSupportedFeedUrl("ftp://ex.com/flux.xml"))
     }
+    @Test fun `note des images manquantes en fin de synchro`() {
+        // Une image en timeout ne fait pas échouer la synchro : le message nomme les flux.
+        assertNull(com.pressia.data.imageFailureNote(emptyList(), interrupted = false))
+        assertEquals(
+            ". Images non récupérées : FrAndroid",
+            com.pressia.data.imageFailureNote(listOf("FrAndroid"), interrupted = false)
+        )
+        assertEquals(
+            ". Images non récupérées : A, B, C, D et 2 autre(s) flux",
+            com.pressia.data.imageFailureNote(listOf("A", "B", "C", "D", "E", "F"), interrupted = false)
+        )
+        assertEquals(
+            ". Images non récupérées (téléchargement interrompu)",
+            com.pressia.data.imageFailureNote(emptyList(), interrupted = true)
+        )
+    }
+
     @Test fun `html d article plafonne a l ecriture`() {
         // Une ligne plus grosse que la fenêtre de curseur d'Android (~2 Mo) rend la requête
         // illisible : « Couldn't read row 54, col 0 from CursorWindow » sur la liste d'articles.

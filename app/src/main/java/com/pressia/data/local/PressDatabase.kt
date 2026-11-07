@@ -353,7 +353,7 @@ interface PressDao {
      * lourdes (`summary`, `content`) sont lues ici exprès : c'est de là que sortent les images
      * du corps, que l'index couvrant ne contient pas.
      */
-    @Query("SELECT id, imageUrl, url, summary, content FROM articles WHERE imageCached = 0 ORDER BY published DESC")
+    @Query("SELECT id, feedId, feedTitle, imageUrl, url, summary, content FROM articles WHERE imageCached = 0 ORDER BY published DESC")
     suspend fun articlesPendingImages(): List<PendingArticleImages>
     /** Toutes les miniatures déclarées : sert au nettoyage des fichiers locaux orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
@@ -584,6 +584,9 @@ data class ArticleMedia(val imageUrl: String?, val url: String, val summary: Str
 /** Article dont les images restent à récupérer (voir [PressDao.articlesPendingImages]). */
 data class PendingArticleImages(
     val id: String,
+    val feedId: String = "",
+    /** Titre du flux figé à l'enregistrement : sert à nommer un flux dont une image échoue. */
+    val feedTitle: String = "",
     val imageUrl: String?,
     val url: String,
     val summary: String?,

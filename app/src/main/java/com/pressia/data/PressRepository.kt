@@ -1183,6 +1183,19 @@ class PressRepository(
         private set
 
     /**
+     * Flux dont les images n'ont pas pu être récupérées par la dernière passe ([syncImages]) :
+     * un timeout, un 404 ou une image illisible ne fait **pas** échouer la synchronisation —
+     * l'heure de synchro est mise à jour, le message final cite seulement les flux concernés.
+     * Vide = tout est passé.
+     */
+    @Volatile var imageFailures: List<String> = emptyList()
+        private set
+
+    /** La passe images s'est interrompue sur une erreur inattendue : dite au message final. */
+    @Volatile var imagesInterrupted: Boolean = false
+        private set
+
+    /**
      * Mémorise un 429 (avec son `Retry-After`) sans avaler l'erreur : les échecs par compte
      * restent contenus, mais le message final dira que la synchro n'a pas pu avoir lieu.
      */
@@ -1220,6 +1233,9 @@ class PressRepository(
         // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
         // en cours, lu par le message final.
         syncRateLimit = null
+        // Passe précédente : le message final ne doit pas reparler de ses flux en échec.
+        imageFailures = emptyList()
+        imagesInterrupted = false
         val t0 = System.currentTimeMillis()
         try {
         if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
@@ -1233,7 +1249,7 @@ class PressRepository(
         if (withThumbs) syncStep.value = "Téléchargement des images…"
         supervisorScope {
             val thumbs = async {
-                if (withThumbs) syncImages { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
+                if (withThumbs) syncImagesSafely { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
             }
             val later = async { syncReadLater() }
             thumbs.await()
@@ -1336,7 +1352,7 @@ class PressRepository(
         // Les images peuvent être sorties pour annoncer leur propre étape (synchro manuelle) :
         // par défaut elles suivent les articles, comme avant. Le compteur s'affiche aussi ici
         // (ajout d'un flux local), sinon la première synchronisation restait muette des minutes.
-        if (withThumbs) syncImages { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
+        if (withThumbs) syncImagesSafely { done, total -> syncStep.value = "Téléchargement des images… $done/$total" }
         android.util.Log.i("PressIA", "syncDown: $added nouveaux en ${System.currentTimeMillis() - t0} ms")
         added
     }
@@ -1394,10 +1410,27 @@ class PressRepository(
         imagesMutex.withLock { syncImagesLocked(onProgress) }
 
     /**
+     * Passe images **non bloquante** : une erreur inattendue (base, verrou, réponse illisible) est
+     * journalisée et signalée au message final, mais ne fait pas échouer la synchronisation.
+     * Les timeouts d'une image, eux, sont déjà comptés par flux dans [imageFailures] ; l'heure de
+     * synchro doit avancer dès lors que les articles et le reste sont passés.
+     */
+    private suspend fun syncImagesSafely(onProgress: ((done: Int, total: Int) -> Unit)? = null) {
+        runCatching { syncImages(onProgress) }.onFailure { e ->
+            if (e is CancellationException) throw e
+            imagesInterrupted = true
+            android.util.Log.e("PressIA", "images non récupérées", e)
+        }
+    }
+
+    /**
      * Corps de [syncImages], sous son verrou (voir [imagesMutex]) : jamais deux passes en
      * parallèle sur les mêmes articles.
      */
     private suspend fun syncImagesLocked(onProgress: ((done: Int, total: Int) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
+        // Résultat de la passe précédente : chaque passe repart d'une ardoise propre.
+        imageFailures = emptyList()
+        imagesInterrupted = false
         if (!imagesAllowed()) return@withContext 0
         val rows = dao.articlesPendingImages()
         if (rows.isEmpty()) return@withContext 0
@@ -1454,9 +1487,16 @@ class PressRepository(
         // Marquage groupé, article par article : un article dont une seule image manque reste
         // en attente (elle serait sinon jamais reprise). Une requête par paquet.
         val okUrls = work.filterIndexed { i, _ -> done[i] }.mapTo(HashSet()) { it.first }
-        perArticle.filter { (_, urls) ->
+        val complete = perArticle.filter { (_, urls) ->
             urls.all { it in okUrls || ThumbStore.cachedFile(ctx, it) != null }
-        }.map { (id, _) -> id }.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+        }.mapTo(HashSet()) { (id, _) -> id }
+        complete.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+        // Flux dont une image a échoué (timeout le plus souvent) : le message de fin de synchro
+        // les nomme — la synchronisation, elle, reste réussie.
+        imageFailures = rows.filter { it.id !in complete }
+            .map { it.feedTitle.ifBlank { it.feedId } }
+            .filter { it.isNotBlank() }
+            .distinct()
         done.count { it }
     }
 
@@ -3146,6 +3186,23 @@ fun mergeIncomingArticle(
         unread = if (keepLocalRead) prev.unread else incoming.unread,
         readAt = if (keepLocalRead) prev.readAt else incoming.readAt
     )
+}
+
+/**
+ * Note du message de fin de synchro quand des images manquent : `null` si tout est passé.
+ *
+ * Une image en timeout (ou en 404) ne fait **pas** échouer la synchronisation : l'heure de
+ * synchro avance quand les articles et le reste sont passés, et la note ne fait que nommer les
+ * flux concernés — au-delà de quatre, en abrégé pour ne pas noyer le message. Pure, testée.
+ */
+fun imageFailureNote(feeds: List<String>, interrupted: Boolean): String? = when {
+    interrupted -> ". Images non récupérées (téléchargement interrompu)"
+    feeds.isEmpty() -> null
+    else -> {
+        val shown = feeds.take(4).joinToString(", ")
+        val more = if (feeds.size > 4) " et ${feeds.size - 4} autre(s) flux" else ""
+        ". Images non récupérées : $shown$more"
+    }
 }
 
 data class AccountInfo(

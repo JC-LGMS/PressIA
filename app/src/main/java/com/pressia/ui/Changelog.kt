@@ -48,6 +48,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.46",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Images en timeout : les flux concernés sont nommés, la synchro reste réussie",
+                "Une image qui n'arrive pas (timeout, 404…) ne fait plus passer la synchronisation " +
+                    "pour un échec : les articles et le reste étant passés, l'heure de dernière " +
+                    "synchronisation est mise à jour normalement, et le message de fin nomme les " +
+                    "flux dont une image manque (« Images non récupérées : FrAndroid, … », quatre " +
+                    "noms puis « et N autres flux »). La passe images elle-même est non bloquante : " +
+                    "une erreur inattendue est signalée sans interrompre la synchro.",
+                time = "00:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.45",
         listOf(
             ChangelogItem(

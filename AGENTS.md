@@ -429,6 +429,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   l'article — une image manquante le laisse en attente (elle sera reprise ; marquage par article,
   pas par URL). Appelé en fin de `syncDown` (`withThumbs = true`) et de `backfill` : **toute** sync
   (bouton, lancement, worker, connexion de compte) récupère les images.
+- **Un échec d'image ne fait pas échouer la synchronisation.** `syncImages` relève les flux dont un
+  article garde une image manquante (timeout, 404…) dans `imageFailures` ; le pipeline et l'ajout
+  d'un flux passent par `syncImagesSafely` (erreur inattendue journalisée, `imagesInterrupted`).
+  `LAST_SYNC_AT` avance dès que les articles et le reste sont passés, et `imageFailureNote` ajoute
+  au message final « Images non récupérées : Flux A, Flux B » (quatre noms, puis « et N autres
+  flux »). La projection `articlesPendingImages` porte `feedId`/`feedTitle` pour pouvoir les nommer.
 - **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
   parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
   téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).

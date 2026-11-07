@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
 import com.pressia.data.LocalFeedAdd
+import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
 import com.pressia.data.rateLimitMessage
@@ -692,11 +693,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Un 429 quelque part dans le pipeline : la synchro n'a rien pu récupérer (ou pas
         // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
         val rl = repo.syncRateLimit
-        if (n == 0 && rl != null) return rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
-        val base = if (n > 0) "$n nouvel${if (n > 1) "aux" else ""} article${if (n > 1) "s" else ""}"
-        else "Synchronisation terminée"
-        if (rl != null) return "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}"
-        return base
+        val base = when {
+            n > 0 -> "$n nouvel${if (n > 1) "aux" else ""} article${if (n > 1) "s" else ""}"
+            rl != null -> rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
+            else -> "Synchronisation terminée"
+        }
+        var msg = if (rl != null && n > 0) "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}" else base
+        // Images manquantes : la synchro reste réussie (l'heure a été mise à jour), le message
+        // nomme seulement les flux dont une image n'est pas arrivée (timeout, 404…).
+        msg += imageFailureNote(repo.imageFailures, repo.imagesInterrupted).orEmpty()
+        return msg
     }
 
     /** Échec commun manuel/lancement : une session connue comme expirée mérite mieux
