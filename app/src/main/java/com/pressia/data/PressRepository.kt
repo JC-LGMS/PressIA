@@ -1104,9 +1104,12 @@ class PressRepository(
             is Readability.FullResult.Ok -> {
                 // La version du flux est mise de côté avant d'être écrasée (voir le DAO) : c'est
                 // elle que « Revenir à l'extrait RSS » doit retrouver, pas le petit extrait.
-                dao.saveExtractedContent(id, r.html, fromFeed = !a.fullFetched)
+                // Le HTML est plafonné : une page de plusieurs Mo en base ferait échouer toute
+                // lecture de la ligne (fenêtre de curseur d'Android, ~2 Mo).
+                val html = capArticleHtml(r.html) ?: r.html
+                dao.saveExtractedContent(id, html, fromFeed = !a.fullFetched)
                 dao.logExtract(ExtractEventEntity(articleId = id, feedId = a.feedId, ok = true))
-                FullFetch(r.html, FullOutcome.OK)
+                FullFetch(html, FullOutcome.OK)
             }
             is Readability.FullResult.Blocked -> {
                 // Purge une extraction vérolée restée en cache — mais pas un contenu de flux :
@@ -2196,7 +2199,12 @@ class PressRepository(
         val tagged = if (needsTitle) {
             articles.map { a -> if (a.feedTitle.isBlank()) a.copy(feedTitle = feedTitles[a.feedId].orEmpty()) else a }
         } else articles
-        val merged = tagged.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs) }
+        // Le HTML est plafonné à l'écriture : une ligne plus grosse que la fenêtre de curseur
+        // d'Android (~2 Mo) rend la liste d'articles illisible (crash « CursorWindow »).
+        val capped = tagged.map { a ->
+            a.copy(summary = capArticleHtml(a.summary), content = capArticleHtml(a.content))
+        }
+        val merged = capped.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs) }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
         return fresh
@@ -3266,6 +3274,6 @@ fun buildDatabase(ctx: Context): PressDatabase =
         .addMigrations(
             PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3,
             PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5, PressDatabase.MIGRATION_5_6,
-            PressDatabase.MIGRATION_6_7
+            PressDatabase.MIGRATION_6_7, PressDatabase.MIGRATION_7_8
         )
         .build()

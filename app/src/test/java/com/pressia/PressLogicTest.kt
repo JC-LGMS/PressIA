@@ -8,6 +8,8 @@ import com.pressia.ui.keptIds
 import com.pressia.ui.KEEP_MAX
 import com.pressia.data.local.PrefEntry
 import com.pressia.data.local.Prefs
+import com.pressia.data.local.MAX_ARTICLE_HTML
+import com.pressia.data.local.capArticleHtml
 import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.OAuth
 import com.pressia.data.remote.feedlyGlobalStream
@@ -125,6 +127,17 @@ class PressLogicTest {
         assertTrue(isSupportedFeedUrl(sanitizeFeedUrl("ex.com/flux.xml")))
         assertFalse(isSupportedFeedUrl("ftp://ex.com/flux.xml"))
     }
+    @Test fun `html d article plafonne a l ecriture`() {
+        // Une ligne plus grosse que la fenêtre de curseur d'Android (~2 Mo) rend la requête
+        // illisible : « Couldn't read row 54, col 0 from CursorWindow » sur la liste d'articles.
+        assertNull(capArticleHtml(null))
+        assertEquals("court", capArticleHtml("court"))
+        assertEquals("", capArticleHtml(""))
+        val long = "a".repeat(MAX_ARTICLE_HTML + 10)
+        assertEquals(MAX_ARTICLE_HTML, capArticleHtml(long)!!.length)
+        assertEquals(MAX_ARTICLE_HTML, capArticleHtml("a".repeat(MAX_ARTICLE_HTML))!!.length)
+    }
+
     @Test fun `meme flux ecrit avec http ou une barre finale`() {
         // Même adresse, autre écriture : c'est le même flux, l'ajout doit être refusé comme
         // doublon (une base porte l'une, la saisie arrive avec l'autre).

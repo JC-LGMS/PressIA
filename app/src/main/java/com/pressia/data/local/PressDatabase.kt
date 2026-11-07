@@ -622,9 +622,25 @@ data class ReconcileState(val id: String, val unread: Boolean, val published: Lo
 /** Flux d'articles connus (file de sync à l'unité, voir `markArticlesRead`). */
 data class ArticleFeed(val id: String, val feedId: String)
 
+/**
+ * Plafond du HTML gardé par article (corps du flux ou extraction Readability), en caractères.
+ *
+ * Android lit les résultats SQLite par fenêtre de curseur d'environ 2 Mo : une **seule** ligne
+ * plus grosse que la fenêtre ne peut pas être relue, et la requête entière échoue —
+ * « Couldn't read row 54, col 0 from CursorWindow », constaté sur un téléphone avec la liste des
+ * articles (`streamFlow`). Une page extraite peut pourtant peser jusqu'à 8 Mo
+ * (`Readability.MAX_PAGE_BYTES`), et un flux livrer un corps énorme. 300 000 caractères tiennent
+ * largement sous la fenêtre avec l'extrait (`summary`), et couvrent un très long article.
+ */
+const val MAX_ARTICLE_HTML = 300_000
+
+/** Coupe un HTML d'article au plafond [MAX_ARTICLE_HTML] (null et textes courts inchangés). */
+fun capArticleHtml(html: String?): String? =
+    if (html == null || html.length <= MAX_ARTICLE_HTML) html else html.substring(0, MAX_ARTICLE_HTML)
+
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 7, exportSchema = false
+    version = 8, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -706,6 +722,26 @@ abstract class PressDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_articles_readAt` ON `articles` (`readAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_events_articleId` ON `reading_events` (`articleId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_events_openedAt` ON `reading_events` (`openedAt`)")
+            }
+        }
+
+        /**
+         * v7 → v8 : plafonne le HTML déjà en base. Les limites s'appliquent désormais à
+         * l'écriture ([capArticleHtml]), mais un corps enregistré avant peut dépasser la fenêtre
+         * de curseur d'Android et faire planter n'importe quelle liste d'articles. La coupe est
+         * faite une fois ; un article extrait repassera par Readability (plafonné lui aussi) à sa
+         * prochaine ouverture.
+         */
+        val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "UPDATE articles SET content = substr(content, 1, $MAX_ARTICLE_HTML), " +
+                        "fullFetched = 0 WHERE length(content) > $MAX_ARTICLE_HTML"
+                )
+                db.execSQL(
+                    "UPDATE articles SET summary = substr(summary, 1, $MAX_ARTICLE_HTML) " +
+                        "WHERE length(summary) > $MAX_ARTICLE_HTML"
+                )
             }
         }
     }

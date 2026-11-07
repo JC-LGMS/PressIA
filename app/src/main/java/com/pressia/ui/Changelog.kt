@@ -48,6 +48,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.43",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Liste d'articles : plus de fermeture sur un article au corps énorme (CursorWindow)",
+                "Android lit les résultats SQLite par fenêtre d'environ 2 Mo : un seul article dont " +
+                    "le HTML dépassait cette taille rendait la requête entière illisible — " +
+                    "« Couldn't read row 54, col 0 from CursorWindow » — et l'application se " +
+                    "fermait en affichant la liste. Le HTML est désormais plafonné à 300 000 " +
+                    "caractères à l'écriture (corps du flux comme extraction Readability), et une " +
+                    "migration coupe une fois les corps déjà enregistrés, pour les téléphones déjà " +
+                    "touchés.",
+                time = "22:56"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.42",
         listOf(
             ChangelogItem(
