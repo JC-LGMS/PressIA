@@ -48,6 +48,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.47",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Images : délai réseau ramené à 10 secondes",
+                "Les téléchargements d'images attendaient jusqu'à 30 s (durée totale) avant " +
+                    "d'abandonner : une seule image morte retenait la passe et la synchro. " +
+                    "Miniatures (`ThumbStore`) comme images du corps et favicons (client OkHttp de " +
+                    "Coil) sont désormais limitées à 10 s en connexion, en lecture et au total ; " +
+                    "une image qui ne répond pas est comptée en échec et son flux est nommé dans le " +
+                    "message de fin.",
+                time = "00:24"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.46",
         listOf(
             ChangelogItem(

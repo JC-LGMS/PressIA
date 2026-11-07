@@ -435,6 +435,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `LAST_SYNC_AT` avance dès que les articles et le reste sont passés, et `imageFailureNote` ajoute
   au message final « Images non récupérées : Flux A, Flux B » (quatre noms, puis « et N autres
   flux »). La projection `articlesPendingImages` porte `feedId`/`feedTitle` pour pouvoir les nommer.
+  **Délai réseau des images : 10 s** (connexion, lecture et durée totale) dans `ThumbStore` comme
+  dans le client OkHttp posé sur Coil (`PressIAApp`) : une image qui ne répond pas libère vite la
+  passe au lieu de la retenir 30 s.
 - **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
   parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
   téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).

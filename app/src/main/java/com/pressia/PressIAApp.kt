@@ -14,6 +14,15 @@ class PressIAApp : Application() {
         super.onCreate()
         Coil.setImageLoader {
             ImageLoader.Builder(this)
+                // Images du corps et favicons : même plafond que les miniatures (10 s), sinon
+                // une image qui traîne retient la synchro bien plus longtemps.
+                .okHttpClient {
+                    okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                }
                 .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.2).build() }
                 .respectCacheHeaders(false)
                 .build()

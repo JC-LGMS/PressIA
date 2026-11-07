@@ -38,9 +38,11 @@ object ThumbStore {
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .callTimeout(30, TimeUnit.SECONDS)
+            // Une image qui ne répond pas ne doit pas retenir une synchro : 10 s au total, et
+            // le flux est nommé dans le message de fin (voir `imageFailures`).
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
             .build()
     }
 
