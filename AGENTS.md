@@ -814,7 +814,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   quoi l'ajout restait muet pendant le premier téléchargement et un second appui relançait tout.
   `SubscriptionsScreen` (ajout dans un dossier) ferme sa boîte de dialogue et signale par un toast.
   Une URL **déjà abonnée** ne fait rien (`LocalFeedAdd.AlreadyExists` : ni déplacement de dossier,
-  ni resynchronisation) et le dit — toast dans Comptes, message sous le champ.
+  ni resynchronisation) et le dit — toast dans Comptes, message sous le champ. La comparaison
+  passe par `feedUrlKey` (`LocalRssFetcher`) : schéma, `www.` de tête, barres finales et casse
+  ne distinguent pas deux flux (le port et les paramètres restent comparés, en minuscules).
   Le rangement passe par `moveFeedsToFolder`, jamais par `dao.moveFeeds` direct : un dossier
   **fusionné** s'appelle `merged:…` et n'existe pas dans `categories`, l'écrire tel quel violait
   la clé étrangère et fermait l'application. `moveFeedsToFolder` ne déplace plus vers un

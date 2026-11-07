@@ -125,6 +125,21 @@ class PressLogicTest {
         assertTrue(isSupportedFeedUrl(sanitizeFeedUrl("ex.com/flux.xml")))
         assertFalse(isSupportedFeedUrl("ftp://ex.com/flux.xml"))
     }
+    @Test fun `meme flux ecrit avec http ou une barre finale`() {
+        // Même adresse, autre écriture : c'est le même flux, l'ajout doit être refusé comme
+        // doublon (une base porte l'une, la saisie arrive avec l'autre).
+        val ref = com.pressia.data.remote.feedUrlKey("https://www.minimachines.net/feed")
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("http://www.minimachines.net/feed/"))
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("https://www.minimachines.net/feed//"))
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("HTTPS://www.minimachines.net/feed"))
+        // Avec ou sans « www. » : même site, même flux.
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("https://minimachines.net/feed"))
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("HTTP://WWW.minimachines.net/feed/"))
+        // La casse non plus ne distingue deux flux.
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("https://WWW.MiniMachines.NET/FEED"))
+        // Le chemin, lui, reste distinct : deux flux peuvent cohabiter sur le même hôte.
+        assertNotEquals(ref, com.pressia.data.remote.feedUrlKey("https://www.minimachines.net/actu/feed"))
+    }
     @Test fun `atom youtube - miniature et description dans media group`() {
         // YouTube niche ses médias dans `media:group` : le parcours des enfants directs ne les
         // voyait pas — la miniature et le résumé de chaque vidéo restaient vides.

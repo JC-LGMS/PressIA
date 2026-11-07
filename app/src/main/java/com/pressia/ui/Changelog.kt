@@ -48,6 +48,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.42",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Un flux local déjà abonné est reconnu quelle que soit l'écriture de l'URL",
+                "La comparaison se faisait sur l'URL exacte : la même adresse saisie avec " +
+                    "« http:// » au lieu de « https:// », avec ou sans « www. », avec une barre " +
+                    "finale en plus ou une casse différente, était acceptée comme un nouveau flux — " +
+                    "deux lignes pour un seul flux, deux téléchargements, et les articles en double " +
+                    "dans les listes. La clé de comparaison (feedUrlKey) ignore le schéma, le " +
+                    "« www. » de tête, les barres finales et la casse : " +
+                    "« HTTP://MiniMachines.NET/Feed/ » et « https://www.minimachines.net/feed » " +
+                    "sont le même flux. Le port, le chemin et les paramètres restent dans la clé " +
+                    "(en minuscules) : deux flux distincts d'un même hôte restent séparés.",
+                time = "22:44"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.41",
         listOf(
             ChangelogItem(

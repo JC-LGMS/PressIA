@@ -57,6 +57,24 @@ fun sanitizeFeedUrl(raw: String): String {
 fun isSupportedFeedUrl(url: String): Boolean =
     url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
 
+/**
+ * Clé d'identité d'un flux local : la même adresse écrite autrement donne la même clé.
+ *
+ * Le schéma (`http://` / `https://`), le `www.` de tête, les barres finales et la **casse** ne
+ * distinguent pas deux flux — un serveur qui sert son RSS en clair le sert aussi en TLS,
+ * `www.exemple.fr` et `exemple.fr` mènent au même site, et `/feed` comme `/Feed` sont la même
+ * page pour la très grande majorité des serveurs. Sert au refus des doublons ; le port et les
+ * paramètres restent comparés, en minuscules eux aussi.
+ */
+fun feedUrlKey(url: String): String {
+    val t = url.trim()
+    val rest = if (t.contains("://")) t.substringAfter("://") else t
+    val host = rest.substringBefore('/')
+    val tail = rest.substringAfter('/', "")
+    val bare = if (host.startsWith("www.", ignoreCase = true)) host.substring(4) else host
+    return (if (tail.isEmpty()) bare else "$bare/$tail").trimEnd('/').lowercase()
+}
+
 /** Récupère directement un flux RSS/Atom — indépendant de tout cloud (ni Feedly Pro, ni quota). */
 object LocalRssFetcher {
     private val client = OkHttpClient.Builder()

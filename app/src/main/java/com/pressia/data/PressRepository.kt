@@ -2974,9 +2974,12 @@ class PressRepository(
     suspend fun addLocalFeed(url: String, folderId: String? = null): LocalFeedAdd = withContext(Dispatchers.IO) {
         val link = sanitizeFeedUrl(url)
         if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext LocalFeedAdd.InvalidUrl
-        // Même identifiant = même flux (l'identifiant d'un flux local est son URL) : ne rien
+        // Même adresse écrite autrement (http/https, barre finale) = même flux : ne rien
         // toucher, ni le dossier, ni les articles déjà reçus.
-        if (dao.subscription(link) != null) return@withContext LocalFeedAdd.AlreadyExists
+        val key = feedUrlKey(link)
+        if (dao.subscriptions().any { isLocalProvider(it.provider) && feedUrlKey(it.id) == key }) {
+            return@withContext LocalFeedAdd.AlreadyExists
+        }
         dao.upsertSubscriptions(
             listOf(SubscriptionEntity(id = link, title = link, url = link, siteUrl = link, provider = LOCAL_PROVIDER))
         )
