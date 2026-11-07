@@ -57,6 +57,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
     var showScope by remember { mutableStateOf(false) }
+    // Même vue que les listes (compacte / liste / carte / magazine) : la recherche est une liste
+    // d'articles comme les autres, elle suit le réglage d'affichage.
+    val viewMode by vm.viewMode.collectAsState()
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Première portée : celle du flux affiché (ensuite la recherche garde la sienne).
@@ -199,7 +202,7 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             key(vm.searchEpoch) {
                 ArticleList(
-                    vm.searchResults, "list",
+                    vm.searchResults, viewMode,
                     // Le balayage de l'article suit les RÉSULTATS : un article trouvé hors du
                     // périmètre du flux n'avait aucun voisin et le geste revenait à la liste.
                     { a -> vm.openArticleWith(vm.searchResults.map { it.id }); onOpen(a) },
@@ -618,6 +621,23 @@ private fun SettingsSection(title: String, first: Boolean = false) {
     )
 }
 
+/**
+ * Encadre un réglage — son libellé, son option et son explication — d'un fin liseré.
+ *
+ * Les Réglages sont une longue suite de lignes de texte : sans bordure, un interrupteur se lit
+ * avec le paragraphe du dessus ou du dessous. Chaque boîte isole une option et ce qu'elle change.
+ */
+@Composable
+private fun SettingBox(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        content = content
+    )
+}
+
 /** Réglages façon Press + sync. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -749,218 +769,246 @@ fun SettingsScreen(vm: PressVM) {
     Column(Modifier.padding(16.dp).verticalScroll(scroll).fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SettingsSection("Affichage", first = true)
-        Text("Thème de nuit (bouton Nuit du menu)")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("dark" to "Sombre", "amoled" to "AMOLED").forEach { (id, l) ->
-                FilterChip(night == id, { night = id; save() }, { Text(l) })
-            }
-        }
-        Text(
-            "Le menu n'offre que trois apparences : auto, jour et nuit. En mode nuit, c'est le thème " +
-                "choisi ici qui s'applique — AMOLED force un fond noir, plus sombre que le thème Sombre.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Couleur dominante")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            com.pressia.ui.theme.ACCENTS.forEach { (id, c) ->
-                val sel = accent == id
-                Box(
-                    Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(c)
-                        .border(
-                            width = if (sel) 3.dp else 1.dp,
-                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                            shape = androidx.compose.foundation.shape.CircleShape
-                        )
-                        .clickable { accent = id; save() }
-                )
-            }
-            val customAccent = accent.startsWith("#")
-            Box(
-                Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(if (customAccent) com.pressia.ui.theme.parseHexColor(accent) ?: MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant)
-                    .border(
-                        width = if (customAccent) 3.dp else 1.dp,
-                        color = if (customAccent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                        shape = androidx.compose.foundation.shape.CircleShape
-                    )
-                    .clickable { showAccentPicker = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Add, "couleur personnalisée")
-            }
-        }
-        Text("Couleur de fond")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            com.pressia.ui.theme.BACKGROUNDS.forEach { choice ->
-                val sel = bg == choice.id
-                val raw = com.pressia.ui.theme.resolveBackground(choice.id, dark = false)
-                val swatch = raw ?: MaterialTheme.colorScheme.surfaceVariant
-                Box(
-                    Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(swatch)
-                        .border(
-                            width = if (sel) 3.dp else 1.dp,
-                            color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                            shape = androidx.compose.foundation.shape.CircleShape
-                        )
-                        .clickable { bg = choice.id; save() },
-                    contentAlignment = androidx.compose.ui.Alignment.Center
-                ) {
-                    if (raw == null) Text("A", style = MaterialTheme.typography.labelLarge)
+        SettingBox {
+            Text("Thème de nuit (bouton Nuit du menu)")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("dark" to "Sombre", "amoled" to "AMOLED").forEach { (id, l) ->
+                    FilterChip(night == id, { night = id; save() }, { Text(l) })
                 }
             }
-            val customBg = bg.startsWith("#")
-            Box(
-                Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(if (customBg) com.pressia.ui.theme.parseHexColor(bg) ?: MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant)
-                    .border(
-                        width = if (customBg) 3.dp else 1.dp,
-                        color = if (customBg) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                        shape = androidx.compose.foundation.shape.CircleShape
+            Text(
+                "Le menu n'offre que trois apparences : auto, jour et nuit. En mode nuit, c'est le thème " +
+                    "choisi ici qui s'applique — AMOLED force un fond noir, plus sombre que le thème Sombre.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text("Couleur dominante")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.pressia.ui.theme.ACCENTS.forEach { (id, c) ->
+                    val sel = accent == id
+                    Box(
+                        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(c)
+                            .border(
+                                width = if (sel) 3.dp else 1.dp,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
+                            .clickable { accent = id; save() }
                     )
-                    .clickable { showBgPicker = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Add, "couleur personnalisée")
+                }
+                val customAccent = accent.startsWith("#")
+                Box(
+                    Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (customAccent) com.pressia.ui.theme.parseHexColor(accent) ?: MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant)
+                        .border(
+                            width = if (customAccent) 3.dp else 1.dp,
+                            color = if (customAccent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
+                        .clickable { showAccentPicker = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Add, "couleur personnalisée")
+                }
+            }
+        }
+        SettingBox {
+            Text("Couleur de fond")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.pressia.ui.theme.BACKGROUNDS.forEach { choice ->
+                    val sel = bg == choice.id
+                    val raw = com.pressia.ui.theme.resolveBackground(choice.id, dark = false)
+                    val swatch = raw ?: MaterialTheme.colorScheme.surfaceVariant
+                    Box(
+                        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(swatch)
+                            .border(
+                                width = if (sel) 3.dp else 1.dp,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                shape = androidx.compose.foundation.shape.CircleShape
+                            )
+                            .clickable { bg = choice.id; save() },
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        if (raw == null) Text("A", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                val customBg = bg.startsWith("#")
+                Box(
+                    Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (customBg) com.pressia.ui.theme.parseHexColor(bg) ?: MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant)
+                        .border(
+                            width = if (customBg) 3.dp else 1.dp,
+                            color = if (customBg) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
+                        .clickable { showBgPicker = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Add, "couleur personnalisée")
+                }
             }
         }
         SettingsSection("Accueil")
-        Text("Page de démarrage")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("subs" to "Accueil", "stream" to "Tous les articles").forEach { (id, l) ->
-                FilterChip(home == id, { home = id; save() }, { Text(l) })
+        SettingBox {
+            Text("Page de démarrage")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("subs" to "Accueil", "stream" to "Tous les articles").forEach { (id, l) ->
+                    FilterChip(home == id, { home = id; save() }, { Text(l) })
+                }
             }
         }
-        Text("Dossiers des comptes")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(mergeFolders, { mergeFolders = true; save() }, { Text("Fusionner") })
-            FilterChip(!mergeFolders, { mergeFolders = false; save() }, { Text("Séparer") })
+        SettingBox {
+            Text("Dossiers des comptes")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(mergeFolders, { mergeFolders = true; save() }, { Text("Fusionner") })
+                FilterChip(!mergeFolders, { mergeFolders = false; save() }, { Text("Séparer") })
+            }
+            Text(
+                if (mergeFolders)
+                    "Un seul dossier par nom commun à tous vos comptes, comme dans Feedly."
+                else
+                    "Un dossier par compte, même si deux comptes ont un dossier du même nom : les vôtres ne peuvent plus se confondre avec ceux d'un autre compte.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Text(
-            if (mergeFolders)
-                "Un seul dossier par nom commun à tous vos comptes, comme dans Feedly."
-            else
-                "Un dossier par compte, même si deux comptes ont un dossier du même nom : les vôtres ne peuvent plus se confondre avec ceux d'un autre compte.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
         SettingsSection("Lecture des articles")
-        Text("Ouverture des articles")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("internal" to "Dans PressIA", "custom" to "Onglet\npersonnalisé", "external" to "Navigateur").forEach { (id, l) ->
-                FilterChip(openMode == id, { openMode = id; save() }, { Text(l) })
+        SettingBox {
+            Text("Ouverture des articles")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("internal" to "Dans PressIA", "custom" to "Onglet\npersonnalisé", "external" to "Navigateur").forEach { (id, l) ->
+                    FilterChip(openMode == id, { openMode = id; save() }, { Text(l) })
+                }
             }
+            Text(
+                when (openMode) {
+                    "external" -> "Toucher un article l'ouvre directement dans le navigateur. La vue interne (extrait hors-ligne) reste accessible en revenant sur l'article."
+                    "custom" -> "L'article s'ouvre dans un onglet de navigateur intégré, avec votre compte et vos historique : presque comme le navigateur, mais sans quitter l'application. La vue interne reste accessible en revenant sur l'article."
+                    else -> "Toucher un article l'ouvre dans PressIA, avec l'extrait hors-ligne et l'article complet au double-tap."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Text(
-            when (openMode) {
-                "external" -> "Toucher un article l'ouvre directement dans le navigateur. La vue interne (extrait hors-ligne) reste accessible en revenant sur l'article."
-                "custom" -> "L'article s'ouvre dans un onglet de navigateur intégré, avec votre compte et vos historique : presque comme le navigateur, mais sans quitter l'application. La vue interne reste accessible en revenant sur l'article."
-                else -> "Toucher un article l'ouvre dans PressIA, avec l'extrait hors-ligne et l'article complet au double-tap."
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Readability persistant"); Spacer(Modifier.weight(1f))
-            Switch(readabilitySticky, { readabilitySticky = it; save() })
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Readability persistant"); Spacer(Modifier.weight(1f))
+                Switch(readabilitySticky, { readabilitySticky = it; save() })
+            }
+            Text(
+                "L'icône « Readability » de l'écran article " +
+                    "passe tous les articles ouverts en article complet. Coupé (défaut), quitter l'écran " +
+                    "article désactive ce mode — le balayage d'un article à l'autre le conserve, lui ; " +
+                    "coché, il reste jusqu'à désactivation manuelle.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        Text(
-            "L'icône « Readability » de l'écran article " +
-                "passe tous les articles ouverts en article complet. Coupé (défaut), quitter l'écran " +
-                "article désactive ce mode — le balayage d'un article à l'autre le conserve, lui ; " +
-                "coché, il reste jusqu'à désactivation manuelle.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Double-tap sur un article")
-        ActionDropDown(
-            options = DOUBLE_TAP_IDS.map { it to articleNavLabel(it) },
-            selected = doubleTap,
-            label = "Double-tap",
-            onSelect = { doubleTap = it; save() }
-        )
-        Text(
-            "Vaut aussi pour les images de l'article : un simple tap en ouvre une en grand, un double-tap " +
-                "y déclenche la même action que ci-dessus.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Balayage gauche dans un article")
-        ActionDropDown(
-            options = ARTICLE_SWIPE_IDS.filter { it != "newer" }.map { it to articleNavLabel(it) },
-            selected = artSwipeLeft,
-            label = "Balayage gauche",
-            onSelect = { artSwipeLeft = it; save() }
-        )
-        Text("Balayage droit dans un article")
-        ActionDropDown(
-            options = ARTICLE_SWIPE_IDS.filter { it != "older" }.map { it to articleNavLabel(it) },
-            selected = artSwipeRight,
-            label = "Balayage droit",
-            onSelect = { artSwipeRight = it; save() }
-        )
-        Text(
-            "Par défaut, gauche = article plus ancien et droite = article plus récent. " +
-                "Toute autre action remplace la navigation dans ce sens (« Aucun » : le geste ne fait rien).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "Les vidéos YouTube se lisent dans l'article, avec le lecteur du site (lecture, " +
-                "barre d'avancée, qualité, sous-titres) : le titre de la vidéo, sous le lecteur, " +
-                "l'ouvre dans YouTube, et le plein écran affiche la vidéo sur tout l'écran.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        SettingBox {
+            Text("Double-tap sur un article")
+            ActionDropDown(
+                options = DOUBLE_TAP_IDS.map { it to articleNavLabel(it) },
+                selected = doubleTap,
+                label = "Double-tap",
+                onSelect = { doubleTap = it; save() }
+            )
+            Text(
+                "Vaut aussi pour les images de l'article : un simple tap en ouvre une en grand, un double-tap " +
+                    "y déclenche la même action que ci-dessus.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text("Balayage gauche dans un article")
+            ActionDropDown(
+                options = ARTICLE_SWIPE_IDS.filter { it != "newer" }.map { it to articleNavLabel(it) },
+                selected = artSwipeLeft,
+                label = "Balayage gauche",
+                onSelect = { artSwipeLeft = it; save() }
+            )
+            Text("Balayage droit dans un article")
+            ActionDropDown(
+                options = ARTICLE_SWIPE_IDS.filter { it != "older" }.map { it to articleNavLabel(it) },
+                selected = artSwipeRight,
+                label = "Balayage droit",
+                onSelect = { artSwipeRight = it; save() }
+            )
+            Text(
+                "Par défaut, gauche = article plus ancien et droite = article plus récent. " +
+                    "Toute autre action remplace la navigation dans ce sens (« Aucun » : le geste ne fait rien).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text(
+                "Les vidéos YouTube se lisent dans l'article, avec le lecteur du site (lecture, " +
+                    "barre d'avancée, qualité, sous-titres) : le titre de la vidéo, sous le lecteur, " +
+                    "l'ouvre dans YouTube, et le plein écran affiche la vidéo sur tout l'écran.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         SettingsSection("Listes d'articles")
-        Text("Vue des articles")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("compact" to "Compacte", "list" to "Liste", "card" to "Carte", "magazine" to "Magazine").forEach { (id, l) ->
-                FilterChip(viewMode == id, { viewMode = id; save() }, { Text(l) })
+        SettingBox {
+            Text("Vue des articles")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("compact" to "Compacte", "list" to "Liste", "card" to "Carte", "magazine" to "Magazine").forEach { (id, l) ->
+                    FilterChip(viewMode == id, { viewMode = id; save() }, { Text(l) })
+                }
             }
         }
-        Text("Bouton de raccourci à droite de chaque article")
-        ActionDropDown(
-            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-            selected = trailing,
-            label = "Bouton de raccourci",
-            onSelect = { trailing = it; save() }
-        )
-        Text(
-            "Les favoris se gèrent aussi en glissant l'article vers la gauche ou vers la droite, selon les deux réglages suivants.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Glissement d'un article vers la gauche")
-        ActionDropDown(
-            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-            selected = swipe,
-            label = "Action du glissement",
-            onSelect = { swipe = it; save() }
-        )
-        Text("Glissement d'un article vers la droite")
-        ActionDropDown(
-            options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-            selected = swipeRight,
-            label = "Action du glissement",
-            onSelect = { swipeRight = it; save() }
-        )
-        Row(
-            Modifier.fillMaxWidth().clickable { showArticleActions = true },
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Icônes d'action de l'écran article")
-                Text(
-                    if (articleActions.isEmpty()) "Aucune (menu seul)"
-                    else articleActions.joinToString(" · ") { articleActionLabel(it) },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+        SettingBox {
+            Text("Bouton de raccourci à droite de chaque article")
+            ActionDropDown(
+                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = trailing,
+                label = "Bouton de raccourci",
+                onSelect = { trailing = it; save() }
+            )
+        }
+        SettingBox {
+            Text("Glissement d'un article vers la gauche")
+            ActionDropDown(
+                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = swipe,
+                label = "Action du glissement",
+                onSelect = { swipe = it; save() }
+            )
+            Text("Glissement d'un article vers la droite")
+            ActionDropDown(
+                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = swipeRight,
+                label = "Action du glissement",
+                onSelect = { swipeRight = it; save() }
+            )
+            Text(
+                "Les favoris se gèrent aussi en glissant l'article vers la gauche ou vers la droite, selon les deux réglages ci-dessus.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Row(
+                Modifier.fillMaxWidth().clickable { showArticleActions = true },
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Icônes d'action de l'écran article")
+                    Text(
+                        if (articleActions.isEmpty()) "Aucune (menu seul)"
+                        else articleActions.joinToString(" · ") { articleActionLabel(it) },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(Icons.Filled.ChevronRight, "modifier")
             }
-            Icon(Icons.Filled.ChevronRight, "modifier")
         }
         if (showArticleActions) {
             ArticleActionsDialog(
@@ -970,145 +1018,185 @@ fun SettingsScreen(vm: PressVM) {
             )
         }
         val tapFav by vm.tapFaviconRead.collectAsState()
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
-        }
-        Text(
-            "Toucher le favicon du flux ou la vignette de l'article le marque lu ou non lu sans l'ouvrir. " +
-                "Désactivé, le changement d'état passe par l'ouverture de l'article, ou par le bouton de " +
-                "raccourci ci-dessus s'il est réglé sur « Lu/non-lu ».",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        SettingsSection("Tailles de police")
-        Text("Police des titres de liste : $titleFont sp")
-        Slider(titleFont.toFloat(), { titleFont = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
-        Text("Police des dates et heures : $dateFont sp")
-        Slider(dateFont.toFloat(), { dateFont = it.toInt(); save() }, valueRange = 8f..16f, steps = 7)
-        Text("Police du titre des articles : $articleTitle sp")
-        Slider(articleTitle.toFloat(), { articleTitle = it.toInt(); save() }, valueRange = 8f..28f, steps = 19)
-        Text("Police du texte des articles : $fontSize sp")
-        Slider(fontSize.toFloat(), { fontSize = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
-        val scope = androidx.compose.runtime.rememberCoroutineScope()
-        // Taille du texte du menu : sur un drawer très rempli, la taille par défaut ne laisse pas
-        // la place de tenir le nom des flux. Le réglage est en pourcentage, donc 100 % ne change rien.
-        Text("Taille du texte du menu : $drawerScale %")
-        Slider(drawerScale.toFloat(), { drawerScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
-        Text(
-            "Concerne les noms de flux et de dossiers du menu latéral. 100 % correspond à la taille actuelle.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Taille du texte de l'accueil : $homeScale %")
-        Slider(homeScale.toFloat(), { homeScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
-        Text(
-            "Concerne les noms de flux et de dossiers de l'écran Accueil. 100 % correspond à la taille actuelle.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        SettingsSection("Hors-ligne & synchronisation")
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Synchroniser au lancement"); Spacer(Modifier.weight(1f))
-            Switch(syncOnLaunch, { syncOnLaunch = it; save() })
-        }
-        Text(
-            "Toutes les synchronisations récupèrent la même chose : les nouveaux articles de tous " +
-                "vos comptes ainsi que le tableau « Read later ». Au démarrage, mais pas si une " +
-                "synchronisation s'est bien finie il y a moins longtemps que la « Fréquence de " +
-                "synchronisation » ci-dessous (10 minutes par défaut) : les données sont déjà là. " +
-                "Option coupée : rien n'est récupéré au démarrage. " +
-                "Le bouton d'actualisation, lui, marche toujours.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Feedly : garder non lu au-delà de 31 jours"); Spacer(Modifier.weight(1f))
-            Switch(feedlyKeepUnread, { feedlyKeepUnread = it; save() })
-        }
-        Text(
-            "Feedly marque lu de lui-même tout article non lu depuis plus de 31 jours. Avec cette " +
-                "option (activée par défaut), PressIA conserve l'état non lu de ces articles lors " +
-                "des synchronisations ; coupée, l'état du service s'applique et ils passent en lu.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text("Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la fenêtre pendant laquelle le lancement ne resynchronise pas (pas de synchronisation quand l'application est fermée).",
-            style = MaterialTheme.typography.bodySmall)
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Wi-Fi uniquement"); Spacer(Modifier.weight(1f)); Switch(wifiOnly, { wifiOnly = it; save() })
-        }
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("Images hors-ligne"); Spacer(Modifier.weight(1f)); Switch(imagesOffline, { imagesOffline = it; save() })
-        }
-        Text("Articles conservés par flux : $maxItems (hors-ligne)")
-        Slider(maxItems.toFloat(), { maxItems = it.toInt(); save() }, valueRange = 100f..10000f, steps = 99)
-        Text(
-            if (historyMonths <= 0) "Durée d'historique hors favoris : sans limite de temps"
-            else "Durée d'historique hors favoris : $historyMonths mois"
-        )
-        // 0 = illimité, 1..36 mois calendaires (défaut 1, fenêtre Feedly ~31 j) : ne joue
-        // qu'à la connexion d'un compte, favoris toujours gardés — le quota par flux reste
-        // le garde-fou dans tous les cas.
-        Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
-        Text(
-            "1 mois (défaut) : synchronisation rapide, la fenêtre part directement à Feedly. " +
-                "Au-delà, la première synchronisation et les rattrapages paginent plus loin et sont plus lents.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            if (interval <= 0) "Fréquence de synchronisation : manuelle"
-            else "Fréquence de synchronisation : toutes les $interval min"
-        )
-        // 73 crans de 10 min sur 0..720 : le défaut de 10 min est sélectionnable au cran près.
-        Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 71)
-        Text("Cache utilisé : $cacheInfo")
-        if (cacheDetail.isNotBlank()) {
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Favicon/miniature marque lu/non lu"); Spacer(Modifier.weight(1f)); Switch(tapFav, { scope.launch { vm.repo.prefs.set(com.pressia.data.local.Prefs.TAP_FAVICON_READ, it) } })
+            }
             Text(
-                "Détail : $cacheDetail",
+                "Toucher le favicon du flux ou la vignette de l'article le marque lu ou non lu sans l'ouvrir. " +
+                    "Désactivé, le changement d'état passe par l'ouverture de l'article, ou par le bouton de " +
+                    "raccourci ci-dessus s'il est réglé sur « Lu/non-lu ».",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
+        SettingsSection("Tailles de police")
+        SettingBox {
+            Text("Police des titres de liste : $titleFont sp")
+            Slider(titleFont.toFloat(), { titleFont = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
         }
-        SettingsSection("Favicons")
-        FilledTonalButton(
-            { vm.refreshFavicons() },
-            enabled = !vm.refreshingFavicons,
-            contentPadding = PaddingValues(horizontal = 12.dp)
-        ) {
-            if (vm.refreshingFavicons) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-            }
-            Spacer(Modifier.width(8.dp))
+        SettingBox {
+            Text("Police des dates et heures : $dateFont sp")
+            Slider(dateFont.toFloat(), { dateFont = it.toInt(); save() }, valueRange = 8f..16f, steps = 7)
+        }
+        SettingBox {
+            Text("Police du titre des articles : $articleTitle sp")
+            Slider(articleTitle.toFloat(), { articleTitle = it.toInt(); save() }, valueRange = 8f..28f, steps = 19)
+        }
+        SettingBox {
+            Text("Police du texte des articles : $fontSize sp")
+            Slider(fontSize.toFloat(), { fontSize = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
+        }
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        // Taille du texte du menu : sur un drawer très rempli, la taille par défaut ne laisse pas
+        // la place de tenir le nom des flux. Le réglage est en pourcentage, donc 100 % ne change rien.
+        SettingBox {
+            Text("Taille du texte du menu : $drawerScale %")
+            Slider(drawerScale.toFloat(), { drawerScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
             Text(
-                if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons",
-                textAlign = TextAlign.Center
+                "Concerne les noms de flux et de dossiers du menu latéral. 100 % correspond à la taille actuelle.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Text("Favicons : agrégateur ou sources en direct")
+        SettingBox {
+            Text("Taille du texte de l'accueil : $homeScale %")
+            Slider(homeScale.toFloat(), { homeScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
+            Text(
+                "Concerne les noms de flux et de dossiers de l'écran Accueil. 100 % correspond à la taille actuelle.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingsSection("Hors-ligne & synchronisation")
+        // Vue d'ensemble de la section : le volume et la fréquence se règlent plus bas, chacun
+        // dans son encadré — la phrase était au milieu des interrupteurs, sans lien avec eux.
         Text(
-            "Préchargées seulement quand il y a lieu : première synchronisation, flux arrivé depuis, cache " +
-                "vidé, puis une fois par mois. Le bouton ci-dessus les refait tout de suite, dans tous les cas.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            "Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la " +
+                "fenêtre pendant laquelle le lancement ne resynchronise pas (pas de synchronisation " +
+                "quand l'application est fermée).",
+            style = MaterialTheme.typography.bodySmall
         )
-        FaviconSourceRow(
-            faviconSource == com.pressia.data.FAVICON_SOURCE_AGGREGATOR,
-            "Agrégateur",
-            "Icônes via le service Google, sans visiter les sites (défaut).",
-            refreshing = vm.refreshingFavicons
-        ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_AGGREGATOR) }
-        FaviconSourceRow(
-            faviconSource == com.pressia.data.FAVICON_SOURCE_DIRECT,
-            "Sources en direct",
-            "Icônes déclarées par les sites eux-mêmes (repli : /favicon.ico).",
-            refreshing = vm.refreshingFavicons
-        ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Synchroniser au lancement"); Spacer(Modifier.weight(1f))
+                Switch(syncOnLaunch, { syncOnLaunch = it; save() })
+            }
+            Text(
+                "Toutes les synchronisations récupèrent la même chose : les nouveaux articles de tous " +
+                    "vos comptes ainsi que le tableau « Read later ». Au démarrage, mais pas si une " +
+                    "synchronisation s'est bien finie il y a moins longtemps que la « Fréquence de " +
+                    "synchronisation » ci-dessous (10 minutes par défaut) : les données sont déjà là. " +
+                    "Option coupée : rien n'est récupéré au démarrage. " +
+                    "Le bouton d'actualisation, lui, marche toujours.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Feedly : garder non lu au-delà de 31 jours"); Spacer(Modifier.weight(1f))
+                Switch(feedlyKeepUnread, { feedlyKeepUnread = it; save() })
+            }
+            Text(
+                "Feedly marque lu de lui-même tout article non lu depuis plus de 31 jours. Avec cette " +
+                    "option (activée par défaut), PressIA conserve l'état non lu de ces articles lors " +
+                    "des synchronisations ; coupée, l'état du service s'applique et ils passent en lu.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Wi-Fi uniquement"); Spacer(Modifier.weight(1f)); Switch(wifiOnly, { wifiOnly = it; save() })
+            }
+        }
+        SettingBox {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Images hors-ligne"); Spacer(Modifier.weight(1f)); Switch(imagesOffline, { imagesOffline = it; save() })
+            }
+        }
+        SettingBox {
+            Text("Articles conservés par flux : $maxItems (hors-ligne)")
+            Slider(maxItems.toFloat(), { maxItems = it.toInt(); save() }, valueRange = 100f..10000f, steps = 99)
+        }
+        SettingBox {
+            Text(
+                if (historyMonths <= 0) "Durée d'historique hors favoris : sans limite de temps"
+                else "Durée d'historique hors favoris : $historyMonths mois"
+            )
+            // 0 = illimité, 1..36 mois calendaires (défaut 1, fenêtre Feedly ~31 j) : ne joue
+            // qu'à la connexion d'un compte, favoris toujours gardés — le quota par flux reste
+            // le garde-fou dans tous les cas.
+            Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
+            Text(
+                "1 mois (défaut) : synchronisation rapide, la fenêtre part directement à Feedly. " +
+                    "Au-delà, la première synchronisation et les rattrapages paginent plus loin et sont plus lents.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text(
+                if (interval <= 0) "Fréquence de synchronisation : manuelle"
+                else "Fréquence de synchronisation : toutes les $interval min"
+            )
+            // 73 crans de 10 min sur 0..720 : le défaut de 10 min est sélectionnable au cran près.
+            Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 71)
+        }
+        SettingBox {
+            Text("Cache utilisé : $cacheInfo")
+            if (cacheDetail.isNotBlank()) {
+                Text(
+                    "Détail : $cacheDetail",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
+            }
+        }
+        SettingsSection("Favicons")
+        SettingBox {
+            FilledTonalButton(
+                { vm.refreshFavicons() },
+                enabled = !vm.refreshingFavicons,
+                contentPadding = PaddingValues(horizontal = 12.dp)
+            ) {
+                if (vm.refreshingFavicons) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (vm.refreshingFavicons) "Actualisation…" else "Actualiser favicons",
+                    textAlign = TextAlign.Center
+                )
+            }
+            Text(
+                "Préchargées seulement quand il y a lieu : première synchronisation, flux arrivé depuis, cache " +
+                    "vidé, puis une fois par mois. Le bouton ci-dessus les refait tout de suite, dans tous les cas.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text("Favicons : agrégateur ou sources en direct")
+            FaviconSourceRow(
+                faviconSource == com.pressia.data.FAVICON_SOURCE_AGGREGATOR,
+                "Agrégateur",
+                "Icônes via le service Google, sans visiter les sites (défaut).",
+                refreshing = vm.refreshingFavicons
+            ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_AGGREGATOR) }
+            FaviconSourceRow(
+                faviconSource == com.pressia.data.FAVICON_SOURCE_DIRECT,
+                "Sources en direct",
+                "Icônes déclarées par les sites eux-mêmes (repli : /favicon.ico).",
+                refreshing = vm.refreshingFavicons
+            ) { pickFaviconSource(com.pressia.data.FAVICON_SOURCE_DIRECT) }
+        }
         // Le bandeau de synchro se pose au-dessus du bas de l'écran, par-dessus le contenu :
         // sans cette réserve, la dernière section (Favicons) restait cachée derrière lui sans
         // qu'on puisse défiler plus bas pour la lire.

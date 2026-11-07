@@ -48,6 +48,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.44",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Réglages encadrés et note replacée ; la recherche suit la vue des articles",
+                "- Chaque réglage est désormais dans un fin liseré, avec son libellé, son option et " +
+                    "son explication : la page se lit d'un coup d'œil, sans confondre un " +
+                    "interrupteur avec le paragraphe voisin.\n" +
+                    "- La note « Un seul réglage de volume… » ouvrait le milieu des interrupteurs de " +
+                    "synchronisation ; elle est remontée sous le titre de sa section, où elle " +
+                    "annonce le volume et la fréquence qu'on règle plus bas.\n" +
+                    "- Les résultats de la Recherche suivent la vue choisie dans Réglages (compacte, " +
+                    "liste, carte, magazine) au lieu d'être toujours en liste.",
+                time = "23:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.43",
         listOf(
             ChangelogItem(

@@ -470,6 +470,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   où elle est lue.
 - Les sections sont posées par `SettingsSection(titre)` (`ExtraScreens.kt`, filet + titre coloré) —
   un nouveau réglage rejoint la section de son usage.
+- **Chaque réglage est encadré** (`SettingBox`, fin liseré `outlineVariant`) avec son libellé, son
+  option et son explication : la page est une longue suite de lignes, sans bordure un interrupteur
+  se lisait avec le paragraphe voisin. Une note qui vaut pour toute la section (volume et
+  fréquence) reste **hors** encadré, juste sous le titre de section.
 
 ## Pièges connus — réseau, comptes et synchronisation
 
@@ -844,7 +848,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   partielle (Feedly ne renvoie que quelques entrées) : l'interroger masquait les articles déjà en
   base et le nombre de résultats affiché n'était pas celui de la bibliothèque. La requête du DAO
   borne l'affichage à 200 entrées, et l'écran le dit (« affichage limité ») plutôt que de laisser
-  croire que la liste s'arrête là.
+  croire que la liste s'arrête là. Les résultats suivent la **vue des articles** des Réglages
+  (`vm.viewMode`) : c'est une liste d'articles comme les autres.
 - Écran Recherche : son état (requête, portée, option « texte », résultats) vit dans `PressVM`, pas
   dans le composable — ouvrir un article ou passer par une autre page puis revenir doit retrouver
   les résultats, et ils ne disparaissent qu'à la fermeture de l'application. Seuls un changement de
