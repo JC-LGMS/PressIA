@@ -125,20 +125,17 @@ fun ArticleRow(
     // Titres déjà en base avec des entités HTML (« &nbsp; », …) : nettoyés à l'affichage.
     val title = remember(a.title) { cleanTitle(a.title).ifBlank { "(sans titre)" } }
     /**
-     * Où vit le rond lu/non-lu : à gauche dans la vue magazine (sur la ligne de méta) et dans la
-     * vue liste seulement quand l'article n'a pas d'image (la place de l'image). Partout
-     * ailleurs il est à droite.
+     * Où vit le rond lu/non-lu : à gauche dans la vue magazine (sur la ligne de méta), à droite
+     * partout ailleurs.
      *
      * Cette position commande aussi celle de l'étoile du swipe : elle doit apparaître exactement
      * là où le rond se trouvait, sinon le geste déplaçait l'information d'un bout à l'autre de la
-     * ligne. Elle évite au passage le double rond de la vue liste sur un article sans image :
-     * seule l'action « lu/non-lu » est alors retirée du bout de ligne, les autres restent.
+     * ligne. La vue liste n'a **pas** de rond à gauche sur un article sans image : sa place
+     * montre le favicon du flux, et le bouton de raccourci reste au bord droit comme sur les
+     * autres lignes (un bouton déplacé à gauche se lisait comme un autre bouton, et il manquait
+     * alors à droite).
      */
-    val dotAtStart = when (mode) {
-        "magazine" -> true
-        "compact", "card" -> false
-        else -> a.imageUrl.isNullOrBlank()
-    }
+    val dotAtStart = mode == "magazine"
     /**
      * Effet d'un appui sur le favicon du flux ou sur la vignette de l'article, identique dans les
      * quatre vues. L'option « Favicon/miniature marque lu/non lu » éteinte ne doit laisser ni zone
@@ -155,10 +152,9 @@ fun ArticleRow(
     val trail: @Composable (Boolean) -> Unit = { swiping ->
         if (swiping) Unit else when (trailing) {
             "none" -> Unit
-            // « read » est la seule action supprimée quand le rond est déjà à gauche : deux
-            // boutons pour le même état n'auraient pas de sens. Les autres actions gardent leur
-            // place — les masquer retirait étoile, partage et Instapaper de la vue magazine et
-            // des articles sans image.
+            // « read » est la seule action supprimée dans la vue magazine : le rond est déjà à
+            // gauche. Ailleurs (y compris un article sans image de la vue liste) le bouton de
+            // raccourci garde sa place au bord droit.
             "read" -> if (dotAtStart) Unit else Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
                 IconButton(onToggleRead, Modifier.size(30.dp)) {
                     Icon(
@@ -329,13 +325,12 @@ fun ArticleRow(
                     supportingContent = { MetaLine(src, a.published, dateSp, metaStar, showSource = showSource) },
                     leadingContent = {
                         if (!a.imageUrl.isNullOrBlank()) Box(Modifier.longPressInert(leadTap)) { AsyncImage(thumbModel(ctx, a.imageUrl), null, Modifier.size(56.dp), contentScale = ContentScale.Crop) }
-                        // Le rond n'est pas un favicon mais l'indicateur d'état : il reste donc un bouton
-                        // lu/non-lu quelle que soit l'option, comme celui en bout de ligne.
-                        else Icon(
-                            if (a.unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked, null,
-                            tint = readDotTint(),
-                            modifier = Modifier.size(14.dp).clickable(onClick = onToggleRead)
-                        )
+                        // Sans image, la place montre le favicon du flux (comme les vues carte et
+                        // compacte) : le rond lu/non-lu reste au bout de ligne, avec le bouton de
+                        // raccourci — le déplacer ici le retirait du bord droit.
+                        else Box(Modifier.size(48.dp).longPressInert(leadTap), contentAlignment = Alignment.Center) {
+                            FeedAvatar(feeds[a.feedId], 40, a.feedTitle)
+                        }
                     },
                     trailingContent = { trail(swiping) }
                 )

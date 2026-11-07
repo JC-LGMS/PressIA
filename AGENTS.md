@@ -748,6 +748,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   dupliquer une variante.
 - La position du rond lu/non-lu (`dotAtStart`) pilote aussi celle de l'étoile de swipe : les deux
   doivent rester du même côté, sinon l'information saute d'un bout à l'autre de la ligne au geste.
+  Il ne vaut que pour la vue **magazine** : en liste, carte et compacte le bouton de raccourci
+  reste au bord droit, même sur un article sans image (la place de l'image montre alors le
+  favicon du flux — le déplacer à gauche retirait le bouton de droite).
 - Tiroir (`MainActivity`) : `gesturesEnabled = drawer.isOpen || when { current == "article" ->
   false; hierarchical -> current != "home"; else -> !(current == "stream" && !atHome) }`.
   Le balayage de bord est coupé là où le geste vers la droite a déjà un sens — article précédent

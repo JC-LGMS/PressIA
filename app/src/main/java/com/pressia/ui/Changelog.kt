@@ -48,6 +48,21 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.45",
+        listOf(
+            ChangelogItem(
+                "2026-11-07",
+                "Vue liste : le bouton de raccourci reste à droite sur un article sans image",
+                "Sur un article sans image, la vue liste déplaçait le rond lu/non-lu dans la place " +
+                    "de l'image et retirait le bouton de raccourci du bord droit. La place vide " +
+                    "montre désormais le favicon du flux (comme les vues carte et compacte) et le " +
+                    "bouton de raccourci garde sa position à droite, quel que soit le réglage " +
+                    "(lu/non-lu, favoris, partage, Instapaper).",
+                time = "23:31"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.44",
         listOf(
             ChangelogItem(
