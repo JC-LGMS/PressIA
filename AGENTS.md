@@ -491,22 +491,36 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     redirection, Inoreader refuserait le retour. D'où les champs de l'écran Comptes qui démarrent
     **vides** : c'est à l'utilisateur de saisir les siens.
 - **Inoreader : connexion « par session »** (`InoreaderSignInScreen`, comme Feedly) : la page
-  `www.inoreader.com` s'ouvre dans une WebView, l'utilisateur s'y connecte, et le **cookie de
-  session** est récupéré du bac natif (`CookieManager`) — c'est le mécanisme de l'extension
-  officielle Inoreader pour navigateur, transposé en application native. Le cookie porte
-  l'identifiant de session (`SID`, protocole `ClientLogin`), que l'API Reader accepte dans
-  l'en-tête `Authorization: GoogleLogin auth=…` — le même schéma que le jeton OAuth, donc rien à
-  distinguer côté provider. La validation se fait par un **vrai appel API** (`user-info`), jamais
-  sur une simple ressemblance. Le flux OAuth reste disponible (Comptes → « Connexion OAuth
-  Inoreader »).
-  - Candidat de session : `inoreaderSessionCandidates` (pur, testé) tire les valeurs de l'en-tête
-    `Cookie`, `SID`/`LSID` d'abord — Inoreader compte les requêtes au quota, on n'insiste pas. Le
-    « connexion bloquée ? » ne se déclenche que si le **formulaire de connexion a disparu**
-    (`input[type=password]`) sans cookie lisible : sinon il s'agirait d'un utilisateur en train de
-    saisir ses identifiants.
+  `www.inoreader.com` s'ouvre dans une WebView, l'utilisateur s'y connecte, et l'en-tête `Cookie`
+  **que le navigateur enverrait à l'API** est lu (`CookieManager.getCookie(<url API>)` : seuls les
+  cookies du domaine et du chemin, `HttpOnly` compris — `document.cookie` ne les montre pas).
+  C'est le mécanisme de l'extension officielle Inoreader pour navigateur, transposé en application
+  native ; la connexion est **automatique** dès que le cookie apparaît (sonde de 1,2 s, essai
+  au plus toutes les 4 s), les boutons « Je suis connecté » / « Réessayer » ne font que forcer.
+  - Le cookie **porteur est `al`** (domaine `.www.inoreader.com`, `HttpOnly`) — pas `SID`.
+    Vérifié en direct : `al` seul authentifie `reader/api/0/user-info` (200), `ssid` seul est
+    refusé (401). `ssid` est un cookie de **session** (non persistant) : c'est le texte de l'en-tête
+    stocké dans le compte qui garde la session utilisable après fermeture de l'application ; il
+    finit par expirer, d'où la reconnexion.
+  - L'API est appelée **comme l'extension le fait** : en-tête `Cookie` complet, `AppId`/`AppKey` à
+    côté (intercepteur), **sans** en-tête `Authorization`. `inoreaderAuth` (pur, testé) classe le
+    jeton du compte : `InoreaderAuth.WebCookie` (préfixe `cookie:`, ou forme d'un en-tête `Cookie`)
+    → `Cookie: al=…`, `InoreaderAuth.OAuth` → `Authorization: GoogleLogin auth=…`.
+    `InoreaderProvider.headers` fait la traduction et `InoreaderService` prend un `@HeaderMap` (les
+    deux formes passent par le même client).
+  - Candidats : `inoreaderCookieCandidates` (pur, testé) rend l'en-tête complet puis la vue réduite
+    aux cookies de session (`al`, `ssid`, `bsid`), `al` en tête — Inoreader compte les requêtes au
+    quota. La validation se fait par un **vrai appel API** (`user-info`), jamais sur une simple
+    ressemblance. `inoreaderCookieHasSession` évite de lancer un appel (compté) tant que le bac ne
+    porte aucun cookie de session. Le « connexion bloquée ? » ne se déclenche que si le
+    **formulaire de connexion a disparu** (`input[type=password]`) sans cookie lisible : sinon il
+    s'agirait d'un utilisateur en train de saisir ses identifiants. Le flux OAuth reste disponible
+    (Comptes → « Connexion OAuth Inoreader »).
   - **Identifiants employés, affichables et remplaçables** (Comptes → « Identifiants Inoreader » →
-    `InoreaderIdsDialog`) : App ID, App Key et l'en-tête `Authorization: GoogleLogin auth=…` du
-    compte connecté. Les valeurs secrètes sont **masquées par défaut** (bouton œil). Un identifiant
+    `InoreaderIdsDialog`) : App ID, App Key et l'AUTH du compte connecté — `Authorization:
+    GoogleLogin auth=…` pour un compte OAuth, `Cookie: al=…` pour une session web (le libellé du
+    champ et l'en-tête affiché suivent la forme reconnue par `inoreaderAuth`). Les valeurs secrètes
+    sont **masquées par défaut** (bouton œil). Un identifiant
     égal à la valeur par défaut est stocké **vide** : la valeur par défaut reste ainsi vivante.
     `PressRepository.replaceAccountToken` remplace le jeton **en place** — le compte garde son
     `id`, donc ses dossiers, ses abonnements et ses articles — et **refuse** un jeton que le
