@@ -1444,9 +1444,12 @@ class PressRepository(
         // à la main, synchronisation interrompue) : le drapeau seul ne suffit pas, sans ce
         // contrôle la vignette ne revenait jamais.
         val lostThumbs = dao.cachedThumbUrls().filter { ThumbStore.cachedFile(ctx, it) == null }
-        val thumbs = (rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } } + lostThumbs).distinct()
-        val bodies = perArticle.flatMap { (_, urls) -> urls }.distinct().filterNot { it in thumbs }
-        val work: List<Pair<String, Boolean>> = thumbs.map { it to true } + bodies.map { it to false }
+        val thumbs = (rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } } + lostThumbs).toHashSet()
+        // Ordre = priorité : la requête rend les articles les plus récents d'abord, et pour
+        // chacun sa miniature puis les images de son corps. Deux tas (toutes les miniatures,
+        // puis tous les corps) reléguaient les images du dernier article derrière celles de la
+        // veille, alors que six téléchargements seulement tournent à la fois.
+        val work = pendingImageWork(perArticle, lostThumbs, thumbs)
         if (work.isEmpty()) {
             // Articles sans image : marqués tout de suite, sinon leur HTML serait relu à chaque
             // synchronisation sans rien à faire.
@@ -3172,6 +3175,19 @@ fun articleImageUrls(
     addAll(htmlImageUrls(content, baseUrl))
     addAll(htmlImageUrls(summary, baseUrl))
 }.distinct()
+
+/**
+ * File de téléchargement des images, dans l'ordre de priorité : article par article (la requête
+ * les rend du plus récent au plus ancien), sa miniature déclarée puis les images de son corps ;
+ * les miniatures perdues ferment la marche. `true` = miniature (fichier `ThumbStore`), `false` =
+ * image du corps (cache disque de Coil). Une URL partagée n'est demandée qu'une fois. Pure, testée.
+ */
+fun pendingImageWork(
+    perArticle: List<Pair<String, List<String>>>,
+    lostThumbs: List<String>,
+    thumbs: Set<String>
+): List<Pair<String, Boolean>> =
+    (perArticle.flatMap { it.second } + lostThumbs).distinct().map { it to (it in thumbs) }
 
 /**
  * Reporte sur un article resynchronisé les drapeaux que seul l'appareil connaît : étoile

@@ -48,6 +48,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.52",
+        listOf(
+            ChangelogItem(
+                "2026-11-09",
+                "Feedly sans plafond, images par priorité, extraction neutre",
+                "- Feedly « tout marquer lu » : l'énumération des non-lus va jusqu'à épuisement " +
+                    "(plus de plafond à 5000) — un flux ou le compte entier au-delà laissait les " +
+                    "plus anciens non lus côté serveur, rouverts à la synchronisation suivante.\n" +
+                    "- Images : la file suit la priorité — article le plus récent d'abord, sa " +
+                    "miniature puis les images de son corps — au lieu de toutes les miniatures " +
+                    "puis tous les corps.\n" +
+                    "- Extraction Readability : plus d'en-tête Referer « google.com » (il n'avait " +
+                    "aucun motif) ; le titre YouTube (oEmbed) passe par le client partagé, avec " +
+                    "un délai total au lieu d'aucun.\n" +
+                    "- Feedly : l'identifiant de compte est mis en cache par jeton, plus dans un " +
+                    "champ unique qui n'était jamais rempli et aurait mélangé deux comptes.",
+                time = "00:05"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.51",
         listOf(
             ChangelogItem(

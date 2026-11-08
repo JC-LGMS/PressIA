@@ -1947,17 +1947,16 @@ private suspend fun youtubeTitle(videoId: String): String? {
             val embed = java.net.URLEncoder.encode(
                 "https://www.youtube.com/watch?v=$videoId", "UTF-8"
             )
-            val conn = java.net.URL("https://www.youtube.com/oembed?url=$embed&format=json")
-                .openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.setRequestProperty("User-Agent", youtubeBrowserUserAgent())
-            try {
-                if (conn.responseCode !in 200..299) return@runCatching null
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                org.json.JSONObject(body).optString("title").trim().takeIf { it.isNotEmpty() }
-            } finally {
-                conn.disconnect()
+            val req = okhttp3.Request.Builder()
+                .url("https://www.youtube.com/oembed?url=$embed&format=json")
+                .header("User-Agent", youtubeBrowserUserAgent())
+                .build()
+            // Client partagé (celui de Readability) : délais globaux, annulation réelle — un
+            // HttpURLConnection n'en avait aucun et retenait un fil jusqu'au bout.
+            com.pressia.data.readability.Readability.http.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return@use null
+                org.json.JSONObject(r.body?.string().orEmpty())
+                    .optString("title").trim().takeIf { it.isNotEmpty() }
             }
         }.getOrNull()
     }

@@ -168,6 +168,27 @@ class PressLogicTest {
         )
     }
 
+    @Test fun `images les plus recentes d abord`() {
+        // La file part article par article (les plus récents d'abord, ordre de la requête),
+        // miniature puis corps ; une URL partagée n'est demandée qu'une fois.
+        val work = com.pressia.data.pendingImageWork(
+            perArticle = listOf(
+                "a2" to listOf("https://x/t2.jpg", "https://x/b2.jpg"),
+                "a1" to listOf("https://x/t1.jpg", "https://x/b1.jpg", "https://x/b2.jpg")
+            ),
+            lostThumbs = listOf("https://x/t0.jpg"),
+            thumbs = setOf("https://x/t2.jpg", "https://x/t1.jpg", "https://x/t0.jpg")
+        )
+        assertEquals(
+            listOf(
+                "https://x/t2.jpg" to true, "https://x/b2.jpg" to false,
+                "https://x/t1.jpg" to true, "https://x/b1.jpg" to false,
+                "https://x/t0.jpg" to true
+            ),
+            work
+        )
+    }
+
     @Test fun `detection d un svg`() {
         // Un SVG (logo de flux) part chez AndroidSVG, pas chez BitmapFactory qui le refuse.
         fun svg(s: String) = com.pressia.data.local.isSvgImage(s.toByteArray())

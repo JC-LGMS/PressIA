@@ -11,9 +11,11 @@ import java.util.concurrent.TimeUnit
 
 /** Extraction "article complet" façon Readability (déclenchée au double-tap quand le RSS n'est qu'un extrait). */
 object Readability {
-    private val client = OkHttpClient.Builder()
+    /** Client partagé (page d'article, titre oEmbed) : délais globaux, dont un plafond total. */
+    internal val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
     private const val UA = "Mozilla/5.0 (Linux; Android 14; PressIA) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
@@ -67,9 +69,8 @@ object Readability {
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.5")
                 .header("Upgrade-Insecure-Requests", "1")
-                .header("Referer", "https://www.google.com/")
                 .build()
-            client.newCall(req).execute().use { r ->
+            http.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) return@withContext FullResult.Failed
                 val body = r.body ?: return@withContext FullResult.Failed
                 // Taille annoncée : échouer avant de lire (une page de 200 Mo n'a pas à défiler).

@@ -18,13 +18,6 @@ import kotlinx.coroutines.sync.withPermit
 private const val MARKER_CHUNK = 100
 
 /**
- * Plafond des non-lus énumérés pour un « tout marquer lu » de masse (voir
- * `FeedlyProvider.markStreamRead`) : borne le travail par action, sans jamais marquer localement
- * au-delà.
- */
-private const val MARK_ALL_ENUM_CAP = 5000
-
-/**
  * Charge utile d'un « tout marquer lu » Feedly : des marqueurs **par identifiant d'article**,
  * groupés par paquets de [MARKER_CHUNK]. Feedly accepte `type":"feeds"` — et `"categories"` —
  * puis les ignore : seul `type":"entries"` marque réellement les articles (voir
@@ -52,13 +45,18 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
 
     /**
      * Feedly n'accepte l'alias `user/-/...` que sur certains endpoints : le flux global renvoie
-     * 404. On récupère donc l'identifiant réel du compte via le profil et on le met en cache.
+     * 404. On récupère donc l'identifiant réel du compte via le profil et on le met en cache
+     * **par jeton** : un cache unique pour le provider servirait l'identifiant d'un autre compte
+     * dès que plusieurs sont connectés (le flux global de l'un chez l'autre).
      */
-    @Volatile private var userIdCache: String? = null
+    private val userIds = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private suspend fun cachedUserId(token: String?): String {
-        userIdCache?.let { return it }
+        val key = token.orEmpty()
+        if (key.isBlank()) return ""
+        userIds[key]?.let { return it }
         val id = runCatching { api.profile(auth(token)).id?.takeIf { it.isNotBlank() } }.getOrNull()
+        if (id != null) userIds[key] = id
         return id.orEmpty()
     }
 
@@ -121,10 +119,12 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     /**
      * Marque lus les non-lus que le serveur connaît sur ce flux, par paquets d'identifiants
      * (`type":"entries"`, seule forme appliquée par Feedly). Rien à énumérer = rien à faire :
-     * le marquage local, lui, est déjà à jour.
+     * le marquage local, lui, est déjà à jour. L'énumération va **jusqu'à épuisement** (pas de
+     * plafond) : un flux — ou le compte entier — à plus de 5000 non-lus laissait sinon les plus
+     * anciens non lus côté serveur, rouverts par la réconciliation suivante.
      */
     private suspend fun markStreamRead(token: String?, streamId: String) {
-        val ids = unreadIdsOfStream(token, streamId, MARK_ALL_ENUM_CAP)
+        val ids = unreadIdsOfStream(token, streamId, Int.MAX_VALUE)
         if (ids.isEmpty()) return
         val payloads = feedlyMarkAllMarkers(ids)
         android.util.Log.d("PressIA", "feedly tout lu : ${ids.size} non-lus sur $streamId (${payloads.size} appels)")
@@ -215,7 +215,8 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }
             .getOrNull() ?: unreadIdsViaContents(token, streamId, maxIds)
 
-    /** IDs seuls, sans l'exhaustivité : marquage de masse (voir [markStreamRead]). */
+    /** IDs seuls, pour le marquage de masse (voir [markStreamRead] : énumération jusqu'à
+     *  épuisement, `Int.MAX_VALUE`). */
     private suspend fun unreadIdsOfStream(token: String?, streamId: String, maxIds: Int): Set<String> =
         unreadSetOfStream(token, streamId, maxIds).ids
 

@@ -366,7 +366,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     **Titre sous le lecteur** : `YoutubeTitleRow` l'affiche et l'ouvre dans YouTube ; il vient
     d'oEmbed (`youtubeTitle`, sans clé d'API, mis en cache dans `youtubeTitles`, lui-même borné à
     200 titres en LRU : une session qui parcourt des dizaines de vidéos n'accumule pas un titre
-    par vidéo pour la vie du processus). La WebView est
+    par vidéo pour la vie du processus). La requête passe par le client OkHttp **partagé**
+    (`Readability.http`, délais globaux dont un plafond total, annulation réelle) : un
+    `HttpURLConnection` sans plafond global retenait un fil jusqu'au bout. La WebView est
     mise en pause avec l'écran (`onPause`/`onResume` sur `ON_PAUSE`/`ON_RESUME`) : sans cela le
     son continuait après un changement d'article.
   - **La touche Retour doit être rendue à l'application.** Quand la vidéo joue, l'appui est
@@ -432,7 +434,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   leurs images (`articleImageUrls` : miniature déclarée puis `<img>` de `content`/`summary`,
   dédoublonnées), met la miniature dans `ThumbStore` et les autres via Coil, puis marque
   l'article — une image manquante le laisse en attente (elle sera reprise ; marquage par article,
-  pas par URL). Appelé en fin de `syncDown` (`withThumbs = true`) et de `backfill` : **toute** sync
+  pas par URL). **L'ordre de la file est la priorité** (`pendingImageWork`) : articles les plus
+  récents d'abord (ordre de la requête), miniature puis images du corps de chacun, les
+  miniatures perdues en dernier — deux tas (toutes les miniatures, puis tous les corps)
+  reléguaient les images du dernier article derrière celles de la veille, alors que six
+  téléchargements seulement tournent à la fois. Appelé en fin de `syncDown` (`withThumbs = true`)
+  et de `backfill` : **toute** sync
   (bouton, lancement, worker, connexion de compte) récupère les images.
 - **Un échec d'image ne fait pas échouer la synchronisation.** `syncImages` relève les images
   qu'un article garde manquantes (timeout, 404…) dans `imageFailures`, une entrée par URL
@@ -602,9 +609,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   sans `asOf`) puis les **ignore** — HTTP 200, corps vide, `markers/counts` inchangé (vérifié en
   direct). Seul `type":"entries"` marque vraiment : `FeedlyProvider.markAllRead` /
   `markAllReadGlobal` énumèrent donc les non-lus du flux (`streams/ids`, paquets de 100
-  identifiants). Bonus : ça rattrape les articles que le serveur croit encore non lus alors que
-  l'app les a marqués lus, que la réconciliation suivante rouvrirait sinon. Ne pas « optimiser » ce
-  chemin en un appel de masse.
+  identifiants), **jusqu'à épuisement** : la pagination suit `continuation` sans plafond, un
+  flux ou un compte à plus de 5000 non-lus laissait sinon les plus anciens non lus côté serveur,
+  rouverts par la réconciliation suivante. Bonus : ça rattrape les articles que le serveur croit
+  encore non lus alors que l'app les a marqués lus, que la réconciliation suivante rouvrirait
+  sinon. Ne pas « optimiser » ce chemin en un appel de masse.
+- Feedly, identifiant de compte : `cachedUserId` le met en cache **par jeton**
+  (`ConcurrentHashMap`), pas dans un champ unique — plusieurs comptes connectés se seraient
+  servi le flux global l'un de l'autre. `userId(token)` (connexion) reste sans cache.
 - Marquage de masse Inoreader : `POST /reader/api/0/mark-all-as-read` (`s` = identifiant de flux,
   `T` = jeton CSRF, `ts` = unix **secondes**) répond `OK` — c'est le bouton « Marquer tout comme
   lu » du site. `ts` = maintenant marque tout ; **omettre `ts` ou le mettre à 0 revient au même**,
@@ -671,7 +683,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `remember` **sans clé** : le balayage change d'article sans changer d'écran, une liste
   re-dérivée par article repartirait du périmètre du flux au premier swipe.
 - Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`
-  dit laquelle. Couper le mode (icône, pastille, double-tap) doit **réécrire** `content` avec la
+  dit laquelle. La requête est neutre : navigateur mobile en `User-Agent`, `Accept` et
+  `Accept-Language`, **pas de `Referer`** (un `https://www.google.com/` traînait depuis le
+  premier commit, sans motif — un référent menteur n'aide aucun site et peut en faire refuser
+  d'autres). Couper le mode (icône, pastille, double-tap) doit **réécrire** `content` avec la
   version du flux et remettre `fullFetched` à 0 : sans cette écriture la copie Readability restait
   en base et l'article rouvert reprenait la version extraite. Avant d'écraser `content` par une
   extraction, `saveExtractedContent` recopie le HTML du flux dans `summary` quand il est plus riche
