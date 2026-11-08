@@ -28,6 +28,7 @@ fun StreamScaffold(
     title: String,
     onOpen: (com.pressia.data.local.ArticleEntity) -> Unit,
     onMenu: () -> Unit,
+    onSearch: (com.pressia.data.local.ArticleEntity) -> Unit = {},
     onSwipeBack: (() -> Unit)? = null,
     swipeIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Filled.Home,
     swipeLabel: String = "retour à l'accueil"
@@ -166,7 +167,7 @@ fun StreamScaffold(
                     }
                 } else {
                     // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null)
+                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null, onSearch = onSearch)
                 }
             }
             if (onSwipeBack != null && backDrag > 0f) {

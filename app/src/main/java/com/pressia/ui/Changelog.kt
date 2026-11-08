@@ -48,6 +48,37 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.48",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Thème auto sur la lumière, Réglages réorganisés, action Recherche, compte dans les menus",
+                "- Mode automatique : avec un capteur de luminosité, le thème suit la lumière ambiante " +
+                    "par rapport à un seuil réglable (Réglages → Affichage, 1 lux par défaut, curseur " +
+                    "0–200 lux avec la luminosité actuelle affichée en direct) : à cette valeur ou " +
+                    "moins, sombre ; au-dessus, clair. Il part sombre tant que le capteur n'a pas " +
+                    "parlé, la première lecture s'applique immédiatement au démarrage, et les " +
+                    "changements suivants attendent 5 secondes de conditions stables dans les deux " +
+                    "sens — passage au sombre comme retour au clair. Sans capteur, le thème du " +
+                    "système s'applique comme avant.\n" +
+                    "- Réglages : deux blocs nets, « Listes d'articles » et « Dans un article » — " +
+                    "les icônes d'action de l'écran article rejoignent le second.\n" +
+                    "- Action « Recherche » partout où une action se choisit (bouton de raccourci, " +
+                    "glissements, double-tap, balayages) ; elle ouvre la recherche sur le flux de " +
+                    "l'article, et l'icône Recherche est ajoutée en tête des icônes d'action par " +
+                    "défaut.\n" +
+                    "- Menu d'appui long d'un dossier, d'un flux ou d'un article : entrée " +
+                    "« Recherche » avec la portée de la ligne ; les entrées du menu d'article " +
+                    "portent leur icône (loupe, flèches haut/bas).\n" +
+                    "- Le compte du flux (ou « Local ») apparaît en tête de ces menus et, dans " +
+                    "l'article, collé au nom du flux avec « - », même police et même couleur " +
+                    "(« Mediapart - Feedly ») — seulement quand plusieurs comptes ou des flux " +
+                    "locaux cohabitent ; sinon la mention est masquée.",
+                time = "01:37"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.47",
         listOf(
             ChangelogItem(

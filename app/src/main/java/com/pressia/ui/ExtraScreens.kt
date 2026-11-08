@@ -30,6 +30,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import kotlin.math.roundToInt
 import com.pressia.data.FeedSort
 import com.pressia.data.Sections
 import com.pressia.data.StatsPeriod
@@ -55,7 +61,7 @@ import kotlinx.coroutines.launch
  * correspondraient plus à ce qui est affiché.
  */
 @Composable
-fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
+fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (ArticleEntity) -> Unit = {}) {
     var showScope by remember { mutableStateOf(false) }
     // Même vue que les listes (compacte / liste / carte / magazine) : la recherche est une liste
     // d'articles comme les autres, elle suit le réglage d'affichage.
@@ -207,7 +213,8 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
                     // périmètre du flux n'avait aucun voisin et le geste revenait à la liste.
                     { a -> vm.openArticleWith(vm.searchResults.map { it.id }); onOpen(a) },
                     vm,
-                    showSource = vm.searchScope.feedId == null
+                    showSource = vm.searchScope.feedId == null,
+                    onSearch = onSearch
                 )
             }
         }
@@ -638,6 +645,41 @@ private fun SettingBox(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/**
+ * Luminosité ambiante lue par le capteur, affichée sous le seuil du mode automatique : elle
+ * permet de choisir un seuil en connaissance de cause (pièce sombre, bureau, extérieur).
+ */
+@Composable
+private fun CurrentLuxText() {
+    val ctx = LocalContext.current
+    val manager = remember(ctx) { ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    val sensor = remember(manager) { manager?.getDefaultSensor(Sensor.TYPE_LIGHT) }
+    var lux by remember { mutableStateOf<Float?>(null) }
+    if (sensor != null) {
+        DisposableEffect(manager, sensor) {
+            val listener = object : SensorEventListener {
+                override fun onSensorChanged(event: SensorEvent) {
+                    lux = event.values.firstOrNull()
+                }
+
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+            }
+            manager?.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+            onDispose { manager?.unregisterListener(listener) }
+        }
+    }
+    Text(
+        when {
+            sensor == null -> "Luminosité actuelle : pas de capteur sur cet appareil"
+            lux == null -> "Luminosité actuelle : mesure…"
+            else -> "Luminosité actuelle : ${(lux ?: 0f).roundToInt()} lux"
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+
 /** Réglages façon Press + sync. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -648,6 +690,7 @@ fun SettingsScreen(vm: PressVM) {
         runCatching { vm.repo.prefs.data.first()[k] ?: d }.getOrDefault(d)
 
     var night by remember { mutableStateOf("dark") }
+    var lightThreshold by remember { mutableStateOf(1) }
     var accent by remember { mutableStateOf("red") }
     var bg by remember { mutableStateOf("default") }
     var home by remember { mutableStateOf("subs") }
@@ -694,6 +737,7 @@ fun SettingsScreen(vm: PressVM) {
      */
     suspend fun reloadFromPrefs() {
         night = get(Prefs.NIGHT_THEME, "dark"); accent = get(Prefs.ACCENT, "red"); bg = get(Prefs.BG, "default"); home = get(Prefs.HOME_SCREEN, "subs")
+        lightThreshold = get(Prefs.LIGHT_THRESHOLD, 1)
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
         swipe = get(Prefs.SWIPE_ACTION, "star")
         swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
@@ -740,6 +784,7 @@ fun SettingsScreen(vm: PressVM) {
     }
     fun save() = scope.launch {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
+        vm.repo.prefs.set(Prefs.LIGHT_THRESHOLD, lightThreshold)
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
         vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
@@ -779,6 +824,19 @@ fun SettingsScreen(vm: PressVM) {
             Text(
                 "Le menu n'offre que trois apparences : auto, jour et nuit. En mode nuit, c'est le thème " +
                     "choisi ici qui s'applique — AMOLED force un fond noir, plus sombre que le thème Sombre.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text("Seuil de luminosité du mode automatique : $lightThreshold lux")
+            Slider(lightThreshold.toFloat(), { lightThreshold = it.toInt(); save() }, valueRange = 0f..200f, steps = 199)
+            CurrentLuxText()
+            Text(
+                "Avec un capteur de lumière, l'apparence automatique passe en thème sombre quand la " +
+                    "lumière ambiante est à ce seuil ou en dessous, et revient au clair au-dessus — dans " +
+                    "les deux sens après 5 secondes de conditions stables. Sans capteur, le thème du " +
+                    "système s'applique et ce seuil n'est pas utilisé.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -876,7 +934,7 @@ fun SettingsScreen(vm: PressVM) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        SettingsSection("Lecture des articles")
+        SettingsSection("Dans un article")
         SettingBox {
             Text("Ouverture des articles")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -946,54 +1004,6 @@ fun SettingsScreen(vm: PressVM) {
             )
         }
         SettingBox {
-            Text(
-                "Les vidéos YouTube se lisent dans l'article, avec le lecteur du site (lecture, " +
-                    "barre d'avancée, qualité, sous-titres) : le titre de la vidéo, sous le lecteur, " +
-                    "l'ouvre dans YouTube, et le plein écran affiche la vidéo sur tout l'écran.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        SettingsSection("Listes d'articles")
-        SettingBox {
-            Text("Vue des articles")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("compact" to "Compacte", "list" to "Liste", "card" to "Carte", "magazine" to "Magazine").forEach { (id, l) ->
-                    FilterChip(viewMode == id, { viewMode = id; save() }, { Text(l) })
-                }
-            }
-        }
-        SettingBox {
-            Text("Bouton de raccourci à droite de chaque article")
-            ActionDropDown(
-                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-                selected = trailing,
-                label = "Bouton de raccourci",
-                onSelect = { trailing = it; save() }
-            )
-        }
-        SettingBox {
-            Text("Glissement d'un article vers la gauche")
-            ActionDropDown(
-                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-                selected = swipe,
-                label = "Action du glissement",
-                onSelect = { swipe = it; save() }
-            )
-            Text("Glissement d'un article vers la droite")
-            ActionDropDown(
-                options = listOf("star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
-                selected = swipeRight,
-                label = "Action du glissement",
-                onSelect = { swipeRight = it; save() }
-            )
-            Text(
-                "Les favoris se gèrent aussi en glissant l'article vers la gauche ou vers la droite, selon les deux réglages ci-dessus.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        SettingBox {
             Row(
                 Modifier.fillMaxWidth().clickable { showArticleActions = true },
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
@@ -1015,6 +1025,54 @@ fun SettingsScreen(vm: PressVM) {
                 selected = articleActions,
                 onDismiss = { showArticleActions = false },
                 onChange = { articleActions = it; save() }
+            )
+        }
+        SettingBox {
+            Text(
+                "Les vidéos YouTube se lisent dans l'article, avec le lecteur du site (lecture, " +
+                    "barre d'avancée, qualité, sous-titres) : le titre de la vidéo, sous le lecteur, " +
+                    "l'ouvre dans YouTube, et le plein écran affiche la vidéo sur tout l'écran.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingsSection("Listes d'articles")
+        SettingBox {
+            Text("Vue des articles")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("compact" to "Compacte", "list" to "Liste", "card" to "Carte", "magazine" to "Magazine").forEach { (id, l) ->
+                    FilterChip(viewMode == id, { viewMode = id; save() }, { Text(l) })
+                }
+            }
+        }
+        SettingBox {
+            Text("Bouton de raccourci à droite de chaque article")
+            ActionDropDown(
+                options = listOf("search" to "Recherche", "star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = trailing,
+                label = "Bouton de raccourci",
+                onSelect = { trailing = it; save() }
+            )
+        }
+        SettingBox {
+            Text("Glissement d'un article vers la gauche")
+            ActionDropDown(
+                options = listOf("search" to "Recherche", "star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = swipe,
+                label = "Action du glissement",
+                onSelect = { swipe = it; save() }
+            )
+            Text("Glissement d'un article vers la droite")
+            ActionDropDown(
+                options = listOf("search" to "Recherche", "star" to "Favoris", "read" to "Lu/non-lu", "share" to "Partager", "instapaper" to "Instapaper", "none" to "Aucun"),
+                selected = swipeRight,
+                label = "Action du glissement",
+                onSelect = { swipeRight = it; save() }
+            )
+            Text(
+                "Les favoris se gèrent aussi en glissant l'article vers la gauche ou vers la droite, selon les deux réglages ci-dessus.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         val tapFav by vm.tapFaviconRead.collectAsState()

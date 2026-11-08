@@ -127,6 +127,29 @@ class PressLogicTest {
         assertTrue(isSupportedFeedUrl(sanitizeFeedUrl("ex.com/flux.xml")))
         assertFalse(isSupportedFeedUrl("ftp://ex.com/flux.xml"))
     }
+    @Test fun `precision du compte seulement quand elle distingue`() {
+        fun acc(id: String, name: String = "") =
+            com.pressia.data.CloudAccount(id = id, provider = id.substringBefore('#'), token = "t", name = name)
+        fun local(id: String) = com.pressia.data.local.SubscriptionEntity(id = id, title = id, provider = "local")
+        // Un seul compte, aucun flux local : la mention n'apprend rien.
+        assertFalse(com.pressia.data.showFeedAccount(listOf(acc("feedly#a")), emptyList()))
+        // Uniquement des flux locaux : idem.
+        assertFalse(com.pressia.data.showFeedAccount(emptyList(), listOf(local("l1"))))
+        // Plusieurs comptes, ou un compte avec des flux locaux : à préciser.
+        assertTrue(com.pressia.data.showFeedAccount(listOf(acc("feedly#a"), acc("inoreader#b")), emptyList()))
+        assertTrue(com.pressia.data.showFeedAccount(listOf(acc("feedly#a")), listOf(local("l1"))))
+        // Libellé : « Local », le service seul, ou complété du nom si deux comptes du même service.
+        assertEquals("Local", com.pressia.data.feedAccountLabel("local", emptyList()))
+        assertEquals("Feedly", com.pressia.data.feedAccountLabel("feedly#a", listOf(acc("feedly#a"))))
+        assertEquals(
+            "Feedly · moi@exemple.fr",
+            com.pressia.data.feedAccountLabel(
+                "feedly#a",
+                listOf(acc("feedly#a", "moi@exemple.fr"), acc("feedly#b", "autre@exemple.fr"))
+            )
+        )
+    }
+
     @Test fun `note des images manquantes en fin de synchro`() {
         // Une image en timeout ne fait pas échouer la synchro : le message nomme les flux.
         assertNull(com.pressia.data.imageFailureNote(emptyList(), interrupted = false))
@@ -1032,6 +1055,8 @@ class PressLogicTest {
         }
         // Réglage exporté : l'historique remonté doit survivre à une restauration.
         assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
+        // Seuil du mode automatique : réglage utilisateur, il survit à une restauration.
+        assertTrue("light_threshold doit figurer dans ENTRIES", "light_threshold" in names)
         // Défaut d'historique : 1 mois, aligné sur la fenêtre Feedly (~31 j au-delà = lu).
         assertEquals(1, Prefs.HISTORY_MONTHS_DEFAULT)
         // Réglage exporté : la source des favicons doit survivre à une restauration.

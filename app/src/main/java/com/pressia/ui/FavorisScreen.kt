@@ -48,7 +48,7 @@ import com.pressia.data.local.ArticleEntity
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Unit) {
+fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Unit, onSearch: (ArticleEntity) -> Unit = {}) {
     val viewMode by vm.viewMode.collectAsState()
     val set by vm.favSet.collectAsState()
     val ctx = LocalContext.current
@@ -160,7 +160,7 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                     vm, showSource = feedScope.feedId == null,
                     // Favoris et « Read later » : le bouton « bas » va toujours tout en bas
                     // directement, sans arrêt à la fin des non-lus.
-                    stopAtUnread = false)
+                    stopAtUnread = false, onSearch = onSearch)
             }
         }
     }

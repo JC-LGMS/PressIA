@@ -1,5 +1,6 @@
 package com.pressia.data
 
+import com.pressia.data.local.SubscriptionEntity
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -48,6 +49,28 @@ fun serviceLabel(service: String): String = when (service) {
     "feedly" -> "Feedly"
     "inoreader" -> "Inoreader"
     else -> "Compte"
+}
+
+/**
+ * Faut-il préciser le compte d'un flux ? Seulement quand le choix existe : plusieurs comptes
+ * d'agrégateur, ou au moins un compte **et** des flux locaux. Un seul compte, ou uniquement des
+ * flux locaux, n'apprend rien : la mention est masquée. Pure, testée.
+ */
+fun showFeedAccount(accounts: List<CloudAccount>, localFeeds: List<SubscriptionEntity>): Boolean =
+    accounts.size > 1 || (accounts.isNotEmpty() && localFeeds.isNotEmpty())
+
+/**
+ * Compte d'un flux : « Local » pour un flux RSS saisi à la main, sinon le libellé de
+ * l'agrégateur (Feedly, Inoreader…) — complété du nom du compte quand plusieurs comptes du même
+ * service coexistent, sans quoi deux « Feedly » seraient indiscernables.
+ */
+fun feedAccountLabel(provider: String?, accounts: List<CloudAccount>): String {
+    if (isLocalProvider(provider)) return "Local"
+    val account = accounts.firstOrNull { it.id == provider }
+        ?: return serviceLabel(providerBase(provider))
+    val sameService = accounts.count { it.service == account.service }
+    return if (sameService > 1 && account.name.isNotBlank()) "${account.label} · ${account.name}"
+    else account.label
 }
 
 /** Partie « service » d'une clé d'appropriation : `"feedly#ab12"` → `"feedly"`. */

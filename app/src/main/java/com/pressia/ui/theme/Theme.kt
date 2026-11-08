@@ -2,10 +2,19 @@ package com.pressia.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 
 /** Couleurs dominantes proposées (rouge Press par défaut). Accepte aussi un hexadécimal "#RRGGBB". */
 fun accentSeed(accent: String): Color {
@@ -147,12 +156,76 @@ fun resolveBackground(bg: String, dark: Boolean): Color? {
     return null
 }
 
+/**
+ * Mode automatique : le thème suit-il la **lumière ambiante** ?
+ *
+ * Avec un capteur de luminosité, le thème bascule quand la lumière franchement franchie le
+ * [threshold] (en lux) : à cette valeur ou moins, sombre ; au-dessus, clair. Le changement attend
+ * **5 secondes** de conditions stables dans les deux sens — un nuage, un passage devant le
+ * capteur ou une lampe allumée brièvement ne fait pas clignoter le thème. Sans capteur, on
+ * retombe sur le thème du système, comme avant.
+ *
+ * La bascule est vérifiée par un `Handler` pour ne pas dépendre de la fréquence du capteur (qui
+ * peut se calmer quand la valeur ne change plus) ; une lecture qui repart dans l'autre sens
+ * annule l'attente. Le thème part **sombre** tant que le capteur n'a rien dit (défaut), et la
+ * **première lecture** (au démarrage) s'applique immédiatement : l'écran s'ouvre directement dans
+ * le thème de la pièce, l'attente ne concerne que les changements en cours d'usage.
+ */
 @Composable
-fun PressIATheme(theme: String = "system", accent: String = "red", bg: String = "default", content: @Composable () -> Unit) {
+private fun ambientDark(threshold: Int): Boolean {
+    val ctx = LocalContext.current
+    val manager = remember(ctx) { ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    val sensor = remember(manager) { manager?.getDefaultSensor(Sensor.TYPE_LIGHT) }
+    if (sensor == null) return isSystemInDarkTheme()
+    var dark by remember { mutableStateOf(true) }
+    DisposableEffect(manager, sensor) {
+        val handler = Handler(Looper.getMainLooper())
+        // État que le capteur demande (null tant qu'aucune lecture) et minuteur de bascule.
+        var wantedDark: Boolean? = null
+        val apply = Runnable {
+            wantedDark?.let { wanted -> if (wanted != dark) dark = wanted }
+        }
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val lux = event.values.firstOrNull() ?: return
+                val wantDark = lux <= threshold
+                if (wantedDark == null) {
+                    // Première lecture (démarrage) : on s'aligne tout de suite sur la pièce,
+                    // sans les 5 s d'attente réservées aux changements en cours d'usage.
+                    wantedDark = wantDark
+                    dark = wantDark
+                    return
+                }
+                if (wantDark == wantedDark) return   // même camp : l'attente continue
+                wantedDark = wantDark
+                handler.removeCallbacks(apply)
+                if (wantDark != dark) handler.postDelayed(apply, 5_000L)
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        manager?.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+        onDispose {
+            manager?.unregisterListener(listener)
+            handler.removeCallbacksAndMessages(null)
+        }
+    }
+    return dark
+}
+
+@Composable
+fun PressIATheme(
+    theme: String = "system",
+    accent: String = "red",
+    bg: String = "default",
+    /** Seuil de luminosité du mode automatique (lux) : sombre à cette valeur ou moins. */
+    lightThreshold: Int = 1,
+    content: @Composable () -> Unit
+) {
     val dark = when (theme) {
         "light" -> false
         "dark", "amoled" -> true
-        else -> isSystemInDarkTheme()
+        else -> ambientDark(lightThreshold)
     }
     val seed = accentSeed(accent)
     var scheme = when (theme) {

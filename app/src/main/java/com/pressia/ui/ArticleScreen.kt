@@ -100,7 +100,9 @@ fun ArticleScreen(
      * Balayage horizontal vers un voisin : l'appelant retient l'article affiché (état de
      * l'entrée de navigation), pour qu'on le retrouve en revenant sur cet écran.
      */
-    onShowArticle: (String) -> Unit
+    onShowArticle: (String) -> Unit,
+    /** Ouvre la recherche sur le périmètre de l'article (action « Recherche », Réglages). */
+    onSearch: (Scope) -> Unit = {}
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -293,6 +295,9 @@ fun ArticleScreen(
             "read" -> doRead()
             "share" -> doShare()
             "instapaper" -> doInstapaper()
+            "search" -> article?.let {
+                onSearch(Scope(feedId = it.feedId, label = prettyFeedTitle(feedName ?: it.feedTitle)))
+            }
         }
     }
 
@@ -312,6 +317,9 @@ fun ArticleScreen(
                     actions = {
                         topActions.forEach { id ->
                             when (id) {
+                                "search" -> IconButton({ fireArticleAction("search") }) {
+                                    Icon(Icons.Filled.Search, "rechercher")
+                                }
                                 "instapaper" -> IconButton({ doInstapaper() }) {
                                     Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper")
                                 }
@@ -433,8 +441,16 @@ fun ArticleScreen(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                if (!feedName.isNullOrBlank()) {
-                    Text(prettyFeedTitle(feedName), style = MaterialTheme.typography.labelLarge,
+                // Nom du flux et, quand la précision apprend quelque chose, son compte : même
+                // police et même couleur, accrochés par « - » (voir `showFeedAccount`).
+                val accountLabel = if (com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds))
+                    com.pressia.data.feedAccountLabel(feedSub?.provider, vm.accounts) else null
+                val source = listOfNotNull(
+                    feedName?.takeIf { it.isNotBlank() }?.let { prettyFeedTitle(it) },
+                    accountLabel
+                ).joinToString(" - ")
+                if (source.isNotBlank()) {
+                    Text(source, style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f), maxLines = 1,
                         overflow = TextOverflow.Ellipsis)

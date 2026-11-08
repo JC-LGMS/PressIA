@@ -65,10 +65,10 @@ fun articleGestureAction(raw: String, default: String, valid: List<String>): Str
     raw.takeIf { it in valid } ?: default
 
 /** Actions du double-tap sur un article ouvert (voir `DOUBLE_TAP_ACTION`). */
-val DOUBLE_TAP_IDS = listOf("readability", "star", "read", "share", "instapaper", "none")
+val DOUBLE_TAP_IDS = listOf("readability", "star", "read", "share", "instapaper", "search", "none")
 
 /** Actions des balayages dans un article ouvert (« older »/« newer » = navigation). */
-val ARTICLE_SWIPE_IDS = listOf("older", "newer", "star", "read", "share", "instapaper", "none")
+val ARTICLE_SWIPE_IDS = listOf("older", "newer", "star", "read", "share", "instapaper", "search", "none")
 
 /**
  * Nombre de non-lus d'un périmètre, pour le compteur affiché entre parenthèses à côté du titre
@@ -83,10 +83,10 @@ fun scopeUnread(s: Scope, unreads: Map<String, Int>, folderUnreads: Map<String, 
 }
 
 /** Icônes d'action proposées pour la barre d'un article ouvert, dans l'ordre canonique. */
-val ARTICLE_ACTION_IDS = listOf("star", "read", "share", "readability", "instapaper")
+val ARTICLE_ACTION_IDS = listOf("search", "star", "read", "share", "readability", "instapaper")
 
-/** Icônes affichées par défaut : favoris, lu/non-lu, partage. */
-const val ARTICLE_ACTIONS_DEFAULT = "star,read,share"
+/** Icônes affichées par défaut : recherche, favoris, lu/non-lu, partage. */
+const val ARTICLE_ACTIONS_DEFAULT = "search,star,read,share"
 
 /** Libellé d'une action de geste d'article (double-tap, balayages), pour les réglages. */
 fun articleNavLabel(id: String): String = when (id) {
@@ -97,6 +97,7 @@ fun articleNavLabel(id: String): String = when (id) {
     "read" -> "Lu/non-lu"
     "share" -> "Partager"
     "instapaper" -> "Instapaper"
+    "search" -> "Recherche"
     else -> "Aucun"
 }
 
@@ -107,6 +108,7 @@ fun articleActionLabel(id: String): String = when (id) {
     "share" -> "Partager"
     "readability" -> "Readability"
     "instapaper" -> "Instapaper"
+    "search" -> "Recherche"
     else -> id
 }
 
@@ -233,6 +235,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val appearance: StateFlow<String> = prefs.flow(Prefs.APPEARANCE, "auto").stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
     /** Thème retenu en mode nuit : sombre ou AMOLED (choisi dans les Réglages). */
     val nightTheme: StateFlow<String> = prefs.flow(Prefs.NIGHT_THEME, "dark").stateIn(viewModelScope, SharingStarted.Eagerly, "dark")
+    /** Seuil de luminosité du mode automatique, en lux : sombre à cette valeur ou moins. */
+    val lightThreshold: StateFlow<Int> = prefs.flow(Prefs.LIGHT_THRESHOLD, 1)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
     /**
      * Thème effectif. Le drawer ne choisit plus qu'entre trois apparences ; « nuit » applique le
      * thème nocturne défini dans les Réglages (AMOLED par défaut = Sombre).
@@ -341,6 +346,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // déjà chargé, `MutableStateFlow` avec valeur) tourne dans la foulée. Les propriétés
         // qu'il assigne doivent donc être déclarées **plus haut** que ce bloc.
         viewModelScope.launch { migrateAppearance() }
+        viewModelScope.launch { migrateArticleActions() }
         // Identifiants d'application Inoreader (`AppId` / `AppKey`) : l'API les exige sur
         // chaque appel, en plus de l'authentification utilisateur. Ils sont publiés au
         // démarrage (l'utilisateur peut les redéfinir dans les Réglages) — sans eux,
@@ -412,6 +418,18 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                 prefs.set(Prefs.NIGHT_THEME, "amoled")
             }
             else -> prefs.set(Prefs.APPEARANCE, "auto")
+        }
+    }
+
+    /**
+     * L'icône « Recherche » est ajoutée en tête des icônes d'action de l'écran article : une
+     * configuration restée à l'ancien défaut (favoris, lu/non-lu, partage) reçoit le nouveau.
+     * Un choix explicite de l'utilisateur n'est pas touché (et retirer Recherche reste possible).
+     */
+    private suspend fun migrateArticleActions() {
+        val d = prefs.data.first()
+        if (d[Prefs.ARTICLE_ACTIONS] == "star,read,share") {
+            prefs.set(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT)
         }
     }
 
@@ -925,6 +943,18 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (searchScopeInit) return
         searchScopeInit = true
         searchScope = scope
+    }
+
+    /**
+     * Ouvre la recherche sur un périmètre venu d'ailleurs (menu d'appui long d'un dossier, d'un
+     * flux ou d'un article, action « Recherche ») : la portée est posée avant l'écran, qui ne la
+     * remplace donc pas par celle du flux courant.
+     */
+    fun prepareSearch(s: Scope) {
+        searchScopeInit = true
+        searchScope = s
+        searchResults = emptyList()
+        searchRan = false
     }
 
     /**

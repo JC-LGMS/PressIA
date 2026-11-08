@@ -54,7 +54,9 @@ fun SubscriptionsScreen(
     // Balayage vers la droite : remonte d'un niveau. Renseigné quand « Tous les articles » est
     // la page d'accueil — l'Accueil est alors une étape entre la racine et les dossiers/flux
     // (voir MainActivity.goHome).
-    onSwipeBack: (() -> Unit)? = null
+    onSwipeBack: (() -> Unit)? = null,
+    /** Ouvre la recherche sur le dossier ou le flux touché (menu d'appui long). */
+    onSearch: (Scope) -> Unit = {}
 ) {
     LaunchedEffect(Unit) { vm.refresh() }
     val ctx = LocalContext.current
@@ -105,6 +107,9 @@ fun SubscriptionsScreen(
             }
         }
     ) { pad ->
+        // Précision du compte : inutile quand il n'y a qu'un compte, ou que des flux locaux
+        // (voir `showFeedAccount`) — on ne l'affiche alors nulle part.
+        val showAccount = com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds)
         val uncategorized = vm.subs.filter { it.categoryId == null }
         val visibleUncategorized = if (hiddenEmpty) uncategorized.filter { (vm.unreads[it.id] ?: 0) > 0 } else uncategorized
         // Tout est lu avec le filtre « sans non-lus » : aucun flux à montrer — le dire
@@ -191,7 +196,12 @@ fun SubscriptionsScreen(
                                     // Lambda : le menu (popup) relit le compteur à l'instant de
                                     // l'affichage (voir le KDoc de FolderRow).
                                     unread = { subs.sumOf { vm.unreads[it.id] ?: 0 } },
-                                    onMarkAllRead = { vm.markAllReadFor(subs.map { it.id }) }
+                                    onMarkAllRead = { vm.markAllReadFor(subs.map { it.id }) },
+                                    account = if (showAccount)
+                                        f.providers.map { com.pressia.data.feedAccountLabel(it, vm.accounts) }
+                                            .distinct().joinToString(" · ")
+                                    else null,
+                                    onSearch = { onSearch(Scope(categoryId = f.id, label = f.label)) }
                                 )
                             }
                             if (!vm.isCollapsed(f.id)) {
@@ -208,7 +218,9 @@ fun SubscriptionsScreen(
                                         onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
                                         canMoveUp = i > 0,
                                         canMoveDown = i < shown.lastIndex,
-                                        onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) }
+                                        onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) },
+                                        account = if (showAccount) com.pressia.data.feedAccountLabel(s.provider, vm.accounts) else null,
+                                        onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) }
                                     )
                                 }
                             }
@@ -230,7 +242,9 @@ fun SubscriptionsScreen(
                                 onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
                                 canMoveUp = i > 0,
                                 canMoveDown = i < visibleUncategorized.lastIndex,
-                                onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) }
+                                onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) },
+                                account = if (showAccount) com.pressia.data.feedAccountLabel(s.provider, vm.accounts) else null,
+                                onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) }
                             )
                         }
                     }
@@ -388,7 +402,11 @@ private fun FolderRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
-    onMarkAllRead: () -> Unit
+    onMarkAllRead: () -> Unit,
+    /** Compte du dossier, quand la précision est utile (null = masquée). */
+    account: String? = null,
+    /** Ouvre la recherche sur ce dossier. */
+    onSearch: () -> Unit = {}
 ) {
     // Menu unique, ouvert par l'icône de droite comme par un appui long sur la ligne.
     var open by remember { mutableStateOf(false) }
@@ -424,6 +442,19 @@ private fun FolderRow(
         Box {
             IconButton({ open = true }, Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "actions du dossier", Modifier.size(18.dp)) }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                if (account != null) {
+                    Text(
+                        account,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Recherche") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    onClick = { open = false; onSearch() }
+                )
                 // Marquage groupé du dossier : la ligne d'appui long l'ouvre aussi. Sans non-lus,
                 // l'entrée est désactivée — le geste ne doit pas donner l'impression d'agir à vide.
                 // `unread()` est relu **ici** : un popup ne se recompose pas sur les valeurs lues
@@ -522,7 +553,11 @@ private fun SubRow(
     onMoveDown: () -> Unit,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
-    onMarkAllRead: () -> Unit
+    onMarkAllRead: () -> Unit,
+    /** Compte du flux, quand la précision est utile (null = masquée). */
+    account: String? = null,
+    /** Ouvre la recherche sur ce flux. */
+    onSearch: () -> Unit = {}
 ) {
     val pretty = prettyFeedTitle(sub.title)
     val n = vm.unreads[sub.id] ?: 0
@@ -552,6 +587,19 @@ private fun SubRow(
         Box {
             IconButton({ menu = true }, Modifier.size(36.dp)) { Icon(Icons.Filled.MoreVert, "actions du flux", Modifier.size(18.dp)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (account != null) {
+                    Text(
+                        account,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Recherche") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    onClick = { menu = false; onSearch() }
+                )
                 // Marquage groupé du flux : la ligne d'appui long l'ouvre aussi (voir FolderRow).
                 // `vm.unreads` est relu **ici** : un popup ne se recompose pas sur les valeurs lues
                 // hors de lui — l'entrée restait grisée alors que le flux avait des non-lus.

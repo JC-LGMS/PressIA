@@ -103,6 +103,8 @@ fun ArticleRow(
     onToggleStar: () -> Unit,
     showSource: Boolean = true,
     onInstapaper: () -> Unit = {},
+    /** Action « Recherche » (Réglages) : ouvre la recherche sur le flux de cet article. */
+    onSearch: () -> Unit = {},
     swipe: String = "star",
     swipeRight: String = "read",
     /** Menu d'appui long (« plus récents/anciens ») : fourni par la liste, vide par défaut. */
@@ -168,6 +170,7 @@ fun ArticleRow(
             }
             "share" -> IconButton({ shareArticle(ctx, a) }) { Icon(Icons.Filled.Share, "partager", tint = trailTint) }
             "instapaper" -> IconButton(onInstapaper) { Icon(Icons.Filled.BookmarkAdd, "envoyer vers Instapaper", tint = trailTint) }
+            "search" -> IconButton(onSearch) { Icon(Icons.Filled.Search, "rechercher", tint = trailTint) }
             "star" -> IconButton(onToggleStar) {
                 Icon(
                     if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder,
@@ -183,7 +186,7 @@ fun ArticleRow(
      * du bouton (et non en dessous), et l'étoile de swipe doit se superposer exactement à lui —
      * d'où une marge de (moitié de gouttière - 9 dp), les 9 dp étant le rayon de l'icône de 18 dp.
      */
-    val trailW = when (trailing) { "read" -> 30.dp; "share", "instapaper", "star" -> 48.dp; else -> 0.dp }
+    val trailW = when (trailing) { "read" -> 30.dp; "share", "instapaper", "star", "search" -> 48.dp; else -> 0.dp }
     // L'étoile est centrée sur la largeur totale de la ligne, bord droit à l'écran : sa marge doit
     // donc valoir le padding de la ligne + la moitié de gouttière - le rayon de l'icône (9 dp).
     // Sinon elle dérive d'autant vers l'extérieur que le padding.
@@ -338,7 +341,7 @@ fun ArticleRow(
         }
     }
     }
-    SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, dotAtStart, starEnd, metaH, mode == "magazine", content)
+    SwipeAction(a, swipe, swipeRight, onToggleStar, onToggleRead, { shareArticle(ctx, a) }, onInstapaper, onSearch, dotAtStart, starEnd, metaH, mode == "magazine", content)
 }
 
 /**
@@ -367,6 +370,7 @@ private fun SwipeAction(
     onToggleRead: () -> Unit,
     onShare: () -> Unit,
     onInstapaper: () -> Unit,
+    onSearch: () -> Unit,
     iconAtStart: Boolean,
     iconEnd: Dp,
     iconBottom: Dp,
@@ -382,6 +386,7 @@ private fun SwipeAction(
         "read" -> onToggleRead
         "share" -> onShare
         "instapaper" -> onInstapaper
+        "search" -> onSearch
         else -> onToggleStar
     }
     val toggleLeft by rememberUpdatedState(fireOf(action))
@@ -436,6 +441,7 @@ private fun SwipeAction(
                             (if (a.unread) "marquer lu" else "marquer non lu")
                         "share" -> Icons.Filled.Share to "partager"
                         "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
+                        "search" -> Icons.Filled.Search to "rechercher"
                         else -> (if (a.starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
                             (if (a.starred) "Retirer des favoris" else "Ajouter aux favoris")
                     }
@@ -911,7 +917,9 @@ fun ArticleList(
      * Arrêt à la fin des non-lus au 1er appui sur « bas » (voir [downTarget]). Faux pour les
      * Favoris et le tableau « Read later », qui vont toujours tout en bas directement.
      */
-    stopAtUnread: Boolean = true
+    stopAtUnread: Boolean = true,
+    /** Ouvre la recherche sur le flux d'un article (action « Recherche », menu d'appui long). */
+    onSearch: ((ArticleEntity) -> Unit)? = null
 ) {
     val trailing by vm.trailingAction.collectAsState()
     val swipe by vm.swipeAction.collectAsState()
@@ -935,6 +943,7 @@ fun ArticleList(
             { onOpen(a) }, { vm.setRead(a.id, !a.unread) }, { vm.setStar(a.id, !star) },
             showSource = showSource,
             onInstapaper = { sendScope.launch { vm.sendOrAskInstapaper(a) { toast(ctx, it) } } },
+            onSearch = { onSearch?.invoke(a) },
             swipe = swipe, swipeRight = swipeRight,
             onLongPress = {
                 menuFor = a
@@ -991,7 +1000,7 @@ fun ArticleList(
                 gridState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, menuAt, gridState.layoutInfo.viewportSize, vm) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, gridState.layoutInfo.viewportSize, vm, onSearch) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -1058,7 +1067,7 @@ fun ArticleList(
                 listState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, menuAt, listState.layoutInfo.viewportSize, vm) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, listState.layoutInfo.viewportSize, vm, onSearch) { menuFor = null }
         }
     }
 }
@@ -1086,6 +1095,7 @@ private fun BoxScope.ArticleLongPressMenu(
     at: DpOffset,
     viewportPx: IntSize,
     vm: PressVM,
+    onSearch: ((ArticleEntity) -> Unit)?,
     onDismiss: () -> Unit
 ) {
     val article = anchor ?: return
@@ -1140,19 +1150,36 @@ private fun BoxScope.ArticleLongPressMenu(
             Column(
                 Modifier.width(IntrinsicSize.Max).padding(vertical = 8.dp)
             ) {
-                MenuRow("Marquer lus les plus récents (${newer.size})", newer.isNotEmpty()) { send(newer) }
-                MenuRow("Marquer lus les plus anciens (${older.size})", older.isNotEmpty()) { send(older) }
+                // Compte du flux en tête du menu, quand la précision apprend quelque chose
+                // (plusieurs comptes, ou compte + flux locaux) : voir `showFeedAccount`.
+                if (com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds)) {
+                    val provider = vm.subs.firstOrNull { it.id == article.feedId }?.provider
+                    Text(
+                        com.pressia.data.feedAccountLabel(provider, vm.accounts),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                MenuRow("Recherche", true, Icons.Filled.Search) { onDismiss(); onSearch?.invoke(article) }
+                MenuRow("Marquer lus les plus récents (${newer.size})", newer.isNotEmpty(), Icons.Filled.KeyboardArrowUp) { send(newer) }
+                MenuRow("Marquer lus les plus anciens (${older.size})", older.isNotEmpty(), Icons.Filled.KeyboardArrowDown) { send(older) }
             }
         }
     }
 }
 
-/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne).
- * La colonne impose `IntrinsicSize.Max` : les lignes restent pleine largeur cliquable
- * sans étirer la carte (un `fillMaxWidth` seul dans une colonne enveloppante prendrait
- * toute la largeur max). */
+/** Ligne du menu d'appui long, au gabarit des options Material (48 dp, une seule ligne) :
+ * icône discrète puis libellé. La colonne impose `IntrinsicSize.Max` : les lignes restent pleine
+ * largeur cliquable sans étirer la carte (un `fillMaxWidth` seul dans une colonne enveloppante
+ * prendrait toute la largeur max). */
 @Composable
-private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun MenuRow(
+    label: String,
+    enabled: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
     Box(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
             .clickable(enabled = enabled, onClick = onClick)
@@ -1160,7 +1187,15 @@ private fun MenuRow(label: String, enabled: Boolean, onClick: () -> Unit) {
             .alpha(if (enabled) 1f else 0.38f),
         contentAlignment = Alignment.CenterStart
     ) {
-        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                icon, null,
+                Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+        }
     }
 }
 

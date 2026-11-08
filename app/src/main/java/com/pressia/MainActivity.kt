@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
             val theme by vm.theme.collectAsState()
             val accent by vm.accent.collectAsState()
             val bg by vm.bg.collectAsState()
+            val lightThreshold by vm.lightThreshold.collectAsState()
             val home by vm.homeScreen.collectAsState()
             val ctx = androidx.compose.ui.platform.LocalContext.current
             // deep link OAuth pressia://oauth?code=..&state=..
@@ -118,7 +119,7 @@ class MainActivity : ComponentActivity() {
                     vm.stopSyncTicker()
                 }
             }
-            PressIATheme(theme, accent, bg) {
+            PressIATheme(theme, accent, bg, lightThreshold) {
                 // Réglage « page d'accueil » pas encore lu (DataStore répond de façon
                 // asynchrone, voir PressVM.homeScreen) : ne pas composer la navigation. Elle
                 // démarrerait sur le défaut « Accueil », et le NavController garderait cette
@@ -193,8 +194,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                fun openArticle(id: String) {
-                    // Le réglage est lu au moment du clic, pas capturé à la composition : une
+                fun openArticle(id: String) {                    // Le réglage est lu au moment du clic, pas capturé à la composition : une
                     // valeur périmée ouvrait les articles dans le mauvais mode.
                     val mode = vm.openMode.value
                     // « Navigateur » et « onglet personnalisé » ouvrent tous deux l'article hors de
@@ -219,6 +219,22 @@ class MainActivity : ComponentActivity() {
                     // caractères spéciaux (URL de flux local, identifiants d'entrée).
                     nav.navigate("article")
                     nav.currentBackStackEntry?.savedStateHandle?.set(ARTICLE_ID, id)
+                }
+
+                /**
+                 * Ouvre la recherche sur un périmètre donné (menu d'appui long d'un dossier, d'un
+                 * flux ou d'un article, action « Recherche » des Réglages).
+                 */
+                fun openSearch(s: Scope) {
+                    vm.prepareSearch(s)
+                    nav.navigate("search") { launchSingleTop = true }
+                }
+
+                /** Périmètre d'un article : son flux, sous le nom affiché. */
+                fun openSearchForArticle(a: com.pressia.data.local.ArticleEntity) {
+                    val raw = vm.subs.firstOrNull { it.id == a.feedId }?.title.orEmpty()
+                        .ifBlank { a.feedTitle }.ifBlank { a.feedId }
+                    openSearch(Scope(feedId = a.feedId, label = com.pressia.ui.prettyFeedTitle(raw)))
                 }
 
                 /**
@@ -471,13 +487,15 @@ class MainActivity : ComponentActivity() {
                                         onMenu = { openDrawer() },
                                         // Hiérarchie « Tous les articles » : l'Accueil est une
                                         // étape, un balayage vers la droite remonte à la racine.
-                                        onSwipeBack = if (hierarchical) ({ goHome() }) else null)
+                                        onSwipeBack = if (hierarchical) ({ goHome() }) else null,
+                                        onSearch = { s -> openSearch(s) })
                                 }
                                 composable("stream") {
                                     BackRule()
                                     StreamScaffold(vm, vm.scope.label,
                                         onOpen = { openArticle(it.id) },
                                         onMenu = { openDrawer() },
+                                        onSearch = { a -> openSearchForArticle(a) },
                                         // Balayage droit : même action que le bouton retour. À la
                                         // racine « Tous les articles » il ouvre le tiroir (comme sur
                                         // les autres écrans d'accueil) ; dans un dossier ou un flux
@@ -510,19 +528,22 @@ class MainActivity : ComponentActivity() {
                                         ArticleScreen(vm, id,
                                             onBack = { nav.popBackStack() },
                                             onMenu = { openDrawer() },
-                                            onShowArticle = { handle[ARTICLE_ID] = it })
+                                            onShowArticle = { handle[ARTICLE_ID] = it },
+                                            onSearch = { s -> openSearch(s) })
                                     }
                                 }
                                 composable("starred") {
                                     BackRule()
                                     FavorisScreen(vm,
                                         onOpen = { openArticle(it.id) },
-                                        onMenu = { openDrawer() })
+                                        onMenu = { openDrawer() },
+                                        onSearch = { a -> openSearchForArticle(a) })
                                 }
                                  composable("search") {
                                      BackRule()
                                      ScaffoldWithMenu("Recherche", { openDrawer() }, drawerIconFor("search"), vm) {
-                                         SearchScreen(vm, onOpen = { openArticle(it.id) })
+                                         SearchScreen(vm, onOpen = { openArticle(it.id) },
+                                             onSearch = { a -> openSearchForArticle(a) })
                                      }
                                  }
                                  composable("dedup") {

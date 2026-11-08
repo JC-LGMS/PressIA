@@ -483,6 +483,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   option et son explication : la page est une longue suite de lignes, sans bordure un interrupteur
   se lisait avec le paragraphe voisin. Une note qui vaut pour toute la section (volume et
   fréquence) reste **hors** encadré, juste sous le titre de section.
+- La page est en deux blocs cohérents : **Listes d'articles** (vue, bouton de raccourci,
+  glissements de ligne, favicon lu/non-lu) et **Dans un article** (ouverture, Readability,
+  double-tap, balayages, icônes d'action, vidéos). Un réglage qui agit sur l'écran article va dans
+  le second.
+- Les listes d'action (bouton de raccourci, glissements, double-tap, balayages) proposent
+  **Recherche** : l'action ouvre l'écran Recherche sur le flux de l'article. « Icônes d'action »
+  l'ajoute par défaut en tête (`ARTICLE_ACTIONS_DEFAULT`), et `migrateArticleActions` la donne aux
+  configurations restées à l'ancien défaut.
 
 ## Pièges connus — réseau, comptes et synchronisation
 
@@ -826,6 +834,22 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   au retour à l'accueil ; le balayage d'un article à l'autre ne change pas de destination et le
   conserve. Un article déjà extrait, lui, reste en complet à la réouverture : c'est `fullFetched`
   en base, pas l'épingle de session.
+- **Mode automatique et lumière ambiante** (`ui/theme/Theme.kt`, `ambientDark`) : avec un capteur
+  de luminosité, le thème bascule quand la lumière franchit le **seuil réglable** (Réglages →
+  Affichage, `LIGHT_THRESHOLD`, 1 lux par défaut, curseur 0–200 lux, avec la **luminosité
+  actuelle** affichée en dessous pour choisir en connaissance de cause) — à cette valeur ou moins :
+  sombre. Le changement attend **5 s de conditions stables dans les deux sens** (un nuage ou une
+  lampe passagère ne fait pas clignoter) ; sans capteur, `isSystemInDarkTheme()` comme avant. Le
+  thème part **sombre** tant que le capteur n'a rien dit, et la **première lecture** (démarrage)
+  s'applique immédiatement : l'écran s'ouvre dans le thème de la pièce, l'attente ne concerne que
+  les changements en cours d'usage. Vérifié sur l'émulateur (`adb emu sensor set light 0|1|2`).
+- **Menu d'appui long** (accueil, flux, article) : il porte « Recherche » (portée du dossier, du
+  flux ou du flux de l'article) et, en tête, le **compte** du flux ou « Local » — seulement si la
+  précision distingue (`showFeedAccount` : plusieurs comptes, ou un compte + des flux locaux).
+  L'écran article affiche ce compte **collé au nom du flux** (« Mediapart - Feedly »), même police
+  et même couleur. Les écrans hôtes reçoivent `onSearch` et posent la portée via
+  `PressVM.prepareSearch` avant de naviguer vers `search`. Le menu d'un article porte une icône par
+  entrée (loupe pour Recherche, flèches haut/bas pour les marquages groupés).
 - Toute suppression est **confirmée** : corbeille d'un flux local (`LoginScreen`, dialogue
   « Désabonner ce flux ? ») comme « Déconnecter » un compte. Les menus de flux des abonnements ne
   suppriment pas (déplacer / monter / descendre) — une nouvelle action destructrice doit passer par
