@@ -144,6 +144,18 @@ interface InoreaderService {
         @Field("r") remove: String? = null,
         @Field("T") token: String
     )
+    /**
+     * « Marquer tout comme lu » du site : tout ce qui est **plus ancien que `ts`** passe en lu
+     * sur le flux donné (`feed/…`, `user/-/label/…`, `user/-/state/com.google/reading-list`).
+     * `ts` = maintenant marque tout. Réponse texte `OK`, d'où `Unit` comme [editTag].
+     */
+    @FormUrlEncoded @POST("reader/api/0/mark-all-as-read")
+    suspend fun markAllAsRead(
+        @HeaderMap h: Map<String, String>,
+        @Field("s") stream: String,
+        @Field("ts") ts: String,
+        @Field("T") token: String
+    )
     /** Jeton CSRF : texte nu, d'où `ResponseBody` (le convertisseur JSON le refuserait). */
     @GET("reader/api/0/token")
     suspend fun token(@HeaderMap h: Map<String, String>): ResponseBody

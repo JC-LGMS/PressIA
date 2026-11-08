@@ -1684,8 +1684,8 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             Spacer(Modifier.height(16.dp))
             Text(
                 "Lecteur RSS Android développé grâce à OpenCode, Muse Spark 1.3 free et " +
-                    "DeepSeek 4.1 Flash par Jean-Cyril Poiraud (inspiré par Press) : Feedly ou " +
-                    "flux locaux, 100 % Jetpack Compose, lecture hors-ligne et article complet " +
+                    "DeepSeek 4.1 Flash par Jean-Cyril Poiraud (inspiré par Press) : Feedly, Inoreader " +
+                    "ou flux locaux, 100 % Jetpack Compose, lecture hors-ligne et article complet " +
                     "via Readability.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1813,9 +1813,12 @@ private val ABOUT_TOPICS = listOf(
         "Appui long : marquages groupés",
         "Un appui long sur un article propose « marquer lus les plus récents / les plus anciens », l'article " +
             "touché restant tel quel. Sur l'accueil, un appui long sur un flux ou sur un dossier ouvre le menu " +
-            "de la ligne, où « Tout marquer comme lu » porte exactement le périmètre touché. Les favoris et le " +
+            "de la ligne, où « Tout marquer comme lu » porte exactement le périmètre touché. Sur Inoreader, ce " +
+            "marquage emprunte le « Marquer tout comme lu » du site (un appel par flux, ou sur tout le compte " +
+            "pour la vue « Tous les articles ») : le serveur est à jour tout de suite. Les favoris et le " +
             "Read later ne sont jamais touchés par ces marquages. Chaque marquage groupé (« tout marquer lu » " +
-            "inclus) propose un bouton Annuler."
+            "inclus) propose un bouton Annuler — chez Inoreader, cette annulation reste locale : le site ne " +
+            "sait pas rouvrir un article plus ancien."
     ),
     AboutTopic(
         "Favoris et Read later : jamais marqués lus",
@@ -1862,7 +1865,9 @@ private val ABOUT_TOPICS = listOf(
         "Un article ouvert devient lu, et son retour en non lu est possible depuis l'en-tête de l'article. " +
             "Feedly, lui, marque lu tout seul au-delà de 31 jours : PressIA garde donc l'état local " +
             "des articles plus vieux déjà connus (désactivable dans Réglages, « Feedly : garder non lu au-delà " +
-            "de 31 jours »). Les favoris et le Read later ne sont jamais marqués lus en masse."
+            "de 31 jours »). Inoreader n'a pas ce délai : l'état du service fait foi, et un article passé en lu " +
+            "dans PressIA l'est aussi sur le site (les marquages de masse passent par son « tout comme lu »). " +
+            "Les favoris et le Read later ne sont jamais marqués lus en masse."
     ),
     AboutTopic(
         "Sauvegarde et restauration",

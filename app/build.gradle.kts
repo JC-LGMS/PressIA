@@ -170,13 +170,17 @@ android {
             val debugApk = file("${buildDir}/outputs/apk/debug/app-debug.apk")
             if (releaseApk.exists()) {
                 val newName = "PressIA-${appVersionName}-release-$date.apk"
-                val newFile = releaseApk.parentFile.resolve(newName)
-                releaseApk.renameTo(newFile)
+                // Copie (et non `renameTo`) : déplacer l'APK hors de son dossier faisait
+                // reconstruire `packageDebug` en incrémental **sans** son fichier de base, et
+                // l'APK produit était tronqué (1,2 Mo au lieu de 20). Une copie laisse
+                // l'original en place, ce dont l'empaquetage incrémental a besoin.
+                releaseApk.copyTo(releaseApk.parentFile.resolve(newName), overwrite = true)
             }
             if (debugApk.exists()) {
-                val newName = "PressIA-${appVersionName}-debug-$date.apk"
-                val newFile = debugApk.parentFile.resolve(newName)
-                debugApk.renameTo(newFile)
+                debugApk.copyTo(
+                    debugApk.parentFile.resolve("PressIA-${appVersionName}-debug-$date.apk"),
+                    overwrite = true
+                )
             }
         }
     }

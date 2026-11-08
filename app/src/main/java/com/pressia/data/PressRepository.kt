@@ -488,7 +488,9 @@ class PressRepository(
         if (idx < 0) return@withContext null
         accounts[idx] = accounts[idx].copy(
             token = tokens.access,
-            refreshToken = tokens.refresh.ifBlank { account.refreshToken }
+            // Sans nouveau jeton de renouvellement, on garde l'ancien (RFC 6749 §6 : il reste
+            // valable) — `OAuth.inoreaderRefresh` comble déjà le vide par le jeton envoyé.
+            refreshToken = tokens.refresh
         )
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         if (prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == account.id) setActiveAccount(account.id)

@@ -589,6 +589,16 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   identifiants). Bonus : ça rattrape les articles que le serveur croit encore non lus alors que
   l'app les a marqués lus, que la réconciliation suivante rouvrirait sinon. Ne pas « optimiser » ce
   chemin en un appel de masse.
+- Marquage de masse Inoreader : `POST /reader/api/0/mark-all-as-read` (`s` = identifiant de flux,
+  `T` = jeton CSRF, `ts` = unix **secondes**) répond `OK` — c'est le bouton « Marquer tout comme
+  lu » du site. `ts` = maintenant marque tout ; **omettre `ts` ou le mettre à 0 revient au même**,
+  et l'opération est **irréversible** : elle avance `firstitemmsec` du flux, et l'API *ignore
+  silencieusement* tout passage en non lu d'un article plus ancien (vérifié en direct : un appel
+  `ts=0` a ramené le compte entier de 3366 non-lus à 0, sans retour). Conséquence de tous les
+  jours : « Annuler » après un marquage groupé Inoreader ne se voit que localement, la
+  réconciliation suivante referme les articles au tour d'après. Un dossier est marqué flux par
+  flux par l'appelant (même effet que son étiquette, sans faire descendre le dossier jusqu'à la
+  file montante) ; un compte connecté par cookie porte un jeton CSRF vide, et l'API l'accepte.
 - **Feedly marque lu tout seul au-delà de 31 jours** : son état lu/non-lu ne dit plus ce que
   l'utilisateur a lu passé ce délai. `autoReadAgeMs("feedly")` = `FEEDLY_AUTO_READ_AGE_MS`, et
   `autoReadCutoff` borne **deux** chemins : `storeArticles(..., keepReadBeforeMs = …)` préserve

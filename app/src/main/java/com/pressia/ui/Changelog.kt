@@ -48,6 +48,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.50",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Inoreader : « tout marquer lu », jeton de renouvellement, À propos",
+                "- « Tout marquer comme lu » passe désormais par le bouton du site : marquage de masse côté " +
+                    "Inoreader, un appel par flux, tout le compte pour la vue « Tous les articles » — le " +
+                    "serveur est à jour tout de suite.\n" +
+                    "- Renouvellement du jeton OAuth : le jeton de renouvellement renvoyé par Inoreader est " +
+                    "toujours repris ; sans nouveau jeton, l'ancien reste valable (RFC 6749).\n" +
+                    "- À propos : Inoreader apparaît dans la présentation et dans les fonctionnalités " +
+                    "(marquage groupé, état lu/non lu) avec sa limite — une annulation de marquage groupé " +
+                    "reste locale, le site ne rouvre pas un article plus ancien.",
+                time = "11:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.49",
         listOf(
             ChangelogItem(

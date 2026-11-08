@@ -367,19 +367,43 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val s = call(token) { h -> api.stream(h, stream, n = max.coerceIn(1, 200), cont = continuation) }
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
+    /** Jeton CSRF de la session, cherché avec le même en-tête que l'appel qu'il protège. */
+    private suspend fun csrf(h: Map<String, String>): String =
+        try { api.token(h).string().trim() } catch (_: Exception) { "" }
+
     private suspend fun tag(token: String?, ids: List<String>, add: String?, remove: String?) {
         if (ids.isEmpty()) return
         call(token) { h ->
-            // Le jeton CSRF de l'endpoint est cherché avec le même en-tête : il va de pair
-            // avec le jeton d'accès, pas avec lui. Il vaut pour la session : le redemander à
-            // chaque article doublait les requêtes (un GET token + un POST edit-tag par article).
-            val t = try { api.token(h).string().trim() } catch (_: Exception) { "" }
+            // Il vaut pour la session : le redemander à chaque article doublait les requêtes
+            // (un GET token + un POST edit-tag par article).
+            val t = csrf(h)
             ids.forEach { api.editTag(h, it, add, remove, t) }
         }
     }
     override suspend fun markRead(t: String?, ids: List<String>) = tag(t, ids, "user/-/state/com.google/read", null)
     override suspend fun markUnread(t: String?, ids: List<String>) = tag(t, ids, null, "user/-/state/com.google/read")
-    override suspend fun markAllRead(t: String?, feedIds: List<String>) { /* via mark-all-as-read endpoint côté repo */ }
+    /**
+     * « Marquer tout comme lu » du site, un appel par flux : c'est exactement ce que le bouton
+     * de la page Inoreader fait (tout ce qui est plus ancien que `ts`, ici maintenant). Un
+     * dossier est marqué flux par flux par l'appelant — l'effet est le même que sur son
+     * étiquette, sans avoir à faire descendre le dossier jusqu'à la file montante.
+     */
+    override val bulkMarkAllRead = true
+    override suspend fun markAllRead(t: String?, feedIds: List<String>) {
+        if (feedIds.isEmpty()) return
+        markStreamsRead(t, feedIds)
+    }
+    override suspend fun markAllReadGlobal(t: String?) =
+        markStreamsRead(t, listOf("user/-/state/com.google/reading-list"))
+
+    private suspend fun markStreamsRead(token: String?, streams: List<String>) {
+        val ts = (System.currentTimeMillis() / 1000).toString()
+        call(token) { h ->
+            val t = csrf(h)
+            streams.distinct().forEach { api.markAllAsRead(h, it, ts, t) }
+        }
+        android.util.Log.d("PressIA", "inoreader tout lu : ${streams.distinct().size} flux marqués")
+    }
     override suspend fun profile(token: String?): String? {
         val u = call(token) { h -> api.userInfo(h) }
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
