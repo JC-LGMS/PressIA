@@ -151,20 +151,43 @@ class PressLogicTest {
     }
 
     @Test fun `note des images manquantes en fin de synchro`() {
-        // Une image en timeout ne fait pas échouer la synchro : le message nomme les flux.
-        assertNull(com.pressia.data.imageFailureNote(emptyList(), interrupted = false))
+        // Une image en timeout ne fait pas échouer la synchro : le message n'en donne que le
+        // nombre, le détail passant par la modale « Voir le détail ».
+        assertNull(com.pressia.data.imageFailureNote(0, interrupted = false))
         assertEquals(
-            ". Images non récupérées : FrAndroid",
-            com.pressia.data.imageFailureNote(listOf("FrAndroid"), interrupted = false)
+            ". Images non récupérées : 1 image",
+            com.pressia.data.imageFailureNote(1, interrupted = false)
         )
         assertEquals(
-            ". Images non récupérées : A, B, C, D et 2 autre(s) flux",
-            com.pressia.data.imageFailureNote(listOf("A", "B", "C", "D", "E", "F"), interrupted = false)
+            ". Images non récupérées : 7 images",
+            com.pressia.data.imageFailureNote(7, interrupted = false)
         )
         assertEquals(
             ". Images non récupérées (téléchargement interrompu)",
-            com.pressia.data.imageFailureNote(emptyList(), interrupted = true)
+            com.pressia.data.imageFailureNote(0, interrupted = true)
         )
+    }
+
+    @Test fun `detection d un svg`() {
+        // Un SVG (logo de flux) part chez AndroidSVG, pas chez BitmapFactory qui le refuse.
+        fun svg(s: String) = com.pressia.data.local.isSvgImage(s.toByteArray())
+        assertEquals(true, svg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"/>"))
+        assertEquals(true, svg("<?xml version=\"1.0\"?>\n<svg viewBox=\"0 0 8 8\"></svg>"))
+        assertEquals(false, svg("\u00FF\u00D8\u00FF\u0000 quelque chose"))
+    }
+
+    @Test fun `cause d une image en echec`() {
+        // Le détail de fin de synchro nomme la cause : un code HTTP, un délai, un hôte mort.
+        fun cause(e: Throwable?) = com.pressia.data.local.imageFailureCause(e)
+        assertEquals("délai dépassé", cause(java.net.SocketTimeoutException()))
+        // Délai total d'un appel OkHttp (« timeout ») : une image lourde, pas une panne.
+        assertEquals("délai dépassé", cause(java.io.InterruptedIOException("timeout")))
+        assertEquals("hôte introuvable", cause(java.net.UnknownHostException("x")))
+        assertEquals("connexion coupée", cause(java.net.SocketException()))
+        assertEquals("connexion impossible", cause(java.io.IOException()))
+        // Au-delà du plafond de 10 Mo, c'est la taille le problème, pas le réseau.
+        assertEquals("image trop lourde", cause(com.pressia.data.local.ImageTooLargeException()))
+        assertEquals("échec", cause(null))
     }
 
     @Test fun `html d article plafonne a l ecriture`() {

@@ -434,15 +434,31 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   l'article — une image manquante le laisse en attente (elle sera reprise ; marquage par article,
   pas par URL). Appelé en fin de `syncDown` (`withThumbs = true`) et de `backfill` : **toute** sync
   (bouton, lancement, worker, connexion de compte) récupère les images.
-- **Un échec d'image ne fait pas échouer la synchronisation.** `syncImages` relève les flux dont un
-  article garde une image manquante (timeout, 404…) dans `imageFailures` ; le pipeline et l'ajout
-  d'un flux passent par `syncImagesSafely` (erreur inattendue journalisée, `imagesInterrupted`).
-  `LAST_SYNC_AT` avance dès que les articles et le reste sont passés, et `imageFailureNote` ajoute
-  au message final « Images non récupérées : Flux A, Flux B » (quatre noms, puis « et N autres
-  flux »). La projection `articlesPendingImages` porte `feedId`/`feedTitle` pour pouvoir les nommer.
-  **Délai réseau des images : 10 s** (connexion, lecture et durée totale) dans `ThumbStore` comme
-  dans le client OkHttp posé sur Coil (`PressIAApp`) : une image qui ne répond pas libère vite la
-  passe au lieu de la retenir 30 s.
+- **Un échec d'image ne fait pas échouer la synchronisation.** `syncImages` relève les images
+  qu'un article garde manquantes (timeout, 404…) dans `imageFailures`, une entrée par URL
+  (`FailedImage` : flux, titre d'article, adresse) ; le pipeline et l'ajout d'un flux passent par
+  `syncImagesSafely` (erreur inattendue journalisée, `imagesInterrupted`). `LAST_SYNC_AT` avance dès
+  que les articles et le reste sont passés, et `imageFailureNote` ajoute au message final
+  « Images non récupérées : 3 images » (le **nombre** seulement) ; le bandeau propose alors
+  « Voir le détail », qui ouvre `ImageFailuresDialog` (flux, article, cause et URL de chaque
+  image — la liste défile avec son indicateur, une adresse touchée est copiée et la modale le
+  confirme sur place, étant une fenêtre à part où le toast de l'application ne se verrait pas) ; le
+  bandeau reste alors 5 s à l'écran (12 s pour une session expirée, 4 s sinon). Un
+  téléchargement interrompu, lui, n'a pas de détail : « Images non récupérées (téléchargement
+  interrompu) ». La projection `articlesPendingImages` porte `feedId`/`feedTitle`/`title` pour
+  nommer chaque image.
+  **Délai réseau des images : connexion 10 s, lecture et durée totale 30 s** dans `ThumbStore`
+  comme dans le client OkHttp posé sur Coil (`PressIAApp`) : une originale de 5 Mo met plus de
+  10 s quand six descendent de front, mais une image qui ne répond pas ne retient pas la passe
+  indéfiniment. **Plafond de taille : 10 Mo** (`MAX_SOURCE_BYTES`) sur les deux chemins —
+  `readCapped` pour les miniatures, `imageCapInterceptor` pour Coil (le `Content-Length` manque
+  souvent, il compte les octets lus) : les CDN servent des originales de 30 Mo, qui allaient
+  jusqu'au délai et s'annonçaient « délai dépassé » au lieu de « image trop lourde ».
+  **Les SVG sont pris en charge** (logos de flux, illustrations) : `coil-svg` + `AndroidSVG`
+  (dépendances), `SvgDecoder` enregistré dans le `ImageLoader` de `PressIAApp` pour le corps et
+  les favicons, et `ThumbStore` rasterise lui-même (`isSvgImage` détecte « <svg » dans les
+  premiers octets, `decodeSvg` rend le gabarit via `renderToCanvas`). Sans cela `BitmapFactory`
+  rendait `null` et la miniature restait éternellement « image illisible ».
 - **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
   parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
   téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).

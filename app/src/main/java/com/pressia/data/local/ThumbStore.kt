@@ -11,9 +11,67 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.buffer
 import java.io.File
+import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.SocketException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+
+/** Corps d'image au-delà du plafond ([ThumbStore.MAX_SOURCE_BYTES]) : le vrai motif dans le
+ *  détail de synchro. Les CDN servent des originales de 30 Mo, qui n'ont pas à descendre sur un
+ *  téléphone — sans ce plafond la requête allait jusqu'au délai et s'annonçait « délai dépassé ». */
+class ImageTooLargeException : IOException("image trop lourde")
+
+/**
+ * Intercepteur OkHttp (client de Coil) qui coupe le téléchargement dès que le plafond est
+ * franchi. Le `Content-Length` manque souvent (réponses « chunked ») : le compteur compte les
+ * octets lus, et l'annonce est vérifiée d'abord quand elle existe.
+ */
+fun imageCapInterceptor(cap: Long): okhttp3.Interceptor = okhttp3.Interceptor { chain ->
+    val resp = chain.proceed(chain.request())
+    val body = resp.body
+    if (body == null) return@Interceptor resp
+    if (body.contentLength() > cap) throw ImageTooLargeException()
+    resp.newBuilder().body(object : okhttp3.ResponseBody() {
+        override fun contentType() = body.contentType()
+        override fun contentLength() = body.contentLength()
+        override fun source(): okio.BufferedSource =
+            object : okio.ForwardingSource(body.source()) {
+                private var read = 0L
+                override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                    val n = super.read(sink, byteCount)
+                    if (n > 0) {
+                        read += n
+                        if (read > cap) throw ImageTooLargeException()
+                    }
+                    return n
+                }
+            }.buffer()
+    }).build()
+}
+
+/** Cause courte d'un échec de téléchargement d'image, telle qu'affichée dans le détail de fin de
+ * synchro (« délai dépassé », « HTTP 404 »…). Pure.
+ *
+ * `InterruptedIOException` couvre le délai **total** d'un appel OkHttp (son message est
+ * « timeout ») : une image lourde qui dépasse le plafond de temps était dite « connexion
+ * impossible », alors que la connexion marchait. */
+fun imageFailureCause(e: Throwable?): String = when {
+    e is ImageTooLargeException -> "image trop lourde"
+    e is InterruptedIOException -> "délai dépassé"
+    e is UnknownHostException -> "hôte introuvable"
+    e is SocketException -> "connexion coupée"
+    e is IOException -> "connexion impossible"
+    else -> "échec"
+}
+
+/** Le corps téléchargé est-il un SVG ? BitmapFactory ne sait pas le décoder, AndroidSVG si ;
+ * un raster binaire ne contient pas « <svg » dans ses premiers octets. Pure, testée. */
+fun isSvgImage(bytes: ByteArray): Boolean =
+    bytes.take(512).toByteArray().toString(Charsets.ISO_8859_1).contains("<svg", ignoreCase = true)
 
 /**
  * Miniatures d'articles stockées en local, à la taille affichée — jamais l'original full-size.
@@ -38,11 +96,12 @@ object ThumbStore {
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            // Une image qui ne répond pas ne doit pas retenir une synchro : 10 s au total, et
-            // le flux est nommé dans le message de fin (voir `imageFailures`).
+            // Une image qui ne répond pas ne doit pas retenir une synchro : 30 s au total (les
+            // originales de 5 Mo servies par certains CDN mettent plus de 10 s à six de front),
+            // et l'image est comptée dans le détail de fin de synchro (voir `imageFailures`).
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .callTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 
@@ -89,32 +148,33 @@ object ThumbStore {
         fileFor(ctx, url).takeIf { it.exists() }
 
     /**
-     * Télécharge [url], la réduit au gabarit et l'enregistre. Renvoie `true` si le fichier
-     * est désormais présent (y compris s'il l'était déjà).
+     * Télécharge [url], la réduit au gabarit et l'enregistre. Renvoie `null` si le fichier
+     * est désormais présent (y compris s'il l'était déjà), sinon la **cause** courte de
+     * l'échec — le détail de fin de synchro la montre image par image.
      */
-    suspend fun fetch(ctx: Context, url: String, maxW: Int, maxH: Int): Boolean =
+    suspend fun fetch(ctx: Context, url: String, maxW: Int, maxH: Int): String? =
         withContext(Dispatchers.IO) {
             val target = fileFor(ctx, url)
-            if (target.exists()) return@withContext true
+            if (target.exists()) return@withContext null
             try {
                 val bytes = http.newCall(Request.Builder().url(url).get().build())
                     .execute().use { resp ->
-                        if (!resp.isSuccessful) return@withContext false
-                        val body = resp.body ?: return@withContext false
+                        if (!resp.isSuccessful) return@withContext "HTTP ${resp.code}"
+                        val body = resp.body ?: return@withContext "réponse vide"
                         // Taille annoncée au-delà du plafond : inutile de la télécharger.
-                        if (exceedsCap(body.contentLength(), MAX_SOURCE_BYTES)) return@withContext false
+                        if (exceedsCap(body.contentLength(), MAX_SOURCE_BYTES)) return@withContext "image trop lourde"
                         // Plafond : charger 10 Mo en RAM pour une vignette de ~100 Ko ne sert à rien.
-                        readCapped(body.byteStream(), MAX_SOURCE_BYTES)?.takeIf { it.isNotEmpty() }
-                            ?: return@withContext false
+                        // `readCapped` rend `null` au-delà du plafond (taille non annoncée) :
+                        // l'appeler « image vide » masquait le vrai motif.
+                        val bytes = readCapped(body.byteStream(), MAX_SOURCE_BYTES)
+                            ?: return@withContext "image trop lourde"
+                        if (bytes.isEmpty()) return@withContext "image vide"
+                        bytes
                     }
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext false
-                val opts = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxW, maxH)
-                }
-                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                    ?: return@withContext false
+                // SVG (logos, illustrations vectorielles de certains flux) : BitmapFactory
+                // rendrait `null` et l'image resterait éternellement en échec.
+                val decoded = (if (isSvgImage(bytes)) decodeSvg(bytes, maxW, maxH)
+                else decodeRaster(bytes, maxW, maxH)) ?: return@withContext "image illisible"
                 val (w, h) = fitSize(decoded.width, decoded.height, maxW, maxH)
                 val scaled = if (decoded.width == w && decoded.height == h) decoded
                 else Bitmap.createScaledBitmap(decoded, w, h, true).also {
@@ -134,16 +194,43 @@ object ThumbStore {
                 val tmp = File(d, target.name + ".tmp")
                 try {
                     tmp.outputStream().use { opaque.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
-                    if (!tmp.renameTo(target)) { tmp.delete(); return@withContext false }
+                    if (!tmp.renameTo(target)) {
+                        tmp.delete()
+                        return@withContext "écriture impossible"
+                    }
                 } finally {
                     tmp.delete()
                     opaque.recycle()
                 }
-                true
-            } catch (_: Exception) {
-                false
+                null
+            } catch (e: Exception) {
+                imageFailureCause(e)
             }
         }
+
+    /** Décode un raster (JPEG, PNG, WebP…) sous-échantillonné au plus près du gabarit. */
+    private fun decodeRaster(bytes: ByteArray, maxW: Int, maxH: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxW, maxH)
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+
+    /** Rasterise un SVG directement à la taille du gabarit (AndroidSVG, apporté par coil-svg).
+     *  Sans `width`/`height` (viewBox seul, non exposé par AndroidSVG) : gabarit carré, le
+     *  `preserveAspectRatio` évite au moins la déformation. */
+    private fun decodeSvg(bytes: ByteArray, maxW: Int, maxH: Int): Bitmap? = runCatching {
+        val svg = com.caverock.androidsvg.SVG.getFromInputStream(bytes.inputStream())
+        val srcW = svg.documentWidth.toInt().takeIf { it > 0 } ?: maxW
+        val srcH = svg.documentHeight.toInt().takeIf { it > 0 } ?: maxH
+        val (w, h) = fitSize(srcW, srcH, maxW, maxH)
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bmp ->
+            svg.renderToCanvas(Canvas(bmp), android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()))
+        }
+    }.getOrNull()
 
     /** Taille occupée par les miniatures, en octets. */
     suspend fun sizeBytes(ctx: Context): Long = withContext(Dispatchers.IO) {

@@ -36,6 +36,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import kotlin.math.roundToInt
+import com.pressia.data.FailedImage
 import com.pressia.data.FeedSort
 import com.pressia.data.Sections
 import com.pressia.data.StatsPeriod
@@ -1533,6 +1534,117 @@ private fun ArticleActionsDialog(
     }
 }
 
+/**
+ * Détail des images qu'une synchronisation n'a pas pu récupérer (bouton « Voir le détail » du
+ * bandeau de fin de synchro) : une ligne par image, son article, la cause de l'échec et son
+ * adresse (touchée, elle est copiée). Liste défilante bornée en hauteur avec son indicateur —
+ * une passe peut en manquer des dizaines. Même carte que les autres dialogues.
+ */
+@Composable
+fun ImageFailuresDialog(images: List<FailedImage>, onDismiss: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Confirmation dans la modale : elle est une fenêtre à part, le toast de l'application
+    // resterait derrière.
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { delay(2000); copied = false } }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Images non récupérées (${images.size})",
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    "Elles seront retentées à la prochaine synchronisation. Touchez une adresse " +
+                        "pour la copier.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Box(Modifier.heightIn(max = 360.dp)) {
+                    LazyColumn(Modifier.fillMaxWidth(), state = listState) {
+                        items(images, key = { it.url }) { img ->
+                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Text(
+                                    img.feed,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    img.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${img.cause} · ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        img.url,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).clickable {
+                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(img.url))
+                                            copied = true
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    LazyScrollbar(
+                        listState,
+                        Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 2.dp)
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (copied) "Adresse copiée" else "",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onDismiss) { Text("Fermer") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Indicateur de défilement vertical d'une liste — Compose n'en fournit pas. La hauteur du
+ * curseur suit la part visible, sa position le premier élément affiché ; masqué quand tout tient.
+ */
+@Composable
+private fun LazyScrollbar(state: androidx.compose.foundation.lazy.LazyListState, modifier: Modifier = Modifier) {
+    val info = state.layoutInfo
+    val visible = info.visibleItemsInfo
+    val total = info.totalItemsCount
+    if (visible.isEmpty() || total <= visible.size) return
+    val fraction = visible.size.toFloat() / total
+    val steps = (total - visible.size).coerceAtLeast(1)
+    val progress = (info.visibleItemsInfo.first().index.toFloat() / steps).coerceIn(0f, 1f)
+    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    androidx.compose.foundation.Canvas(modifier.width(4.dp)) {
+        val h = (size.height * fraction).coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height)
+        val y = (size.height - h) * progress
+        drawRoundRect(
+            color,
+            topLeft = androidx.compose.ui.geometry.Offset(0f, y),
+            size = androidx.compose.ui.geometry.Size(size.width, h),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width / 2)
+        )
+    }
+}
+
 /** Horodatage court pour le nom du fichier de sauvegarde. */
 private fun stampNow(): String {
     val c = java.util.Calendar.getInstance()
@@ -1765,7 +1877,10 @@ private val ABOUT_TOPICS = listOf(
         "Synchronisation : bouton, lancement, fréquence",
         "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
             "récupèrent la même chose : nouveaux articles, tableau « Read later » et images des articles " +
-            "(miniature déclarée et images du corps, une seule requête par image même partagée). Application " +
+            "(miniature déclarée et images du corps, une seule requête par image même partagée ; un SVG est " +
+            "accepté, une image au-delà de 10 Mo est écartée). Celles qui n'arrivent pas sont comptées en fin " +
+            "de synchro — « Voir le détail » nomme le flux, l'article, la cause (404, délai dépassé, image " +
+            "trop lourde…) et l'adresse, qu'un appui copie. Application " +
             "ouverte, la synchronisation repart d'elle-même à la fréquence réglée (10 minutes par défaut, " +
             "0 = manuelle) ; fermée, il n'y en a aucune. Les favicons, " +
             "eux, ne se téléchargent que lorsqu'ils manquent ou que le mois a passé : première synchronisation, " +

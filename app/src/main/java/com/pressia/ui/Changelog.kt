@@ -48,6 +48,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.51",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Images : détail des échecs, SVG, plafond de taille",
+                "- Fin de synchronisation : « Images non récupérées : 3 images » avec un bouton " +
+                    "« Voir le détail » — flux, article, cause et adresse de chaque image, liste " +
+                    "défilante avec son indicateur ; toucher une adresse la copie (et la modale le " +
+                    "confirme). Le bandeau reste 5 s quand il porte ce bouton.\n" +
+                    "- Cause de chaque échec : code HTTP, délai dépassé, hôte introuvable, connexion " +
+                    "coupée, image trop lourde, image vide ou illisible.\n" +
+                    "- Les SVG sont pris en charge : miniatures, images du corps et favicons.\n" +
+                    "- Plafond de 10 Mo sur toute image (le corps compris) et délai total de 30 s : " +
+                    "les originales de 30 Mo servies par certains CDN sont coupées et annoncées " +
+                    "« image trop lourde » au lieu de finir en « délai dépassé ».",
+                time = "23:36"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.50",
         listOf(
             ChangelogItem(

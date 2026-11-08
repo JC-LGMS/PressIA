@@ -1185,12 +1185,12 @@ class PressRepository(
         private set
 
     /**
-     * Flux dont les images n'ont pas pu être récupérées par la dernière passe ([syncImages]) :
-     * un timeout, un 404 ou une image illisible ne fait **pas** échouer la synchronisation —
-     * l'heure de synchro est mise à jour, le message final cite seulement les flux concernés.
-     * Vide = tout est passé.
+     * Images que la dernière passe ([syncImages]) n'a pas pu récupérer, l'article d'où chacune
+     * vient : un timeout, un 404 ou une image illisible ne fait **pas** échouer la
+     * synchronisation — l'heure de synchro est mise à jour, le message final n'en donne que le
+     * nombre et le bandeau propose le détail. Vide = tout est passé.
      */
-    @Volatile var imageFailures: List<String> = emptyList()
+    @Volatile var imageFailures: List<FailedImage> = emptyList()
         private set
 
     /** La passe images s'est interrompue sur une erreur inattendue : dite au message final. */
@@ -1414,7 +1414,7 @@ class PressRepository(
     /**
      * Passe images **non bloquante** : une erreur inattendue (base, verrou, réponse illisible) est
      * journalisée et signalée au message final, mais ne fait pas échouer la synchronisation.
-     * Les timeouts d'une image, eux, sont déjà comptés par flux dans [imageFailures] ; l'heure de
+     * Les timeouts d'une image, eux, sont déjà comptés dans [imageFailures] ; l'heure de
      * synchro doit avancer dès lors que les articles et le reste sont passés.
      */
     private suspend fun syncImagesSafely(onProgress: ((done: Int, total: Int) -> Unit)? = null) {
@@ -1439,6 +1439,7 @@ class PressRepository(
         // URLs attendues, article par article (miniature déclarée puis corps) : relevées une
         // seule fois, elles servent au téléchargement comme au marquage final.
         val perArticle = rows.map { r -> r.id to articleImageUrls(r.imageUrl, r.content, r.summary, r.url) }
+        val byId = rows.associateBy { it.id }
         // Miniatures annoncées comme téléchargées dont le fichier a disparu (purge, cache vidé
         // à la main, synchronisation interrompue) : le drapeau seul ne suffit pas, sans ce
         // contrôle la vignette ne revenait jamais.
@@ -1463,13 +1464,14 @@ class PressRepository(
         val done = coroutineScope {
             work.map { (url, isThumb) ->
                 async {
-                    val ok = permits.withPermit {
+                    val reason = permits.withPermit {
                         if (isThumb) ThumbStore.fetch(ctx, url, maxW, maxH)
                         // Image du corps déjà présente en local (miniature d'un autre article,
                         // image partagée) : rien à demander.
-                        else ThumbStore.cachedFile(ctx, url) != null || prefetchImage(url)
+                        else if (ThumbStore.cachedFile(ctx, url) != null) null
+                        else prefetchImage(url)
                     }
-                    if (ok && onProgress != null) {
+                    if (reason == null && onProgress != null) {
                         val n = doneCount.incrementAndGet()
                         if (n == total) {
                             onProgress(n, total)
@@ -1481,25 +1483,29 @@ class PressRepository(
                             }
                         }
                     }
-                    ok
+                    reason
                 }
             }.awaitAll()
         }
         onProgress?.invoke(doneCount.get().coerceAtMost(total), total)
         // Marquage groupé, article par article : un article dont une seule image manque reste
         // en attente (elle serait sinon jamais reprise). Une requête par paquet.
-        val okUrls = work.filterIndexed { i, _ -> done[i] }.mapTo(HashSet()) { it.first }
+        val okUrls = work.filterIndexed { i, _ -> done[i] == null }.mapTo(HashSet()) { it.first }
         val complete = perArticle.filter { (_, urls) ->
             urls.all { it in okUrls || ThumbStore.cachedFile(ctx, it) != null }
         }.mapTo(HashSet()) { (id, _) -> id }
         complete.chunked(500).forEach { dao.markArticlesImagesCached(it) }
-        // Flux dont une image a échoué (timeout le plus souvent) : le message de fin de synchro
-        // les nomme — la synchronisation, elle, reste réussie.
-        imageFailures = rows.filter { it.id !in complete }
-            .map { it.feedTitle.ifBlank { it.feedId } }
-            .filter { it.isNotBlank() }
-            .distinct()
-        done.count { it }
+        // Images en échec, rattachées à leur article avec leur cause : le message de fin de
+        // synchro n'en donne que le nombre, la modale « Voir le détail » les nomme — la
+        // synchronisation, elle, reste réussie.
+        val failed = work.indices.mapNotNull { i -> done[i]?.let { work[i].first to it } }.toMap()
+        imageFailures = perArticle.flatMap { (id, urls) ->
+            val row = byId[id] ?: return@flatMap emptyList()
+            val feed = row.feedTitle.ifBlank { row.feedId }
+            val title = row.title.ifBlank { row.url }
+            urls.mapNotNull { url -> failed[url]?.let { FailedImage(feed, title, url, it) } }
+        }.distinctBy { it.url }
+        done.count { it == null }
     }
 
     /**
@@ -1508,16 +1514,27 @@ class PressRepository(
      * évite la requête à l'affichage, et il garde les octets d'origine quelle que soit la taille
      * demandée ; le décodage n'a donc pas à porter l'image entière, et le cache mémoire (borné)
      * n'a rien à retenir d'une image que personne n'a encore regardée.
+     *
+     * Rend `null` en cas de succès, sinon la cause courte de l'échec (« HTTP 404 », « délai
+     * dépassé »…), reprise dans le détail de fin de synchro.
      */
-    private suspend fun prefetchImage(url: String): Boolean = runCatching {
-        coil.Coil.imageLoader(ctx).execute(
-            coil.request.ImageRequest.Builder(ctx)
-                .data(url)
-                .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
-                .size(coil.size.Size(1, 1))
-                .build()
-        )
-    }.getOrNull() is coil.request.SuccessResult
+    private suspend fun prefetchImage(url: String): String? {
+        val result = runCatching {
+            coil.Coil.imageLoader(ctx).execute(
+                coil.request.ImageRequest.Builder(ctx)
+                    .data(url)
+                    .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+                    .size(coil.size.Size(1, 1))
+                    .build()
+            )
+        }.getOrElse { return imageFailureCause(it) }
+        if (result is coil.request.SuccessResult) return null
+        val e = (result as? coil.request.ErrorResult)?.throwable
+        // Coil enveloppe une réponse non 2xx : le code HTTP est plus parlant que « échec ».
+        return (e as? coil.network.HttpException)?.response?.code
+            ?.let { "HTTP $it" }
+            ?: imageFailureCause(e)
+    }
 
     /**
      * Première synchronisation d'un compte nouvellement connecté, en un seul passage.
@@ -3194,18 +3211,19 @@ fun mergeIncomingArticle(
  * Note du message de fin de synchro quand des images manquent : `null` si tout est passé.
  *
  * Une image en timeout (ou en 404) ne fait **pas** échouer la synchronisation : l'heure de
- * synchro avance quand les articles et le reste sont passés, et la note ne fait que nommer les
- * flux concernés — au-delà de quatre, en abrégé pour ne pas noyer le message. Pure, testée.
+ * synchro avance quand les articles et le reste sont passés, et la note ne donne que le
+ * **nombre** d'images concernées — le détail (flux, article, adresse) est proposé à part par le
+ * bandeau (« Voir le détail »). Pure, testée.
  */
-fun imageFailureNote(feeds: List<String>, interrupted: Boolean): String? = when {
+fun imageFailureNote(count: Int, interrupted: Boolean): String? = when {
     interrupted -> ". Images non récupérées (téléchargement interrompu)"
-    feeds.isEmpty() -> null
-    else -> {
-        val shown = feeds.take(4).joinToString(", ")
-        val more = if (feeds.size > 4) " et ${feeds.size - 4} autre(s) flux" else ""
-        ". Images non récupérées : $shown$more"
-    }
+    count > 0 -> ". Images non récupérées : $count image${if (count > 1) "s" else ""}"
+    else -> null
 }
+
+/** Image qu'une passe de synchronisation n'a pas pu récupérer : d'où elle vient, son adresse
+ * exacte et la cause courte de l'échec — de quoi remplir le détail du bandeau de fin de synchro. */
+data class FailedImage(val feed: String, val title: String, val url: String, val cause: String)
 
 data class AccountInfo(
     val provider: String,

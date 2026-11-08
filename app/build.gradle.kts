@@ -239,6 +239,10 @@ dependencies {
 
     // Images offline
     implementation("io.coil-kt:coil-compose:2.6.0")
+    // SVG : décodeur Coil (corps, favicons) et AndroidSVG pour les miniatures
+    implementation("io.coil-kt:coil-svg:2.6.0")
+    // coil-svg ne l'expose pas : AndroidSVG pour rasteriser une miniature dans ThumbStore
+    implementation("com.caverock:androidsvg-aar:1.4")
 
     // Contenu article (Readability maison via Jsoup)
     implementation("org.jsoup:jsoup:1.17.2")

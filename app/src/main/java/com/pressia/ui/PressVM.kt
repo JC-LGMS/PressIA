@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
 import com.pressia.data.LocalFeedAdd
+import com.pressia.data.FailedImage
 import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
@@ -190,6 +191,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var dups by mutableStateOf<List<List<ArticleEntity>>>(emptyList())
     /** Dernier résultat de synchronisation (affiché en snackbar, puis effacé). */
     var syncMsg by mutableStateOf<String?>(null)
+    /**
+     * Images que la dernière synchro n'a pas récupérées, telles qu'affichées par la modale
+     * « Voir le détail » du bandeau (copie : la passe suivante remet la liste du dépôt à zéro).
+     */
+    var imageFailures by mutableStateOf<List<FailedImage>>(emptyList())
+        private set
+    /** Message final qui porte la note des images, seul cas où le bandeau propose le détail. */
+    var imageDetailMsg by mutableStateOf<String?>(null)
+        private set
     /** Dernier résultat d'authentification OAuth (affiché sur l'écran Comptes). */
     var authMsg by mutableStateOf<String?>(null)
     /**
@@ -718,8 +728,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         }
         var msg = if (rl != null && n > 0) "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}" else base
         // Images manquantes : la synchro reste réussie (l'heure a été mise à jour), le message
-        // nomme seulement les flux dont une image n'est pas arrivée (timeout, 404…).
-        msg += imageFailureNote(repo.imageFailures, repo.imagesInterrupted).orEmpty()
+        // n'en donne que le nombre ; le bandeau propose alors « Voir le détail » (modale).
+        msg += imageFailureNote(repo.imageFailures.size, repo.imagesInterrupted).orEmpty()
+        imageFailures = repo.imageFailures
+        imageDetailMsg = if (repo.imageFailures.isEmpty()) null else msg
         return msg
     }
 
