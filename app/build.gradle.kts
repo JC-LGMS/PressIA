@@ -159,6 +159,31 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // Nommage personnalisé des APK : PressIA-<version>-<type>-<date>.apk
+    // Tâche simple qui renomme après assemblage
+    tasks.register("renameApks") {
+        group = "build"
+        description = "Renomme les APK en PressIA-<version>-<type>-<date>.apk"
+        doLast {
+            val date = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+            val releaseApk = file("${buildDir}/outputs/apk/release/app-release.apk")
+            val debugApk = file("${buildDir}/outputs/apk/debug/app-debug.apk")
+            if (releaseApk.exists()) {
+                val newName = "PressIA-${appVersionName}-release-$date.apk"
+                val newFile = releaseApk.parentFile.resolve(newName)
+                releaseApk.renameTo(newFile)
+            }
+            if (debugApk.exists()) {
+                val newName = "PressIA-${appVersionName}-debug-$date.apk"
+                val newFile = debugApk.parentFile.resolve(newName)
+                debugApk.renameTo(newFile)
+            }
+        }
+    }
+    afterEvaluate {
+        tasks.named("assembleRelease") { finalizedBy("renameApks") }
+        tasks.named("assembleDebug") { finalizedBy("renameApks") }
+    }
 }
 
 dependencies {

@@ -57,10 +57,15 @@ le cache se complète, puis on revient au hors-ligne.
 ```powershell
 & $g :app:compileDebugKotlin --console=plain --offline    # vérif rapide après une modif
 & $g :app:assembleDebug     --console=plain --offline    # APK debug
+& $g :app:assembleRelease   --console=plain --offline    # APK release
 & $g :app:testDebugUnitTest --console=plain --offline    # tests unitaires
 ```
 
-APK produit : `app/build/outputs/apk/debug/app-debug.apk`.
+APK produits (nommage personnalisé dans `build.gradle.kts`) :
+- `app/build/outputs/apk/debug/PressIA-<version>-debug-<date>.apk`
+- `app/build/outputs/apk/release/PressIA-<version>-release-<date>.apk`
+
+Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assemble*`) qui s'exécute après l'assemblage. Exemple : `PressIA-1.0.49-debug-20261108.apk`.
 
 ## Version et journal des modifications
 

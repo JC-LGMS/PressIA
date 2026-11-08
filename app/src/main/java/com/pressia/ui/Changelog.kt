@@ -48,6 +48,20 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.49",
+        listOf(
+            ChangelogItem(
+                "2026-11-08",
+                "Nommage des APK : PressIA-<version>-<type>-<date>.apk",
+                "Les APK de debug et release portent désormais un nom explicite " +
+                    "incluant le numéro de version, le type (debug/release) et la date du build " +
+                    "(ex. : PressIA-1.0.49-release-20261108.apk). Implémenté via la tâche " +
+                    "renameApks branchée sur assemble* dans build.gradle.kts.",
+                time = "10:30"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.48",
         listOf(
             ChangelogItem(
