@@ -369,8 +369,8 @@ class MainActivity : ComponentActivity() {
                 // Invariant : jamais de bandeau sans message — seul un pipeline de
                 // synchro (étapes dans syncStep, recopiées dans syncMsg) allume le bandeau.
                 var bannerJob by remember { mutableStateOf<Job?>(null) }
-                // Modale de détail des images non récupérées (bouton du bandeau de fin de synchro).
-                var showImages by remember { mutableStateOf(false) }
+                // Modale de détail de fin de synchro (images non récupérées, comptes en échec).
+                var showDetail by remember { mutableStateOf(false) }
                 // Hauteur du visuel du bandeau (voir slot ci-dessous) : les boutons haut/bas
                 // flottants des listes se soulèvent juste au-dessus quand il est affiché.
                 var bannerLift by remember { mutableStateOf(0.dp) }
@@ -404,12 +404,12 @@ class MainActivity : ComponentActivity() {
                         // Fin de synchro : le bandeau reste ouvert, seul le texte passe au
                         // message final — aucune fermeture/réouverture intermédiaire.
                         // Une session expirée laisse plus de temps : le raccourci
-                        // « Reconnecter » ne doit pas disparaître sous le doigt ; « Voir le
-                        // détail » des images n'a que les 5 s du bandeau ordinaire.
+                        // « Reconnecter » ne doit pas disparaître sous le doigt ; le bouton
+                        // « Voir le détail » n'a que les 5 s du bandeau ordinaire.
                         delay(
                             when {
                                 vm.expiredAccounts.value.isNotEmpty() -> 12_000
-                                vm.syncMsg == vm.imageDetailMsg -> 5_000
+                                vm.syncMsg == vm.detailMsg -> 5_000
                                 else -> 4_000
                             }
                         )
@@ -667,20 +667,22 @@ class MainActivity : ComponentActivity() {
                                         nav.navigate(reconnectRoute) { launchSingleTop = true }
                                     }) { Text("Reconnecter") }
                                 }
-                                // Images manquantes : le bandeau n'en donne que le nombre, le
-                                // détail (flux, article, adresse) s'ouvre dans une modale.
-                                if (vm.syncMsg != null && vm.syncMsg == vm.imageDetailMsg) {
+                                // Fin de synchro incomplète (images manquantes, comptes en échec) :
+                                // le bandeau résume, la modale nomme chaque cas.
+                                if (vm.syncMsg != null && vm.syncMsg == vm.detailMsg) {
                                     TextButton(onClick = {
                                         snackbarHostState.currentSnackbarData?.dismiss()
                                         bannerJob = null
                                         vm.syncMsg = null
-                                        showImages = true
+                                        showDetail = true
                                     }) { Text("Voir le détail") }
                                 }
                             }
                         }
                     }
-                    if (showImages) ImageFailuresDialog(vm.imageFailures) { showImages = false }
+                    if (showDetail) {
+                        SyncDetailDialog(vm.syncFailures, vm.imageFailures) { showDetail = false }
+                    }
                     // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
                     // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.
                     val appToast = ToastBus.current

@@ -34,6 +34,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 const val MERGED_PREFIX = "merged:"
 
+/** Taille d'une page de résultats de recherche (l'écran en charge une autre au défilement). */
+const val SEARCH_PAGE = 200
+
 /**
  * Libellé des lectures rattachées à un flux qui n'existe plus (compte supprimé, désabonnement) :
  * leurs traces sont conservées pour que les statistiques ne repartent pas de zéro, et l'écran
@@ -961,13 +964,17 @@ class PressRepository(
      * entrées) — l'interroger laissait croire à des résultats complets alors qu'elle en masquait
      * la majorité. Aucun appel réseau ici.
      *
-     * [withBody] = faux par défaut : le titre seul (voir `PressDao.search`).
+     * [withBody] = faux par défaut : le titre seul (voir `PressDao.search`). [limit]/[offset]
+     * découpent les résultats : l'écran Recherche en charge [SEARCH_PAGE] puis la tranche
+     * suivante au défilement.
      */
     suspend fun search(
-        q: String, feedId: String?, catId: String?, withBody: Boolean = false
+        q: String, feedId: String?, catId: String?, withBody: Boolean = false,
+        unreadOnly: Boolean = false, limit: Int = SEARCH_PAGE, offset: Int = 0
     ): List<ArticleEntity> {
         val (feedIds, catEmpty) = catScope(catId)
-        return dao.search(q, feedId, feedIds, catEmpty, if (withBody) 1 else 0)
+        return dao.search(q, feedId, feedIds, catEmpty, if (withBody) 1 else 0,
+            if (unreadOnly) 1 else 0, limit, offset)
     }
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----
@@ -1176,13 +1183,15 @@ class PressRepository(
     val isSyncLocked: Boolean get() = syncMutex.isLocked
 
     /**
-     * Un 429 a frappé pendant la synchronisation en cours (remis à zéro à chaque pipeline) :
-     * le message final l'explique avec le délai du serveur au lieu d'un succès aveugle.
-     * Écrit depuis des fils IO (plusieurs comptes en parallèle : le dernier gagne, ils sont
-     * tous interchangeables ici), lu par le message final sous le verrou partagé.
+     * Échecs de la synchronisation en cours, **un par compte** (libellé → motif) : plusieurs
+     * comptes synchronisent en parallèle, et un seul champ « dernier 429 » perdait les autres
+     * (le message final n'en nommait qu'un). Le bandeau résume, « Voir le détail » les liste.
+     * Rempli depuis des fils IO, vidé au début de chaque pipeline.
      */
-    @Volatile var syncRateLimit: RateLimit? = null
-        private set
+    private val rateFailures = java.util.concurrent.ConcurrentHashMap<String, RateLimit>()
+
+    /** Copie stable pour l'interface (le message final et la modale de détail). */
+    val syncFailures: Map<String, RateLimit> get() = rateFailures.toMap()
 
     /**
      * Images que la dernière passe ([syncImages]) n'a pas pu récupérer, l'article d'où chacune
@@ -1202,7 +1211,7 @@ class PressRepository(
      * restent contenus, mais le message final dira que la synchro n'a pas pu avoir lieu.
      */
     fun noteRateLimit(e: Throwable, service: String) {
-        rateLimitOf(e, service)?.let { syncRateLimit = it }
+        rateLimitOf(e, service)?.let { rateFailures[service] = it }
     }
 
     /**
@@ -1232,9 +1241,9 @@ class PressRepository(
      * Read later marque ne peut être supprimé entre-temps.
      */
     suspend fun syncPipeline(): Int {
-        // Un seul pipeline à la fois (verrou partagé) : ce drapeau est celui de la synchro
-        // en cours, lu par le message final.
-        syncRateLimit = null
+        // Un seul pipeline à la fois (verrou partagé) : ces drapeaux sont ceux de la synchro
+        // en cours, lus par le message final.
+        rateFailures.clear()
         // Passe précédente : le message final ne doit pas reparler de ses flux en échec.
         imageFailures = emptyList()
         imagesInterrupted = false
@@ -1559,7 +1568,7 @@ class PressRepository(
     suspend fun initialSync(accountId: String): Int = withSyncLock {
         withContext(Dispatchers.IO) {
             try {
-            syncRateLimit = null
+            rateFailures.clear()
             val account = cloudAccounts().firstOrNull { it.id == accountId } ?: return@withContext 0
             if (hasPendingSync()) syncStep.value = "Envoi des modifications…"
             pushQueue()

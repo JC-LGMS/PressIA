@@ -451,10 +451,14 @@ interface PressDao {
      * le titre (et l'auteur, court et assimilable à un titre) ; `withBody = 1` ajoute le résumé et
      * le corps. Chercher partout par défaut ramenait trop de résultats hors sujet (« de » dans le
      * corps d'un article quelconque) et l'utilisateur ne pouvait pas revenir au titre seul.
+     *
+     * **Paginée** (`limit`/`offset`) : l'écran charge 200 résultats puis la tranche suivante au
+     * défilement ; un `LIMIT 200` fixe laissait les résultats plus anciens inatteignables.
      */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT 200")
+    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun search(
-        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int
+        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
+        onlyUnread: Int, limit: Int, offset: Int
     ): List<ArticleEntity>
 
     // --- Sync queue ---

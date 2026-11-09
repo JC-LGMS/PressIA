@@ -48,6 +48,39 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.0.53",
+        listOf(
+            ChangelogItem(
+                "2026-11-10",
+                "Menu de sélection au bon endroit, recherche complète, échecs de synchro détaillés",
+                "- Menu de sélection : écart constant de 40 dp avec le doigt, au-dessus quand il y a " +
+                    "la place, sinon dessous — il ne couvre plus la ligne touchée. Compose 1.7 " +
+                    "fournit un rectangle de sélection décalé de ~65 dp vers le haut (mesuré à " +
+                    "l'écran), d'où un menu posé plusieurs lignes trop haut.\n" +
+                    "- Le même menu (copier, tout sélectionner, rechercher, traduire) sert aussi à " +
+                    "l'À propos et au journal des modifications, dont le texte devient sélectionnable.\n" +
+                    "- Recherche : les résultats arrivent par pages de 200 au défilement (le compte " +
+                    "affiche « 200+ » tant qu'il en reste) ; l'état (requête, portée, option) survit " +
+                    "à l'ouverture d'un article ; choisir une portée referme le panneau et relance " +
+                    "la recherche en cours ; l'œil annonce « Seulement les non-lus » ou « Tous les " +
+                    "résultats » ; après un marquage groupé, « annuler » reste visible même quand " +
+                    "les lus sont masqués et rétablit la liste.\n" +
+                    "- Fin de synchronisation : un échec par compte (session expirée, quota, réseau) " +
+                    "est conservé et nommé, et le bouton « Voir le détail » ouvre une modale qui " +
+                    "liste les comptes en échec et les images non récupérées.\n" +
+                    "- En-tête d'article : le compte (Feedly, Inoreader, Local) est affiché à côté " +
+                    "du nom du flux, en gris foncé — le nom du flux reste en couleur primaire.\n" +
+                    "- Miniature d'article : la première image jointe est retenue (la dernière " +
+                    "l'emportait, à rebours du flux).\n" +
+                    "- Balayage d'article : la liste des voisins est bornée à 400 identifiants, " +
+                    "comme les articles collants de la session.\n" +
+                    "- WorkManager est retiré : plus rien ne planifie de synchronisation (elle ne " +
+                    "tourne qu'application ouverte).",
+                time = "00:28"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.52",
         listOf(
             ChangelogItem(
@@ -999,6 +1032,9 @@ fun ChangelogScreen() {
     val entries = remember { changelog() }
     val total = remember { entries.sumOf { it.items.size } }
     val listState = rememberLazyListState()
+    // Texte sélectionnable (mêmes actions que l'écran article : copier, chercher, traduire) :
+    // les entrées du journal se citent souvent pour décrire une version.
+    SelectableArea {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp)) {
             Text(
@@ -1066,6 +1102,7 @@ fun ChangelogScreen() {
                     .width(3.dp)
             )
         }
+    }
     }
 }
 

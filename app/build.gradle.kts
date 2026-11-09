@@ -225,10 +225,6 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // WorkManager : conservé uniquement pour annuler le travail planifié hérité
-    // d'anciennes versions (plus rien ne planifie, cf. PressIAApp).
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
-
     // Réseau
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0")

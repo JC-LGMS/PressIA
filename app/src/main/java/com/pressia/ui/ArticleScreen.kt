@@ -28,12 +28,7 @@ import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -42,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -411,7 +407,7 @@ fun ArticleScreen(
         // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
         // défilement comme les badges de balayage restent en dehors.
         CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
-        SelectionContainer {
+        SelectionContainer(selectionAnchor(textToolbar)) {
         Column(
             Modifier.fillMaxSize().padding(16.dp)
                 // Taille de la fenêtre de défilement, relevée là où la colonne est mesurée
@@ -442,18 +438,32 @@ fun ArticleScreen(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
                 // Nom du flux et, quand la précision apprend quelque chose, son compte : même
-                // police et même couleur, accrochés par « - » (voir `showFeedAccount`).
+                // police, accrochés par « - » (voir `showFeedAccount`). Le compte (la source :
+                // Feedly, Inoreader, Local) en gris foncé — le nom du flux reste en couleur
+                // primaire, sinon deux informations différentes se lisaient pareil.
                 val accountLabel = if (com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds))
                     com.pressia.data.feedAccountLabel(feedSub?.provider, vm.accounts) else null
-                val source = listOfNotNull(
-                    feedName?.takeIf { it.isNotBlank() }?.let { prettyFeedTitle(it) },
-                    accountLabel
-                ).joinToString(" - ")
-                if (source.isNotBlank()) {
-                    Text(source, style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f), maxLines = 1,
-                        overflow = TextOverflow.Ellipsis)
+                val feedPart = feedName?.takeIf { it.isNotBlank() }?.let { prettyFeedTitle(it) }
+                if (feedPart != null || accountLabel != null) {
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        if (feedPart != null) {
+                            Text(feedPart, style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f, fill = false), maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
+                        }
+                        if (accountLabel != null) {
+                            Text(
+                                (if (feedPart != null) " - " else "") + accountLabel,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 } else Spacer(Modifier.weight(1f))
                 Text(
                     article?.let { fmtDate(it.published) } ?: "",
@@ -557,7 +567,6 @@ fun ArticleScreen(
         }
         }  // fin de SelectionContainer
         }
-        SelectionActions(textToolbar, ctx)
         // Barre de défilement : au bord droit, dans la marge de 16 dp que le texte laisse libre.
         // Elle vit hors de la colonne défilante pour deux raisons — ne pas partir avec le
         // contenu quand le balayage horizontal translate la page, et ne pas suivre le
@@ -607,6 +616,8 @@ fun ArticleScreen(
             }
         }
         }
+        // En dernier : le menu de sélection passe devant tout le reste de l'écran.
+        SelectionActions(textToolbar, ctx)
     }
     viewerUrl?.let { ImageViewer(it) { viewerUrl = null } }
 }
@@ -628,21 +639,38 @@ private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): P
 }
 
 /**
- * Barre de sélection de l'article : les commandes du système (copier, tout sélectionner) et deux
- * actions propres à la lecture — chercher le texte sur Internet, le traduire.
+ * Barre de sélection de l'application : les commandes du système (copier, coller, couper, tout
+ * sélectionner) et deux actions propres à la lecture — chercher le texte sur Internet, le
+ * traduire. Partagée par l'écran article et les pages de texte (À propos, journal), pour que la
+ * sélection s'y comporte pareil.
  *
  * Compose ne livre pas le texte sélectionné à la barre : les deux actions passent donc par la
  * copie (comme « Copier »), puis relisent le presse-papiers. La sélection est copiée au passage.
  */
-private class ArticleTextToolbar : TextToolbar {
+internal class ArticleTextToolbar : TextToolbar {
     /** Sélection en cours : rectangle (coordonnées de fenêtre) et commandes disponibles. */
     var menu by mutableStateOf<Menu?>(null)
         private set
+    /** Point touché qui a créé la sélection (coordonnées de fenêtre). `showMenu` ne donne que le
+     *  rectangle de la sélection, décalé de ~65 dp vers le haut dans Compose 1.7 (mesuré) : s'y
+     *  accrocher posait le menu plusieurs lignes au-dessus du mot touché. On se sert du doigt, qui
+     *  est sur le mot. */
+    var anchor by mutableStateOf<Offset?>(null)
+    /** Horodatage du dernier `showMenu` : un `hide` immédiat vient d'un autre champ, pas de
+     *  l'utilisateur (voir `hide`). */
+    private var shownAt = 0L
+    /** Sélection que l'utilisateur vient de fermer : Compose la rallume aussitôt après notre
+     *  `hide` (la sélection, elle, est toujours active) — on la reconnaît un court instant pour
+     *  ne pas la rouvrir. Passé ce délai, une nouvelle sélection au même endroit reste possible. */
+    private var dismissedRect: Rect? = null
+    private var dismissedAt = 0L
 
     class Menu(
         val rect: Rect,
         val onCopy: (() -> Unit)?,
-        val onSelectAll: (() -> Unit)?
+        val onSelectAll: (() -> Unit)?,
+        val onPaste: (() -> Unit)?,
+        val onCut: (() -> Unit)?
     )
 
     override val status: TextToolbarStatus
@@ -655,45 +683,85 @@ private class ArticleTextToolbar : TextToolbar {
         onCutRequested: (() -> Unit)?,
         onSelectAllRequested: (() -> Unit)?
     ) {
-        // L'article est du texte en lecture seule : seuls copier et tout sélectionner existent.
-        menu = Menu(rect, onCopyRequested, onSelectAllRequested)
+        // Le texte des articles est en lecture seule (copier, tout sélectionner) ; un champ
+        // éditable (recherche de l'À propos) fournit aussi coller et couper, qui doivent rester
+        // disponibles là où on peut écrire.
+        if (rect == dismissedRect &&
+            android.os.SystemClock.uptimeMillis() - dismissedAt < 800
+        ) return
+        dismissedRect = null
+        shownAt = android.os.SystemClock.uptimeMillis()
+        menu = Menu(rect, onCopyRequested, onSelectAllRequested, onPasteRequested, onCutRequested)
     }
 
     override fun hide() {
+        // Un champ éditable de la page (recherche de l'À propos) appelle hide() juste après le
+        // showMenu d'un texte voisin — le menu disparaissait aussitôt. Un masquage demandé par
+        // l'utilisateur (appui à côté, Retour, action) arrive bien plus tard.
+        if (android.os.SystemClock.uptimeMillis() - shownAt < 250) return
+        dismissedRect = menu?.rect
+        dismissedAt = android.os.SystemClock.uptimeMillis()
         menu = null
     }
 }
 
-/** Actions proposées sur le texte sélectionné, posées sous la sélection. */
+/** Actions proposées sur le texte sélectionné, posées **au-dessus** de la sélection : sous elle
+ *  vivent les poignées, et le menu les couvrait. Dessiné dans la fenêtre de l'écran (et non en
+ *  `Popup`) : ici, un appui à côté le ferme **et** Retour aussi — le `Popup` focusable ne
+ *  recevait ni l'un ni l'autre (constaté sur l'émulateur). */
 @Composable
-private fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.Context) {
+internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.Context) {
     val menu = toolbar.menu ?: return
-    Popup(
-        popupPositionProvider = object : PopupPositionProvider {
-            override fun calculatePosition(
-                anchorBounds: IntRect,
-                windowSize: IntSize,
-                layoutDirection: LayoutDirection,
-                popupContentSize: IntSize
-            ): IntOffset {
-                val x = menu.rect.left.roundToInt()
-                    .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
-                val y = (menu.rect.bottom.roundToInt() + 8)
-                    .coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
-                return IntOffset(x, y)
-            }
-        },
-        onDismissRequest = { toolbar.hide() },
-        properties = PopupProperties(focusable = true)
+    androidx.activity.compose.BackHandler { toolbar.hide() }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    // Origine de la zone dans la fenêtre : `menu.rect` est en coordonnées de fenêtre.
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var area by remember { mutableStateOf(IntSize.Zero) }
+    // Hauteur mesurée (le nombre d'entrées varie selon le champ) : la première composition
+    // utilise l'estimation, puis la mesure réelle replace le menu.
+    var menuH by remember { mutableStateOf(with(density) { MENU_EST_H.roundToPx() }) }
+    val menuW = with(density) { 240.dp.toPx() }
+    Box(
+        Modifier.fillMaxSize().onGloballyPositioned {
+            origin = it.localToWindow(androidx.compose.ui.geometry.Offset.Zero)
+            area = it.size
+        }
     ) {
+        // Voile transparent : tout appui hors du menu le referme.
+        Box(
+            Modifier.matchParentSize().clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) { toolbar.hide() }
+        )
+        val x = (menu.rect.left - origin.x).roundToInt()
+            .coerceIn(0, (area.width - menuW.toInt()).coerceAtLeast(0))
+        // Au-dessus quand il y a la place, sinon dessous. Le doigt est **dans** la ligne touchée :
+        // un écart plus court que la hauteur d'une ligne posait le menu sur le texte sélectionné
+        // (constaté). Et l'ancrage est le doigt, pas `menu.rect` : Compose 1.7 y donne un
+        // rectangle décalé de ~65 dp vers le haut (mesuré), d'où un menu plusieurs lignes trop
+        // haut. Même écart dans les deux sens : la distance ne dépend pas de la position à l'écran.
+        val gap = with(density) { MENU_GAP.roundToPx() }
+        val from = ((toolbar.anchor?.y ?: menu.rect.top) - origin.y).roundToInt()
+        val y = (from - menuH - gap).takeIf { it >= 0 }
+            ?: (from + gap).coerceAtMost((area.height - menuH).coerceAtLeast(0))
         Surface(
+            Modifier.offset { IntOffset(x, y) }
+                .onSizeChanged { menuH = it.height },
             shape = RoundedCornerShape(10.dp),
             tonalElevation = 3.dp,
             shadowElevation = 6.dp
         ) {
-            Column(Modifier.padding(vertical = 6.dp).widthIn(max = 240.dp)) {
+            Column(Modifier.padding(vertical = 2.dp).widthIn(max = 240.dp)) {
                 SelectionAction("Copier") { menu.onCopy?.invoke(); toolbar.hide() }
                 SelectionAction("Tout sélectionner") { menu.onSelectAll?.invoke(); toolbar.hide() }
+                // Champ éditable (recherche de l'À propos) : coller et couper restent utiles.
+                menu.onPaste?.let { paste ->
+                    SelectionAction("Coller") { paste(); toolbar.hide() }
+                }
+                menu.onCut?.let { cut ->
+                    SelectionAction("Couper") { cut(); toolbar.hide() }
+                }
                 SelectionAction("Rechercher sur Internet") {
                     selectionText(ctx, menu.onCopy)?.let {
                         openUrl(ctx, "https://www.google.com/search?q=" + android.net.Uri.encode(it))
@@ -712,6 +780,53 @@ private fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.C
             }
         }
     }
+}
+
+/** Hauteur estimée du menu de sélection avant sa mesure (4 lignes + marges) : sert à le poser
+ *  au-dessus de la sélection du premier coup. */
+private val MENU_EST_H = 150.dp
+
+/** Écart entre le doigt et le menu de sélection (tient compte des poignées, sous le texte, et
+ *  dépasse la hauteur d'une ligne pour ne jamais couvrir la ligne touchée). */
+private val MENU_GAP = 40.dp
+
+/**
+ * Zones de texte sélectionnables avec les actions de l'application (Copier, Tout sélectionner,
+ * Rechercher sur Internet, Traduire) : le même menu que l'écran article, pour les pages qui ne
+ * sont pas des articles (À propos, journal des modifications).
+ */
+@Composable
+fun SelectableArea(content: @Composable () -> Unit) {
+    val toolbar = remember { ArticleTextToolbar() }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Box(Modifier.fillMaxSize()) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalTextToolbar provides toolbar
+        ) {
+            SelectionContainer(selectionAnchor(toolbar)) { content() }
+        }
+        SelectionActions(toolbar, ctx)
+    }
+}
+
+/** Mémorise le doigt qui touche le texte, pour poser le menu juste à côté (voir
+ *  [ArticleTextToolbar.anchor]). Simple observateur (`Initial`, rien n'est consommé) : la
+ *  sélection de Compose, elle, reçoit l'évènement intact. */
+@Composable
+private fun selectionAnchor(toolbar: ArticleTextToolbar): Modifier {
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    return Modifier
+        .onGloballyPositioned { origin = it.localToWindow(Offset.Zero) }
+        .pointerInput(toolbar) {
+            awaitPointerEventScope {
+                while (true) {
+                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                    if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press) {
+                        toolbar.anchor = e.changes.first().position + origin
+                    }
+                }
+            }
+        }
 }
 
 @Composable

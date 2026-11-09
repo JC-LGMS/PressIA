@@ -325,6 +325,21 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   chaque action **copie** la sélection (même rappel que « Copier ») puis relit le presse-papiers
   (`selectionText`). Ne pas chercher une API de sélection à la place : il n'y en a pas dans cette
   version ; monter de Compose la rendrait disponible (`TextToolbarState`).
+  **Le menu est dessiné dans la fenêtre de l'écran, pas en `Popup`** (`SelectionActions`) : un
+  `Popup` focusable n'y recevait ni l'appui à côté ni Retour (constaté sur l'émulateur). Il se pose
+  à **écart constant du doigt** (`MENU_GAP`, 40 dp — plus haut qu'une ligne, sinon il couvre le mot
+  touché, et assez large pour laisser voir les poignées) : au-dessus quand il y a la place, sinon
+  dessous. Ne pas s'ancrer au `rect` de `showMenu` : c'est bien le rectangle de la sélection (un mot
+  fait 160 px de large), mais Compose 1.7 le décale de ~65 dp vers le haut (mesuré à l'écran), d'où
+  un menu plusieurs lignes au-dessus du mot touché. `selectionAnchor` (même fichier) mémorise le
+  doigt en passant `Initial`, sans rien consommer. Un voile transparent ferme au
+  premier appui ailleurs,
+  et `BackHandler` le ferme aussi. Deux garde-fous dans `ArticleTextToolbar` : un `hide()` moins de
+  250 ms après un `showMenu` est ignoré (un champ éditable voisin le déclenche), et la sélection
+  fermée par l'utilisateur n'est pas rallumée par Compose (`dismissedRect`, 800 ms).
+  **Les pages de texte ont le même menu** : `SelectableArea` (À propos, Journal des modifications)
+  pose le même `SelectionContainer` + barre, avec Coller/Couper en plus quand la zone contient un
+  champ éditable.
 - **Vidéos** : deux cas distincts, à ne pas confondre :
   - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
     `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur
@@ -929,8 +944,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - Recherche : **base locale uniquement** (`PressRepository.search`). La recherche du compte est
   partielle (Feedly ne renvoie que quelques entrées) : l'interroger masquait les articles déjà en
   base et le nombre de résultats affiché n'était pas celui de la bibliothèque. La requête du DAO
-  borne l'affichage à 200 entrées, et l'écran le dit (« affichage limité ») plutôt que de laisser
-  croire que la liste s'arrête là. Les résultats suivent la **vue des articles** des Réglages
+  est **paginée** (`LIMIT/OFFSET`, `SEARCH_PAGE` = 200) : l'écran charge la page suivante au
+  défilement (`onEndReached` d'`ArticleList`) et écrit « 200+ résultat(s), faites défiler » tant
+  que la fin n'est pas atteinte. L'œil de l'écran ne montre que les non-lus (`searchUnreadOnly`,
+  filtre dans la requête) et le dit par un toast ; l'annulation d'un marquage groupé y reste
+  affichée même avec l'œil fermé (les articles marqués lus sortent de la liste, c'est elle qui les
+  ramène). Choisir une portée referme le panneau et relance la recherche en cours. La croix rouge
+  du champ vide la requête et les résultats puis rend le clavier. Les résultats suivent la **vue des articles** des Réglages
   (`vm.viewMode`) : c'est une liste d'articles comme les autres.
 - Écran Recherche : son état (requête, portée, option « texte », résultats) vit dans `PressVM`, pas
   dans le composable — ouvrir un article ou passer par une autre page puis revenir doit retrouver

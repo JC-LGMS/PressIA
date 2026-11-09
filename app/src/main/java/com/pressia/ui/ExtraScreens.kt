@@ -63,6 +63,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (ArticleEntity) -> Unit = {}) {
+    val ctx = LocalContext.current
     var showScope by remember { mutableStateOf(false) }
     // Même vue que les listes (compacte / liste / carte / magazine) : la recherche est une liste
     // d'articles comme les autres, elle suit le réglage d'affichage.
@@ -90,6 +91,17 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
             Modifier.fillMaxWidth().focusRequester(focus),
             label = { Text("Rechercher…") },
             leadingIcon = { Icon(Icons.Filled.Search, null) },
+            // Croix rouge : efface la requête et rend le clavier, pour repartir d'une recherche
+            // neuve sans se battre avec le champ.
+            trailingIcon = {
+                if (vm.searchQuery.isNotEmpty()) {
+                    IconButton({
+                        vm.clearSearch()
+                        focus.requestFocus()
+                        keyboard?.show()
+                    }) { Icon(Icons.Filled.Clear, "effacer la recherche", tint = MaterialTheme.colorScheme.error) }
+                }
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); vm.runSearch() })
@@ -132,7 +144,16 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
                 vm,
                 selectedCategoryId = vm.searchScope.categoryId,
                 selectedFeedId = vm.searchScope.feedId,
-                onPick = { vm.selectSearchScope(it) },
+                // Choisir une portée referme la liste et relance la recherche en cours : les
+                // résultats affichés étaient ceux de l'ancienne portée, les garder serait faux.
+                onPick = {
+                    vm.selectSearchScope(it)
+                    showScope = false
+                    if (vm.searchQuery.trim().length >= 2) {
+                        keyboard?.hide()
+                        vm.runSearch()
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp)
@@ -176,17 +197,32 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
             // s'affiche que si elle porte bien sur ces résultats : un marquage fait ailleurs ne
             // doit pas se confondre avec celui-ci.
             val shownIds = remember(vm.searchResults) { vm.searchResults.mapTo(HashSet()) { it.id } }
-            val offer = vm.undoOffer?.takeIf { o -> o.ids.all { it in shownIds } }
+            // Œil fermé : les articles qu'on vient de marquer lus sortent de la liste, l'annulation
+            // doit rester visible et utilisable (c'est elle qui les fait revenir).
+            val offer = vm.undoOffer?.takeIf { o -> o.ids.all { it in shownIds } || vm.searchUnreadOnly }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // La requête borne l'affichage à 200 articles : le dire, plutôt que de laisser
-                // croire que la recherche s'arrête là.
+                // Résultats paginés (200 par page, la suite au défilement) : tant que la dernière
+                // page n'est pas atteinte, le compteur le dit au lieu de laisser croire que la
+                // liste s'arrête là.
                 Text(
-                    (if (vm.searchResults.size >= 200) "${vm.searchResults.size} résultat(s) (affichage limité)"
-                    else "${vm.searchResults.size} résultat(s)") + " · ${vm.searchScope.label}",
+                    (if (vm.searchDone) "${vm.searchResults.size} résultat(s)"
+                    else "${vm.searchResults.size}+ résultat(s), faites défiler") +
+                        " · ${vm.searchScope.label}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
+                // Œil : ne montrer que les non-lus (les lus restent accessibles d'un appui).
+                IconButton({
+                    vm.showOnlyUnread(!vm.searchUnreadOnly)
+                    toast(ctx, if (vm.searchUnreadOnly) "Seulement les non-lus" else "Tous les résultats")
+                }) {
+                    Icon(
+                        if (vm.searchUnreadOnly) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                        if (vm.searchUnreadOnly) "afficher aussi les résultats lus"
+                        else "ne montrer que les résultats non lus"
+                    )
+                }
                 when {
                     offer != null -> IconButton({ vm.undoMarkRead() }) {
                         Icon(
@@ -215,7 +251,8 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
                     { a -> vm.openArticleWith(vm.searchResults.map { it.id }); onOpen(a) },
                     vm,
                     showSource = vm.searchScope.feedId == null,
-                    onSearch = onSearch
+                    onSearch = onSearch,
+                    onEndReached = { vm.loadMoreSearch() }
                 )
             }
         }
@@ -1535,13 +1572,18 @@ private fun ArticleActionsDialog(
 }
 
 /**
- * Détail des images qu'une synchronisation n'a pas pu récupérer (bouton « Voir le détail » du
- * bandeau de fin de synchro) : une ligne par image, son article, la cause de l'échec et son
- * adresse (touchée, elle est copiée). Liste défilante bornée en hauteur avec son indicateur —
- * une passe peut en manquer des dizaines. Même carte que les autres dialogues.
+ * Détail d'une synchronisation incomplète (bouton « Voir le détail » du bandeau de fin de
+ * synchro) : les **comptes en échec** (quota, délai d'attente) puis les **images non
+ * récupérées** (flux, article, cause, adresse — touchée, elle est copiée). Une seule modale pour
+ * les deux cas : ils peuvent tomber ensemble, et deux fenêtres l'une sur l'autre se liraient mal.
+ * Liste défilante bornée en hauteur avec son indicateur. Même carte que les autres dialogues.
  */
 @Composable
-fun ImageFailuresDialog(images: List<FailedImage>, onDismiss: () -> Unit) {
+fun SyncDetailDialog(
+    accounts: List<Pair<String, String>>,
+    images: List<FailedImage>,
+    onDismiss: () -> Unit
+) {
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     // Confirmation dans la modale : elle est une fenêtre à part, le toast de l'application
@@ -1551,51 +1593,70 @@ fun ImageFailuresDialog(images: List<FailedImage>, onDismiss: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Détail de la synchronisation", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Images non récupérées (${images.size})",
-                    style = MaterialTheme.typography.titleLarge
-                )
-                Text(
-                    "Elles seront retentées à la prochaine synchronisation. Touchez une adresse " +
-                        "pour la copier.",
+                    "Les comptes en échec et les images non récupérées ; tout le reste est à " +
+                        "jour. Ces cas seront retentés à la prochaine synchronisation.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Box(Modifier.heightIn(max = 360.dp)) {
                     LazyColumn(Modifier.fillMaxWidth(), state = listState) {
-                        items(images, key = { it.url }) { img ->
-                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                                Text(
-                                    img.feed,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    img.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (accounts.isNotEmpty()) {
+                            item(key = "titre-comptes") {
+                                SectionTitle("Comptes en échec (${accounts.size})")
+                            }
+                            items(accounts) { (label, message) ->
+                                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                                     Text(
-                                        "${img.cause} · ",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        maxLines = 1
+                                        label,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                    Text(message, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                        if (images.isNotEmpty()) {
+                            item(key = "titre-images") {
+                                SectionTitle("Images non récupérées (${images.size})")
+                            }
+                            items(images, key = { it.url }) { img ->
+                                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                                     Text(
-                                        img.url,
+                                        img.feed,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).clickable {
-                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(img.url))
-                                            copied = true
-                                        }
+                                        overflow = TextOverflow.Ellipsis
                                     )
+                                    Text(
+                                        img.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "${img.cause} · ",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            img.url,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f).clickable {
+                                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(img.url))
+                                                copied = true
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1617,6 +1678,17 @@ fun ImageFailuresDialog(images: List<FailedImage>, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/** Titre d'une section du détail (comptes, images) dans la liste défilante. */
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+    )
 }
 
 /**
@@ -1772,6 +1844,9 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             it.title.contains(query, ignoreCase = true) || it.body.contains(query, ignoreCase = true)
         }
     }
+    // Texte sélectionnable (mêmes actions que l'écran article : copier, chercher, traduire) —
+    // le résumé se cite souvent.
+    SelectableArea {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)
     ) {
@@ -1851,6 +1926,7 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             }
         }
     }
+    }
 }
 
 /** Un sujet du résumé « À propos » : titre court + règle ou fonctionnalité en une phrase. */
@@ -1901,7 +1977,8 @@ private val ABOUT_TOPICS = listOf(
         "Le contenu du flux est mis en forme : titres, gras, italique, souligné, barré, surligné, listes, " +
             "citations, légendes et tableaux (en-tête et lignes alternées). Un lien reste dans sa phrase. " +
             "Le texte se sélectionne (appui long) avec deux actions en plus de Copier : « Rechercher sur " +
-            "Internet » et « Traduire ». Une vidéo YouTube se lit dans l'article (plein écran par le bouton " +
+            "Internet » et « Traduire » ; le même menu sert dans À propos et dans le Journal des " +
+            "modifications. Une vidéo YouTube se lit dans l'article (plein écran par le bouton " +
             "d'agrandir, titre sous le lecteur) ; une iframe qui n'est pas une vidéo — carte d'un autre " +
             "article, formulaire — s'affiche en lien, jamais comme un lecteur."
     ),
@@ -1970,7 +2047,10 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Recherche et doublons",
         "La recherche n'interroge que les articles déjà en base, sur le titre par défaut (auteur compris ; " +
-            "« Inclure le texte » ajoute résumé et contenu) et s'arrête à 200 résultats en le disant. Son état " +
+            "« Inclure le texte » ajoute résumé et contenu) et se pagine par 200 : la suite arrive au " +
+            "défilement, et le compteur l'annonce tant qu'il en reste. L'œil ne montre que les non-lus " +
+            "(un toast le confirme), choisir une portée relance la recherche, la croix rouge vide la " +
+            "requête et rend le clavier. Son état " +
             "survit à l'ouverture d'un article et au retour, jusqu'à la fermeture de l'application, et " +
             "« Marquer tous lus » s'annule. L'écran doublons compare « tous » les non lus et peut tout marquer " +
             "lu sauf le plus récent."

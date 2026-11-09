@@ -177,8 +177,12 @@ object LocalRssFetcher {
                         // avant `updated` (modification), qui n'est qu'un repli.
                         "pubdate", "published", "updated", "dc:date" ->
                             if (!pubKnown) parseDate(c.text().trim())?.let { pub = it; pubKnown = true }
+                        // Plusieurs pièces jointes possibles (podcast + photos) : la **première
+                        // image** fait la miniature ; la dernière rencontrée la remplaçait, au
+                        // gré de l'ordre du fichier.
                         "enclosure" ->
-                            if (c.attr("type").startsWith("image") && c.hasAttr("url")) img = c.attr("url")
+                            if (img == null && c.attr("type").startsWith("image") && c.hasAttr("url"))
+                                img = c.attr("url")
                     }
                 }
                 // Médias de l'entrée, où qu'ils soient : YouTube les niche dans `media:group`,

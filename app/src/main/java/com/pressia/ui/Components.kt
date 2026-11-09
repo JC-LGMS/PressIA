@@ -905,6 +905,20 @@ fun LazyGridPositionIndicator(state: LazyGridState, modifier: Modifier = Modifie
     PositionTrack(top, thumb, modifier)
 }
 
+/**
+ * Signale l'approche du bas de la liste ([onEnd]) : l'écran Recherche charge alors la page
+ * suivante. Rien quand [onEnd] est nul (listes complètes, aucun appel superflu).
+ */
+@Composable
+private fun EndReachedEffect(lastVisibleIndex: () -> Int, total: Int, onEnd: (() -> Unit)?) {
+    if (onEnd == null) return
+    LaunchedEffect(total) {
+        snapshotFlow(lastVisibleIndex).collect { last ->
+            if (total > 0 && last >= total - 4) onEnd()
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ArticleList(
@@ -919,7 +933,12 @@ fun ArticleList(
      */
     stopAtUnread: Boolean = true,
     /** Ouvre la recherche sur le flux d'un article (action « Recherche », menu d'appui long). */
-    onSearch: ((ArticleEntity) -> Unit)? = null
+    onSearch: ((ArticleEntity) -> Unit)? = null,
+    /**
+     * Appelé quand le défilement approche du dernier article : l'écran Recherche s'en sert pour
+     * charger la page suivante (voir [PressVM.loadMoreSearch]).
+     */
+    onEndReached: (() -> Unit)? = null
 ) {
     val trailing by vm.trailingAction.collectAsState()
     val swipe by vm.swipeAction.collectAsState()
@@ -954,6 +973,10 @@ fun ArticleList(
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()
         val scope = rememberCoroutineScope()
+        EndReachedEffect(
+            { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 },
+            articles.size, onEndReached
+        )
         // Position du dernier non-lu « simple » (la grille n'a pas d'en-têtes : index direct).
         val unreadStopPos = remember(articles, stopAtUnread) {
             if (stopAtUnread) articles.indexOfLast { it.unread && !vm.starState(it) } else -1
@@ -1007,6 +1030,10 @@ fun ArticleList(
         val grouped = remember(articles, now) { groupByDay(articles, now) }
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
+        EndReachedEffect(
+            { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 },
+            grouped.size, onEndReached
+        )
         // Position du dernier non-lu « simple » (ni étoile ni « Read later »), en-têtes de
         // jour ET intercalaires inclus (voir lastUnreadLazyIndex).
         val unreadStopPos = remember(grouped, stopAtUnread) {

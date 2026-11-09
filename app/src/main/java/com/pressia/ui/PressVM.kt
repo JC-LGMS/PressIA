@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
 import com.pressia.data.LocalFeedAdd
 import com.pressia.data.FailedImage
+import com.pressia.data.SEARCH_PAGE
 import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
 import com.pressia.data.isSyncFresh
@@ -147,10 +148,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Faux par défaut : la recherche porte sur le titre, l'option ajoute le texte des articles. */
     var searchWithBody by mutableStateOf(false)
     var searchResults by mutableStateOf<List<ArticleEntity>>(emptyList())
+    /** Filtre d'affichage des résultats : « seulement les non-lus » (œil de l'écran Recherche). */
+    var searchUnreadOnly by mutableStateOf(false)
+        private set
     /** Vrai dès qu'une recherche a été lancée : distingue « 0 résultat » de « pas encore cherché ». */
     var searchRan by mutableStateOf(false)
         private set
     var searchLoading by mutableStateOf(false)
+        private set
+    /** Nombre de pages de [SEARCH_PAGE] déjà chargées, et fin atteinte (dernière page incomplète). */
+    private var searchPage = 0
+    var searchDone by mutableStateOf(false)
         private set
     /**
      * Incrémenté à chaque nouvelle recherche : la liste des résultats est reconstruite (clé de
@@ -197,8 +205,18 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     var imageFailures by mutableStateOf<List<FailedImage>>(emptyList())
         private set
-    /** Message final qui porte la note des images, seul cas où le bandeau propose le détail. */
-    var imageDetailMsg by mutableStateOf<String?>(null)
+    /**
+     * Comptes dont la synchronisation a échoué (quota 429…) : couple libellé du compte → motif.
+     * Le bandeau en donne un résumé, « Voir le détail » les nomme un par un — un échec ne doit pas
+     * en cacher un autre quand plusieurs comptes tournent en parallèle.
+     */
+    var syncFailures by mutableStateOf<List<Pair<String, String>>>(emptyList())
+        private set
+    /**
+     * Message final qui porte le détail (images manquantes ou comptes en échec) : seul cas où le
+     * bandeau propose « Voir le détail ». Une seule modale porte les deux sections.
+     */
+    var detailMsg by mutableStateOf<String?>(null)
         private set
     /** Dernier résultat d'authentification OAuth (affiché sur l'écran Comptes). */
     var authMsg by mutableStateOf<String?>(null)
@@ -548,7 +566,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         subs = repo.subscriptions()
         unreads = repo.unreadByFeed()
         folderUnreads = repo.unreadByFolder()
-        scanIds = repo.streamIds(scope.feedId, scope.categoryId, unreadOnly)
+        // Borné à KEEP_MAX comme `keepIds` : les identifiants servent au balayage de l'écran
+        // article, et une liste de 2000 dépassait les 400 articles que la requête de liste
+        // épingle (au-delà du 400e article, le balayage perdait le voisin).
+        scanIds = repo.streamIds(scope.feedId, scope.categoryId, unreadOnly, limit = KEEP_MAX)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
         } finally {
@@ -719,19 +740,31 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Le bandeau y joint le raccourci « Reconnecter » (voir EXPIRED_SESSION_MSG).
         if (repo.expiredAccounts().isNotEmpty()) return EXPIRED_SESSION_MSG
         // Un 429 quelque part dans le pipeline : la synchro n'a rien pu récupérer (ou pas
-        // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle.
-        val rl = repo.syncRateLimit
+        // tout) — le dire avec le délai du serveur plutôt qu'un succès aveugle. Un compte par
+        // entrée : deux comptes en échec ne doivent pas se masquer l'un l'autre.
+        val fails = repo.syncFailures
+        val rlMsg = when {
+            fails.isEmpty() -> null
+            fails.size == 1 -> fails.values.first().let {
+                rateLimitMessage(it.service, it.retryAfterSec, it.header)
+            }
+            else -> "${fails.size} comptes en échec (quota du service)"
+        }
         val base = when {
             n > 0 -> "$n nouvel${if (n > 1) "aux" else ""} article${if (n > 1) "s" else ""}"
-            rl != null -> rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
+            rlMsg != null -> rlMsg
             else -> "Synchronisation terminée"
         }
-        var msg = if (rl != null && n > 0) "$base. ${rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)}" else base
+        var msg = if (rlMsg != null && n > 0) "$base. $rlMsg" else base
+        // Détail des échecs (comptes) : la modale « Voir le détail » les nomme un par un.
+        syncFailures = fails.map { (label, rl) ->
+            label to rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
+        }
         // Images manquantes : la synchro reste réussie (l'heure a été mise à jour), le message
         // n'en donne que le nombre ; le bandeau propose alors « Voir le détail » (modale).
         msg += imageFailureNote(repo.imageFailures.size, repo.imagesInterrupted).orEmpty()
         imageFailures = repo.imageFailures
-        imageDetailMsg = if (repo.imageFailures.isEmpty()) null else msg
+        detailMsg = if (fails.isEmpty() && repo.imageFailures.isEmpty()) null else msg
         return msg
     }
 
@@ -967,6 +1000,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         searchScope = s
         searchResults = emptyList()
         searchRan = false
+        searchPage = 0
+        searchDone = false
     }
 
     /**
@@ -978,6 +1013,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         searchScope = s
         searchResults = emptyList()
         searchRan = false
+        searchPage = 0
+        searchDone = false
     }
 
     /** Option « inclure le texte » : même raison, les résultats en cours deviennent faux. */
@@ -986,6 +1023,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         searchWithBody = on
         searchResults = emptyList()
         searchRan = false
+        searchPage = 0
+        searchDone = false
     }
 
     /** Lance la recherche (base locale) et repart du haut de la liste. */
@@ -997,11 +1036,54 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (q.length < 2) return
         searchLoading = true
         try {
-            searchResults = repo.search(q, searchScope.feedId, searchScope.categoryId, searchWithBody)
+            // Nouvelle recherche : on repart de la première page ; une relecture (marquage groupé)
+            // garde les pages déjà chargées et les relit toutes.
+            if (bumpEpoch) searchPage = 0
+            searchResults = loadSearch(q)
             searchRan = true
             // Nouvelle recherche : la liste repart en haut. Une relecture (marquage groupé) garde
             // la position, l'utilisateur n'a pas relancé de recherche.
             if (bumpEpoch) searchEpoch++
+        } finally {
+            searchLoading = false
+        }
+    }
+
+    /** Pages déjà chargées (limite croissante) : l'ordre reste exact, sans doublon d'offset. */
+    private suspend fun loadSearch(q: String): List<ArticleEntity> {
+        val limit = (searchPage + 1) * SEARCH_PAGE
+        val rows = repo.search(
+            q, searchScope.feedId, searchScope.categoryId, searchWithBody,
+            unreadOnly = searchUnreadOnly, limit = limit
+        )
+        searchDone = rows.size < limit
+        return rows
+    }
+
+    /** Œil de l'écran Recherche : ne montrer que les non-lus (relance la recherche en cours). */
+    fun showOnlyUnread(on: Boolean) {
+        if (searchUnreadOnly == on) return
+        searchUnreadOnly = on
+        if (searchRan) runSearch()
+    }
+
+    /** Croix du champ de recherche : vide la requête (et les résultats qui allaient avec). */
+    fun clearSearch() {
+        searchQuery = ""
+        searchResults = emptyList()
+        searchRan = false
+        searchPage = 0
+        searchDone = false
+    }
+
+    /** Page suivante de résultats, au défilement en bas de l'écran Recherche. */
+    fun loadMoreSearch() = viewModelScope.launch {
+        val q = searchQuery.trim()
+        if (searchLoading || searchDone || !searchRan || q.length < 2) return@launch
+        searchLoading = true
+        try {
+            searchPage++
+            searchResults = loadSearch(q)
         } finally {
             searchLoading = false
         }
