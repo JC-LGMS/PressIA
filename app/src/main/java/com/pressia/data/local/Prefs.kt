@@ -41,6 +41,13 @@ class Prefs(private val ctx: Context) {
          * passe en thème sombre (capteur de lumière). 1 lux par défaut.
          */
         val LIGHT_THRESHOLD = intPreferencesKey("light_threshold")
+        /**
+         * Délai de bascule du mode automatique, en secondes : la lumière doit rester du même côté
+         * du seuil pendant ce temps. 3 s par défaut (voir [LIGHT_DELAY_DEFAULT]).
+         */
+        val LIGHT_DELAY = intPreferencesKey("light_delay")
+        /** Délai de bascule du mode automatique par défaut, en secondes. */
+        const val LIGHT_DELAY_DEFAULT = 3
         val ACCENT = stringPreferencesKey("accent") // "red"|"blue"|"green"|"violet"|"orange"|"pink"|"teal"
         val BG = stringPreferencesKey("background") // "default"|"white"|"black"|"sepia"|"grey"|"night"
         val VIEW_MODE = stringPreferencesKey("view_mode") // "list"|"card"|"magazine"|"compact"
@@ -254,6 +261,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("theme", THEME), PrefEntry.Str("appearance", APPEARANCE),
             PrefEntry.Str("night_theme", NIGHT_THEME),
             PrefEntry.IntPref("light_threshold", LIGHT_THRESHOLD),
+            PrefEntry.IntPref("light_delay", LIGHT_DELAY),
             PrefEntry.Str("accent", ACCENT),
             PrefEntry.Str("background", BG), PrefEntry.Str("view_mode", VIEW_MODE),
             PrefEntry.IntPref("font_size", FONT_SIZE), PrefEntry.IntPref("title_font_size", TITLE_FONT_SIZE),

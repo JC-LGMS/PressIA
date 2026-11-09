@@ -88,6 +88,14 @@ data class SyncActionEntity(
     val tries: Int = 0
 )
 
+/** Ligne de file réduite aux actions lu/non-lu (voir `undoneReadRows`). */
+data class QueuedAction(
+    val rowId: Long,
+    val articleId: String,
+    val kind: String,
+    val createdAt: Long
+)
+
 /** Évènement de lecture pour les stats. */
 @Entity(
     tableName = "reading_events",
@@ -476,6 +484,9 @@ interface PressDao {
      */
     @Query("SELECT articleId FROM sync_queue WHERE kind = 'read' OR kind = 'unread'")
     suspend fun pendingReadIds(): List<String>
+    /** Toute la file lu/non-lu, réduite (voir `undoneReadRows`). */
+    @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread')")
+    suspend fun pendingReadUnread(): List<QueuedAction>
     /** Un marquage de masse attend d'être poussé ? (toute la file, même remarque.) */
     @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead'")
     suspend fun pendingMarkAllCount(): Int

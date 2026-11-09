@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
             val accent by vm.accent.collectAsState()
             val bg by vm.bg.collectAsState()
             val lightThreshold by vm.lightThreshold.collectAsState()
+            val lightDelay by vm.lightDelay.collectAsState()
             val home by vm.homeScreen.collectAsState()
             val ctx = androidx.compose.ui.platform.LocalContext.current
             // deep link OAuth pressia://oauth?code=..&state=..
@@ -119,7 +120,7 @@ class MainActivity : ComponentActivity() {
                     vm.stopSyncTicker()
                 }
             }
-            PressIATheme(theme, accent, bg, lightThreshold) {
+            PressIATheme(theme, accent, bg, lightThreshold, lightDelay) {
                 // Réglage « page d'accueil » pas encore lu (DataStore répond de façon
                 // asynchrone, voir PressVM.homeScreen) : ne pas composer la navigation. Elle
                 // démarrerait sur le défaut « Accueil », et le NavController garderait cette
@@ -703,6 +704,39 @@ class MainActivity : ComponentActivity() {
                                 contentColor = androidx.compose.ui.graphics.Color.White
                             ) {
                                 Text(msg, Modifier.padding(horizontal = 24.dp, vertical = 12.dp))
+                            }
+                        }
+                    }
+                    // Marquage groupé poussé article par article (annulation d'un « tout marquer
+                    // lu », repli sans marquage de masse) : des centaines d'articles, donc une
+                    // barre en bas plutôt qu'un simple indicateur d'activité.
+                    val bulk = vm.bulkProgress.collectAsState().value
+                    if (bulk != null) {
+                        // Le compteur rejoint la valeur réelle en douceur (il ne la dépasse
+                        // jamais) : sans cela il sautait d'une page à l'autre, 0 puis 100 puis
+                        // 200, et la barre semblait figée entre deux étapes.
+                        val shown by androidx.compose.animation.core.animateIntAsState(
+                            bulk.done,
+                            androidx.compose.animation.core.tween(400),
+                            label = "bulkDone"
+                        )
+                        Surface(
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.inverseSurface,
+                            contentColor = MaterialTheme.colorScheme.inverseOnSurface
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                                Text(
+                                    "Envoi du marquage au serveur : $shown/${bulk.total}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                LinearProgressIndicator(
+                                    progress = { if (bulk.total > 0) shown.toFloat() / bulk.total else 0f },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    // Pas de point « d'arrêt » de Material 3 en bout de piste : il
+                                    // se lisait comme un marqueur de fin alors que l'envoi courait.
+                                    drawStopIndicator = {}
+                                )
                             }
                         }
                     }

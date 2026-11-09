@@ -71,8 +71,9 @@ Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assembl
 
 - **Le numéro avance tout seul, une fois par évolution.** `app/build.gradle.kts` compare
   l'empreinte de `app/src/main` + du script à `sourceHash` dans `version.properties` : si elle a
-  changé, `versionName` passe au correctif suivant (`1.0.x`) et `versionCode` augmente de 1,
-  **avant** que `defaultConfig` ne les lise.
+  changé, `versionName` passe à la mineure suivante (`1.1`, `1.2`, … — deux composants, plus de
+  correctif à trois chiffres depuis la 1.1) et `versionCode` augmente de 1, **avant** que
+  `defaultConfig` ne les lise.
   - **Un incrément = une modification terminée, pas une compilation.** Corriger, rebuilder,
     revérifier laisse la version en place : seul le **premier** build d'une évolution
     l'incrémente. Le signal est le commit — le script interroge
@@ -620,6 +621,35 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
   article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et poussaient
   deux fois les mêmes lignes.
+- **Marquage groupé article par article : barre de progression en bas** (`BulkProgress`,
+  `PressRepository.bulkProgress`). À partir de `PUSH_BAR_MIN` = 10 lignes,
+  `markArticlesRead` / `markArticlesUnread` passent par `pushWithProgress`, qui publie
+  `(done, total)` après chaque page (`pushQueue(onProgress)`) et remet le flux à `null` dans un
+  `finally` — c'est ce qui couvre « tout marquer lu » replié à l'unité (compte sans marquage de
+  masse, favoris exclus) et son annulation. En deçà de 10, rien ne s'affiche (la barre
+  clignoterait pour deux ou trois articles).
+  **Aucun appel réseau en plus** : la page de file reste à 100 lignes et un envoi groupé par
+  page (`markRead` / `markUnread` acceptent une liste) — la découper pour faire avancer la barre
+  multiplierait les appels. **L'avancement suit chaque envoi réel** : `pushPage` reçoit
+  `onDropped` et le rappelle après chaque lot (un groupe **par compte**, donc une étape par
+  agrégateur concerné ; aussi après chaque reprise à l'unité). Une sélection qui couvre Feedly
+  et Inoreader avance donc en deux étapes, sans requête supplémentaire.
+  **Deux opérations qui se chevauchent** (marquage puis « Annuler » pendant la poussée) ne font
+  qu'une barre : `bulkBarUsers` / `bulkBarTotal` / `bulkBarDone` sont partagés, la seconde
+  **ajoute son total** sans remettre l'avancement à zéro, et `report` transmet le **lot** parti
+  (pas un cumul par appel) pour que les deux poussées s'additionnent. Vérifié : `0/82` →
+  `0/164` → `82/164` → `164/164`, au lieu de « se vide puis reste pleine ». La barre ne se ferme
+  qu'à la dernière opération.
+  **L'annulation annule les envois pas encore partis** : à chaque page, `undoneReadRows` retire
+  de la file les « read » encore en attente qui ont un « unread » plus récent (l'Annuler), avec
+  cet « unread » — le serveur n'a jamais vu le lu, rien n'est envoyé. Ce qui était déjà parti
+  garde son « unread » et sera corrigé. Un « unread » antérieur au « read » ne défait rien
+  (marqué non lu puis lu : les deux partent dans l'ordre). La page en cours d'envoi au moment du
+  tap ne peut pas être stoppée (elle est déjà sur le réseau). Mesuré sur 136 articles : 100 lus
+  partis, 36 lus + 36 non-lus retirés, 100 non-lus envoyés (200 lignes au lieu de 272).
+  `MainActivity` anime le compteur (`animateIntAsState`, 400 ms) : le nombre rejoint la valeur
+  réelle sans la dépasser. Le total peut inclure d'autres lignes déjà en file, d'où
+  `done.coerceAtMost(total)`.
 - Marquage de masse Feedly : `POST /v3/markers` accepte `type":"feeds"` (ou `"categories"`, avec ou
   sans `asOf`) puis les **ignore** — HTTP 200, corps vide, `markers/counts` inchangé (vérifié en
   direct). Seul `type":"entries"` marque vraiment : `FeedlyProvider.markAllRead` /
@@ -899,11 +929,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   de luminosité, le thème bascule quand la lumière franchit le **seuil réglable** (Réglages →
   Affichage, `LIGHT_THRESHOLD`, 1 lux par défaut, curseur 0–200 lux, avec la **luminosité
   actuelle** affichée en dessous pour choisir en connaissance de cause) — à cette valeur ou moins :
-  sombre. Le changement attend **5 s de conditions stables dans les deux sens** (un nuage ou une
-  lampe passagère ne fait pas clignoter) ; sans capteur, `isSystemInDarkTheme()` comme avant. Le
-  thème part **sombre** tant que le capteur n'a rien dit, et la **première lecture** (démarrage)
-  s'applique immédiatement : l'écran s'ouvre dans le thème de la pièce, l'attente ne concerne que
-  les changements en cours d'usage. Vérifié sur l'émulateur (`adb emu sensor set light 0|1|2`).
+  sombre. Le changement attend un **délai de bascule réglable** (Réglages → Affichage,
+  `LIGHT_DELAY`, **3 s par défaut**, curseur 1–20 s) de conditions stables dans les deux sens : un
+  nuage ou une lampe passagère ne fait pas clignoter. Le seuil et le délai sont relus à chaque
+  lecture (`rememberUpdatedState`) — les modifier dans les Réglages s'applique donc sans
+  redémarrage, bien que l'écouteur du capteur ne soit enregistré qu'une fois. Sans capteur,
+  `isSystemInDarkTheme()` comme avant. Le thème part **sombre** tant que le capteur n'a rien dit,
+  et la **première lecture** (démarrage) s'applique immédiatement : l'écran s'ouvre dans le thème
+  de la pièce, l'attente ne concerne que les changements en cours d'usage. Vérifié sur l'émulateur
+  (`adb emu sensor set light 0|1|2`, bascule mesurée à 3 s puis à 10 s après réglage).
 - **Menu d'appui long** (accueil, flux, article) : il porte « Recherche » (portée du dossier, du
   flux ou du flux de l'article) et, en tête, le **compte** du flux ou « Local » — seulement si la
   précision distingue (`showFeedAccount` : plusieurs comptes, ou un compte + des flux locaux).

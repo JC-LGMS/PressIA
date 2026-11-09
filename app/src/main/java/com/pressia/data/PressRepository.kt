@@ -203,6 +203,29 @@ fun syncActionRuns(actions: List<SyncActionEntity>): List<List<SyncActionEntity>
 }
 
 /**
+ * Lignes à jeter parce que **défaites avant d'être parties** : une annulation enfile un
+ * `unread` après le `read` qu'elle annule ; tant que le `read` est encore en file, le serveur
+ * n'a jamais vu le « lu » — inutile de l'envoyer puis de le défaire. On retire donc les deux
+ * (le `read` et son `unread`), et les envois restants sont ceux des lectures **déjà** parties.
+ *
+ * [page] est la page de file sur le point d'être poussée, [queued] toute la file lue/non-lue
+ * (l'`unread` peut être sur une autre page). Un `unread` antérieur au `read` (marquage non-lu
+ * puis lu) ne défait rien : il reste, et la chronologie garde le dernier état.
+ */
+fun undoneReadRows(page: List<QueuedAction>, queued: List<QueuedAction>): Set<Long> {
+    val unreads = queued.filter { it.kind == "unread" }.groupBy { it.articleId }
+    val drop = mutableSetOf<Long>()
+    page.filter { it.kind == "read" }.forEach { read ->
+        val undo = unreads[read.articleId]?.firstOrNull { it.createdAt >= read.createdAt }
+        if (undo != null) {
+            drop += read.rowId
+            drop += undo.rowId
+        }
+    }
+    return drop
+}
+
+/**
  * Résultat de l'ajout d'un flux RSS local.
  *
  * [AlreadyExists] évite deux dégâts de l'ancien `upsert` : le flux était rangé dans le
@@ -232,6 +255,16 @@ fun markAllReadPush(rows: List<SyncActionEntity>): MarkAllReadPush = MarkAllRead
     feedIds = rows.mapNotNull { it.feedId?.takeIf { it.isNotBlank() } }.distinct(),
     global = rows.any { it.feedId.isNullOrBlank() }
 )
+
+/** Nombre de lignes de file à partir duquel un marquage groupé affiche la barre du bas. */
+private const val PUSH_BAR_MIN = 10
+
+/**
+ * Avancement d'un marquage groupé qui part **article par article** vers le compte ([done] sur
+ * [total]) : la barre du bas le montre. Voir `PressRepository.bulkProgress`.
+ */
+data class BulkProgress(val done: Int, val total: Int)
+
 
 /**
  * Comptes cloud servis par le marquage « tout le compte » d'un segment.
@@ -1063,7 +1096,7 @@ class PressRepository(
                 chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "read") }
             }
             dao.enqueueAll(rows)
-            pushQueue()
+            pushWithProgress(rows.size)
         }
     }
     /**
@@ -1080,7 +1113,48 @@ class PressRepository(
                 chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "unread") }
             }
             dao.enqueueAll(rows)
+            pushWithProgress(rows.size)
+        }
+    }
+    /**
+     * Pousse la file en publiant l'avancement dans [bulkProgress] à partir de [PUSH_BAR_MIN]
+     * lignes (en deçà, la barre clignoterait pour rien).
+     *
+     * La page de file reste à 100 lignes : c'est un **envoi groupé** par page, pas un appel par
+     * article — la découper pour faire avancer la barre multiplierait les appels réseau sans
+     * nécessité. L'avancement suit donc les envois réels.
+     *
+     * **Annulation en cours de marquage** : une seconde opération (l'« Annuler » d'un marquage
+     * groupé) rejoint la barre au lieu de la remettre à zéro — son total s'ajoute et les lignes
+     * déjà parties restent comptées. Sans cela, la barre se vidait, se remplissait jusqu'à
+     * l'ancien total et y restait pleine pendant que la file continuait de grossir.
+     */
+    private suspend fun pushWithProgress(rows: Int) {
+        if (rows < PUSH_BAR_MIN) {
             pushQueue()
+            return
+        }
+        synchronized(bulkBarLock) {
+            if (bulkBarUsers == 0) { bulkBarTotal = 0; bulkBarDone = 0 }
+            bulkBarUsers++
+            bulkBarTotal += rows
+        }
+        publishBulkProgress(0)
+        try {
+            pushQueue { added -> publishBulkProgress(added) }
+        } finally {
+            synchronized(bulkBarLock) {
+                bulkBarUsers--
+                if (bulkBarUsers == 0) bulkProgress.value = null
+            }
+        }
+    }
+
+    /** Ajoute les lignes réellement parties (jamais plus que le total annoncé) et publie. */
+    private fun publishBulkProgress(added: Int) {
+        synchronized(bulkBarLock) {
+            bulkBarDone = (bulkBarDone + added).coerceAtMost(bulkBarTotal)
+            bulkProgress.value = BulkProgress(bulkBarDone, bulkBarTotal)
         }
     }
     /** Non-lus marquables en masse du périmètre (voir `markAllRead`) : l'annulation sait quoi rouvrir. */
@@ -1173,6 +1247,20 @@ class PressRepository(
      * et relance son remplissage — sans effet sur le bandeau, qui suit [syncStep].
      */
     val listsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+
+    /**
+     * Avancement d'un marquage groupé qui part **article par article** vers le compte :
+     * annulation d'un « tout marquer lu » (toujours à l'unité), repli quand le service ne sait pas
+     * marquer en masse, menu « plus récents/anciens ». La barre du bas le montre ; nul en dehors
+     * de ces opérations, et muet en deçà de [PUSH_BAR_MIN] lignes.
+     */
+    val bulkProgress = MutableStateFlow<BulkProgress?>(null)
+
+    /** Opérations qui tiennent la barre ouverte, total annoncé et lignes déjà parties. */
+    private val bulkBarLock = Any()
+    private var bulkBarUsers = 0
+    private var bulkBarTotal = 0
+    private var bulkBarDone = 0
 
     /** Signale que les listes doivent se rafraîchir (voir [listsChanged]). Ne suspend jamais. */
     fun pokeLists() {
@@ -2487,14 +2575,28 @@ class PressRepository(
 
     /**
      * Pousse la file montante, sous verrou (voir [pushMutex]) : deux appels concurrents
-     * attendent leur tour au lieu de repousser les mêmes lignes.
+     * attendent leur tour au lieu de repousser les mêmes lignes. [onProgress] reçoit le nombre de
+     * lignes traitées après chaque page (marquage groupé : barre du bas).
      */
-    suspend fun pushQueue(): Int = pushMutex.withLock { pushQueueUnlocked() }
+    suspend fun pushQueue(onProgress: ((done: Int) -> Unit)? = null): Int =
+        pushMutex.withLock { pushQueueUnlocked(onProgress) }
 
-    private suspend fun pushQueueUnlocked(): Int = withContext(Dispatchers.IO) {
+    private suspend fun pushQueueUnlocked(onProgress: ((done: Int) -> Unit)? = null): Int =
+        withContext(Dispatchers.IO) {
         val accounts = cloudAccounts()
         var done = 0
         var pages = 0
+        // L'avancement suit chaque lot réellement envoyé, pas la seule page : une page peut
+        // couvrir **deux comptes** (deux envois distincts), ou plusieurs sortes d'actions, et
+        // la barre doit avancer à chacun — sans requête supplémentaire, c'est le découpage de
+        // la file qui le donne.
+        fun report(added: Int) {
+            if (added <= 0) return
+            done += added
+            // Le rappel reçoit le **lot** parti (et non le cumul de cet appel) : deux opérations
+            // qui se chevauchent (marquage puis annulation) additionnent ainsi leurs lignes.
+            onProgress?.invoke(added)
+        }
         // La file se sert par pages (`pendingSync` en rend 100) : on les enchaîne **jusqu'à ce
         // qu'elle soit vide**. Chaque tour retire au moins une ligne (ou n'en retire aucune, et
         // on s'arrête) : un marquage groupé de plusieurs milliers d'articles part en entier, au
@@ -2502,38 +2604,61 @@ class PressRepository(
         while (true) {
             val pending = dao.pendingSync()
             if (pending.isEmpty()) break
-            val processed = if (accounts.isEmpty()) {
-                // Plus aucun compte cloud : la file n'a plus de destinataire, on la vide.
-                pending.size.also { pending.forEach { r -> dao.dequeue(r.rowId) } }
-            } else {
-                pushPage(pending, accounts)
+            val before = done
+            // Annulation d'un marquage pendant la poussée : la lecture pas encore partie et son
+            // « non lu » sortent de la file (le serveur n'a jamais vu le lu) — voir
+            // [undoneReadRows]. Ce qui est déjà parti garde son « non lu » et sera corrigé.
+            val undone = undoneReadRows(
+                pending.map { QueuedAction(it.rowId, it.articleId, it.kind, it.createdAt) },
+                dao.pendingReadUnread()
+            )
+            val toSend = if (undone.isEmpty()) pending else pending.filterNot { it.rowId in undone }
+            if (undone.isNotEmpty()) {
+                android.util.Log.i("PressIA", "file: annulation, ${undone.size} lignes retirées")
+                undone.forEach { dao.dequeue(it) }
+                report(undone.size)
             }
-            done += processed
+            if (accounts.isEmpty()) {
+                // Plus aucun compte cloud : la file n'a plus de destinataire, on la vide.
+                toSend.forEach { r -> dao.dequeue(r.rowId) }
+                report(toSend.size)
+            } else if (toSend.isNotEmpty()) {
+                pushPage(toSend, accounts, ::report)
+            }
             // Rien n'a pu partir (réseau en échec, quota atteint) : rejouer la même page
             // n'apporterait rien.
-            if (processed == 0) break
+            if (done == before) break
             pages++
         }
-        if (done > 0) android.util.Log.i("PressIA", "file: $done lignes poussées ($pages pages)")
+        if (done > 0) android.util.Log.i("PressIA", "file: $done lignes traitées ($pages pages)")
         done
     }
 
     /**
-     * Pousse une page de la file (voir [pushQueue]) vers le compte de chaque action. Renvoie le
-     * nombre de lignes traitées (poussées ou vidées).
+     * Pousse une page de la file (voir [pushQueue]) vers le compte de chaque action.
+     * [onDropped] reçoit le nombre de lignes traitées (poussées ou vidées) **après chaque
+     * envoi** : un groupe par compte, donc une étape de la barre par agrégateur concerné.
      */
-    private suspend fun pushPage(pending: List<SyncActionEntity>, accounts: List<CloudAccount>): Int {
-        var done = 0
+    private suspend fun pushPage(
+        pending: List<SyncActionEntity>,
+        accounts: List<CloudAccount>,
+        onDropped: (Int) -> Unit
+    ) {
         // Regroupées par compte, puis poussées dans l'ordre de la file par segments de même
         // sorte : 1 appel réseau par segment (les API acceptent des listes) au lieu d'1 par
         // article — une file hors-ligne de 50 lus part en 1 appel.
         pending.groupBy { accountFor(it, accounts) }.forEach { (account, actions) ->
             // Flux local (ou compte retiré) : rien à pousser, la ligne part — la garder la
             // ferait réessayer à chaque synchro sans jamais pouvoir aboutir.
-            if (account == null) { actions.forEach { dao.dequeue(it.rowId); done++ }; return@forEach }
+            if (account == null) {
+                actions.forEach { dao.dequeue(it.rowId) }
+                onDropped(actions.size)
+                return@forEach
+            }
             val p = providerFor(account.provider)
             suspend fun drop(rows: List<SyncActionEntity>) {
-                rows.forEach { dao.dequeue(it.rowId); done++ }
+                rows.forEach { dao.dequeue(it.rowId) }
+                onDropped(rows.size)
                 clearAccountExpired(account.id)
             }
             suspend fun postpone(rows: List<SyncActionEntity>, e: Throwable) {
@@ -2567,7 +2692,9 @@ class PressRepository(
                     }
             }
             // États locaux d'anciennes versions : rien à pousser, juste à vider.
-            actions.filter { it.kind == "star" || it.kind == "unstar" }.forEach { dao.dequeue(it.rowId); done++ }
+            val legacy = actions.filter { it.kind == "star" || it.kind == "unstar" }
+            legacy.forEach { dao.dequeue(it.rowId) }
+            if (legacy.isNotEmpty()) onDropped(legacy.size)
             // Vidage DANS L'ORDRE DE LA FILE (createdAt), segment par segment : voir
             // `syncActionRuns`. Un regroupement par sorte inverserait les actions d'un même
             // article — et surtout un `markAllRead` en attente repartirait APRÈS les `unread`
@@ -2614,7 +2741,6 @@ class PressRepository(
                 }
             }
         }
-        return done
     }
 
     /**

@@ -1099,8 +1099,11 @@ class PressLogicTest {
         }
         // Réglage exporté : l'historique remonté doit survivre à une restauration.
         assertTrue("history_months doit figurer dans ENTRIES", "history_months" in names)
-        // Seuil du mode automatique : réglage utilisateur, il survit à une restauration.
+        // Seuil et délai de bascule du mode automatique : réglages utilisateur, ils survivent
+        // à une restauration.
         assertTrue("light_threshold doit figurer dans ENTRIES", "light_threshold" in names)
+        assertTrue("light_delay doit figurer dans ENTRIES", "light_delay" in names)
+        assertEquals(3, Prefs.LIGHT_DELAY_DEFAULT)
         // Défaut d'historique : 1 mois, aligné sur la fenêtre Feedly (~31 j au-delà = lu).
         assertEquals(1, Prefs.HISTORY_MONTHS_DEFAULT)
         // Réglage exporté : la source des favicons doit survivre à une restauration.
@@ -1474,6 +1477,24 @@ class PressLogicTest {
             com.pressia.data.syncActionRuns(undone).map { it.first().kind }
         )
         assertTrue(com.pressia.data.syncActionRuns(emptyList()).isEmpty())
+    }
+
+    @Test fun `annulation en cours de marquage retire les lectures pas encore parties`() {
+        fun row(id: Long, article: String, kind: String, at: Long) =
+            com.pressia.data.local.QueuedAction(rowId = id, articleId = article, kind = kind, createdAt = at)
+        // a2 et a3 sont encore en file (a3 sur la page suivante), l'Annuler a enfilé leur
+        // « unread » après leur « read » : les quatre lignes sortent, rien ne partira.
+        val page = listOf(row(1, "a2", "read", 100), row(2, "a3", "read", 100))
+        val queued = page + listOf(row(3, "a2", "unread", 200), row(4, "a3", "unread", 200))
+        assertEquals(setOf(1L, 2L, 3L, 4L), com.pressia.data.undoneReadRows(page, queued))
+        // Un « unread » ANTÉRIEUR au « read » (marqué non lu puis lu) ne défait rien : le
+        // dernier état est « lu » et les deux lignes partent dans l'ordre.
+        val older = listOf(row(5, "a4", "unread", 50), row(6, "a4", "read", 100))
+        assertTrue(com.pressia.data.undoneReadRows(listOf(older[1]), older).isEmpty())
+        // Aucun « unread » en face : la lecture part normalement.
+        assertTrue(
+            com.pressia.data.undoneReadRows(listOf(row(7, "a5", "read", 100)), listOf(row(7, "a5", "read", 100))).isEmpty()
+        )
     }
 
     @Test fun `tout marquer lu visait les flux et le compte`() {

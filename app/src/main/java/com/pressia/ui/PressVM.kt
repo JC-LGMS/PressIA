@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
+import com.pressia.data.BulkProgress
 import com.pressia.data.LocalFeedAdd
 import com.pressia.data.FailedImage
 import com.pressia.data.SEARCH_PAGE
@@ -200,6 +201,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Dernier résultat de synchronisation (affiché en snackbar, puis effacé). */
     var syncMsg by mutableStateOf<String?>(null)
     /**
+     * Avancement d'un marquage groupé poussé article par article (annulation d'un « tout marquer
+     * lu », repli sans marquage de masse, menu « plus récents/anciens ») : la barre du bas le
+     * montre. Voir `PressRepository.bulkProgress`.
+     */
+    val bulkProgress: StateFlow<BulkProgress?> = repo.bulkProgress
+    /**
      * Images que la dernière synchro n'a pas récupérées, telles qu'affichées par la modale
      * « Voir le détail » du bandeau (copie : la passe suivante remet la liste du dépôt à zéro).
      */
@@ -266,6 +273,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Seuil de luminosité du mode automatique, en lux : sombre à cette valeur ou moins. */
     val lightThreshold: StateFlow<Int> = prefs.flow(Prefs.LIGHT_THRESHOLD, 1)
         .stateIn(viewModelScope, SharingStarted.Eagerly, 1)
+    /** Délai de bascule du mode automatique, en secondes (voir [Prefs.LIGHT_DELAY_DEFAULT]). */
+    val lightDelay: StateFlow<Int> = prefs.flow(Prefs.LIGHT_DELAY, Prefs.LIGHT_DELAY_DEFAULT)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.LIGHT_DELAY_DEFAULT)
     /**
      * Thème effectif. Le drawer ne choisit plus qu'entre trois apparences ; « nuit » applique le
      * thème nocturne défini dans les Réglages (AMOLED par défaut = Sombre).

@@ -729,6 +729,7 @@ fun SettingsScreen(vm: PressVM) {
 
     var night by remember { mutableStateOf("dark") }
     var lightThreshold by remember { mutableStateOf(1) }
+    var lightDelay by remember { mutableStateOf(Prefs.LIGHT_DELAY_DEFAULT) }
     var accent by remember { mutableStateOf("red") }
     var bg by remember { mutableStateOf("default") }
     var home by remember { mutableStateOf("subs") }
@@ -776,6 +777,7 @@ fun SettingsScreen(vm: PressVM) {
     suspend fun reloadFromPrefs() {
         night = get(Prefs.NIGHT_THEME, "dark"); accent = get(Prefs.ACCENT, "red"); bg = get(Prefs.BG, "default"); home = get(Prefs.HOME_SCREEN, "subs")
         lightThreshold = get(Prefs.LIGHT_THRESHOLD, 1)
+        lightDelay = get(Prefs.LIGHT_DELAY, Prefs.LIGHT_DELAY_DEFAULT)
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
         swipe = get(Prefs.SWIPE_ACTION, "star")
         swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
@@ -823,6 +825,7 @@ fun SettingsScreen(vm: PressVM) {
     fun save() = scope.launch {
         vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
         vm.repo.prefs.set(Prefs.LIGHT_THRESHOLD, lightThreshold)
+        vm.repo.prefs.set(Prefs.LIGHT_DELAY, lightDelay)
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
         vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
@@ -873,8 +876,19 @@ fun SettingsScreen(vm: PressVM) {
             Text(
                 "Avec un capteur de lumière, l'apparence automatique passe en thème sombre quand la " +
                     "lumière ambiante est à ce seuil ou en dessous, et revient au clair au-dessus — dans " +
-                    "les deux sens après 5 secondes de conditions stables. Sans capteur, le thème du " +
+                    "les deux sens après le délai de bascule choisi ci-dessous. Sans capteur, le thème du " +
                     "système s'applique et ce seuil n'est pas utilisé.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text("Délai de bascule du mode automatique : $lightDelay s")
+            Slider(lightDelay.toFloat(), { lightDelay = it.toInt(); save() }, valueRange = 1f..20f, steps = 18)
+            Text(
+                "La lumière doit rester du même côté du seuil pendant ce temps avant que le thème bascule : " +
+                    "un nuage, un passage devant le capteur ou une lampe allumée brièvement ne fait donc pas " +
+                    "clignoter l'écran. 3 secondes par défaut.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2010,7 +2024,9 @@ private val ABOUT_TOPICS = listOf(
             "pour la vue « Tous les articles ») : le serveur est à jour tout de suite. Les favoris et le " +
             "Read later ne sont jamais touchés par ces marquages. Chaque marquage groupé (« tout marquer lu » " +
             "inclus) propose un bouton Annuler — chez Inoreader, cette annulation reste locale : le site ne " +
-            "sait pas rouvrir un article plus ancien."
+            "sait pas rouvrir un article plus ancien. Pendant l'envoi au compte, une barre en bas montre " +
+            "l'avancement (« n/total », une étape par compte) ; annuler pendant l'envoi arrête les marquages " +
+            "pas encore partis, et ceux déjà partis sont corrigés."
     ),
     AboutTopic(
         "Favoris et Read later : jamais marqués lus",
@@ -2116,6 +2132,7 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Apparence et confort de lecture",
         "Thème de nuit (sombre, AMOLED), accent, fond, quatre tailles de police, échelles du menu " +
-            "et de l'accueil : tout est réglable et exporté avec la sauvegarde."
+            "et de l'accueil : tout est réglable et exporté avec la sauvegarde. L'apparence automatique " +
+            "suit la lumière ambiante — seuil et délai de bascule (3 secondes par défaut) se règlent."
     )
 )

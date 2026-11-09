@@ -161,9 +161,9 @@ fun resolveBackground(bg: String, dark: Boolean): Color? {
  *
  * Avec un capteur de luminosité, le thème bascule quand la lumière franchement franchie le
  * [threshold] (en lux) : à cette valeur ou moins, sombre ; au-dessus, clair. Le changement attend
- * **5 secondes** de conditions stables dans les deux sens — un nuage, un passage devant le
- * capteur ou une lampe allumée brièvement ne fait pas clignoter le thème. Sans capteur, on
- * retombe sur le thème du système, comme avant.
+ * [delaySec] secondes de conditions stables dans les deux sens (3 s par défaut, réglable) — un
+ * nuage, un passage devant le capteur ou une lampe allumée brièvement ne fait pas clignoter le
+ * thème. Sans capteur, on retombe sur le thème du système, comme avant.
  *
  * La bascule est vérifiée par un `Handler` pour ne pas dépendre de la fréquence du capteur (qui
  * peut se calmer quand la valeur ne change plus) ; une lecture qui repart dans l'autre sens
@@ -172,12 +172,17 @@ fun resolveBackground(bg: String, dark: Boolean): Color? {
  * le thème de la pièce, l'attente ne concerne que les changements en cours d'usage.
  */
 @Composable
-private fun ambientDark(threshold: Int): Boolean {
+private fun ambientDark(threshold: Int, delaySec: Int): Boolean {
     val ctx = LocalContext.current
     val manager = remember(ctx) { ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
     val sensor = remember(manager) { manager?.getDefaultSensor(Sensor.TYPE_LIGHT) }
     if (sensor == null) return isSystemInDarkTheme()
     var dark by remember { mutableStateOf(true) }
+    // Le capteur n'est enregistré qu'une fois : le seuil et le délai réglés ensuite doivent
+    // être lus à chaque lecture, sinon l'écran Réglages ne les ferait appliquer qu'au
+    // redémarrage (l'ancienne fermeture restait accrochée à l'écouteur).
+    val thresholdNow = rememberUpdatedState(threshold)
+    val delayNow = rememberUpdatedState(delaySec)
     DisposableEffect(manager, sensor) {
         val handler = Handler(Looper.getMainLooper())
         // État que le capteur demande (null tant qu'aucune lecture) et minuteur de bascule.
@@ -188,10 +193,10 @@ private fun ambientDark(threshold: Int): Boolean {
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 val lux = event.values.firstOrNull() ?: return
-                val wantDark = lux <= threshold
+                val wantDark = lux <= thresholdNow.value
                 if (wantedDark == null) {
                     // Première lecture (démarrage) : on s'aligne tout de suite sur la pièce,
-                    // sans les 5 s d'attente réservées aux changements en cours d'usage.
+                    // sans le délai d'attente réservé aux changements en cours d'usage.
                     wantedDark = wantDark
                     dark = wantDark
                     return
@@ -199,7 +204,7 @@ private fun ambientDark(threshold: Int): Boolean {
                 if (wantDark == wantedDark) return   // même camp : l'attente continue
                 wantedDark = wantDark
                 handler.removeCallbacks(apply)
-                if (wantDark != dark) handler.postDelayed(apply, 5_000L)
+                if (wantDark != dark) handler.postDelayed(apply, delayNow.value * 1000L)
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -220,12 +225,14 @@ fun PressIATheme(
     bg: String = "default",
     /** Seuil de luminosité du mode automatique (lux) : sombre à cette valeur ou moins. */
     lightThreshold: Int = 1,
+    /** Délai de bascule du mode automatique, en secondes (conditions stables exigées). */
+    lightDelaySec: Int = 3,
     content: @Composable () -> Unit
 ) {
     val dark = when (theme) {
         "light" -> false
         "dark", "amoled" -> true
-        else -> ambientDark(lightThreshold)
+        else -> ambientDark(lightThreshold, lightDelaySec)
     }
     val seed = accentSeed(accent)
     var scheme = when (theme) {

@@ -48,6 +48,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.1",
+        listOf(
+            ChangelogItem(
+                "2026-11-10",
+                "Délai de bascule réglable, progression des marquages groupés, version 1.x",
+                "- Mode automatique : le délai de bascule devient un réglage (1 à 20 s, 3 s par " +
+                    "défaut, au lieu de 5 s fixes). Comme le seuil, il s'applique dès qu'on le " +
+                    "modifie — l'écouteur du capteur n'était enregistré qu'une fois et gardait " +
+                    "l'ancienne valeur jusqu'au redémarrage.\n" +
+                    "- Marquage groupé qui part article par article (annulation d'un « tout marquer " +
+                    "lu », compte sans marquage de masse, favoris exclus) : une barre en bas montre " +
+                    "l'envoi au serveur dès 10 articles, une étape par compte (Feedly, Inoreader). " +
+                    "Elle ne repart pas de zéro si l'on annule pendant l'envoi, et les marquages pas " +
+                    "encore partis sont annulés — le serveur ne les voit jamais.\n" +
+                    "- Version : le numéro avance désormais par version mineure (1.1, 1.2…) au lieu " +
+                    "du correctif 1.0.x.",
+                time = "02:12"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.0.53",
         listOf(
             ChangelogItem(

@@ -18,7 +18,7 @@ import java.security.MessageDigest
  * Version automatique (voir AGENTS.md, « Version et journal des modifications »).
  *
  * L'empreinte des sources de l'application (`src/main` + ce script) est comparée à celle
- * enregistrée dans `version.properties` : si elle a changé, le correctif (1.0.x) et
+ * enregistrée dans `version.properties` : si elle a changé, la version mineure (1.x) et
  * `versionCode` sont incrémentés **avant** la lecture par `defaultConfig`.
  *
  * Un incrément = une **évolution terminée**, pas une compilation. Pendant qu'on travaille on
@@ -79,9 +79,10 @@ if (sourcesChanged) {
     } else {
         appVersionCode += 1
         val parts = appVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
-        while (parts.size < 3) parts += 0
-        parts[2] += 1
-        appVersionName = parts.take(3).joinToString(".")
+        while (parts.size < 2) parts += 0
+        // Version mineure seule, deux composants : 1.0.53 → 1.1, puis 1.2, 1.3…
+        parts[1] += 1
+        appVersionName = parts.take(2).joinToString(".")
         logger.lifecycle("PressIA : modification terminée, nouvelle version $appVersionName ($appVersionCode)")
     }
 }
