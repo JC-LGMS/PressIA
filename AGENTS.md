@@ -457,6 +457,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   téléchargements seulement tournent à la fois. Appelé en fin de `syncDown` (`withThumbs = true`)
   et de `backfill` : **toute** sync
   (bouton, lancement, worker, connexion de compte) récupère les images.
+  **Le compteur « n/total » compte les images terminées, échecs compris** : en ne comptant que
+  les réussites, il se figeait sur « 42/78 » pendant que le reste épuisait son délai (10 à 20 s
+  par image, six à la fois) — la synchronisation semblait bloquée alors qu'elle avançait (constaté
+  sur téléphone ; sur l'émulateur : compteur arrêté à 31/65 au lieu de 65/65, 34 images en échec).
 - **Un échec d'image ne fait pas échouer la synchronisation.** `syncImages` relève les images
   qu'un article garde manquantes (timeout, 404…) dans `imageFailures`, une entrée par URL
   (`FailedImage` : flux, titre d'article, adresse) ; le pipeline et l'ajout d'un flux passent par
@@ -470,10 +474,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   téléchargement interrompu, lui, n'a pas de détail : « Images non récupérées (téléchargement
   interrompu) ». La projection `articlesPendingImages` porte `feedId`/`feedTitle`/`title` pour
   nommer chaque image.
-  **Délai réseau des images : connexion 10 s, lecture et durée totale 30 s** dans `ThumbStore`
-  comme dans le client OkHttp posé sur Coil (`PressIAApp`) : une originale de 5 Mo met plus de
-  10 s quand six descendent de front, mais une image qui ne répond pas ne retient pas la passe
-  indéfiniment. **Plafond de taille : 10 Mo** (`MAX_SOURCE_BYTES`) sur les deux chemins —
+  **Délai réseau des images : connexion et lecture 5 s, durée totale 20 s** dans `ThumbStore`
+  comme dans le client OkHttp posé sur Coil (`PressIAApp`) : une image qui ne répond pas est
+  coupée vite, une image qui répond mais descend lentement (5 Mo à six de front) a 20 s en tout,
+  et aucun des deux ne retient la passe. **Plafond de taille : 10 Mo** (`MAX_SOURCE_BYTES`) sur les deux chemins —
   `readCapped` pour les miniatures, `imageCapInterceptor` pour Coil (le `Content-Length` manque
   souvent, il compte les octets lus) : les CDN servent des originales de 30 Mo, qui allaient
   jusqu'au délai et s'annonçaient « délai dépassé » au lieu de « image trop lourde ».

@@ -10,9 +10,10 @@ class PressIAApp : Application() {
         super.onCreate()
         Coil.setImageLoader {
             ImageLoader.Builder(this)
-                // Images du corps et favicons : 30 s au total (une originale de 5 Mo met plus de
-                // 10 s quand six descendent ensemble), mais plafonnées à la taille des
-                // miniatures — au-delà, l'image est coupée et dite « image trop lourde ».
+                // Images du corps et favicons : mêmes délais que `ThumbStore` — 5 s pour
+                // joindre l'hôte ou pour le moindre octet, 20 s en tout pour une image qui
+                // descend lentement — et plafonnées à la taille des miniatures : au-delà,
+                // l'image est coupée et dite « image trop lourde ».
                 .okHttpClient {
                     okhttp3.OkHttpClient.Builder()
                         .addInterceptor(
@@ -20,9 +21,9 @@ class PressIAApp : Application() {
                                 com.pressia.data.local.ThumbStore.MAX_SOURCE_BYTES.toLong()
                             )
                         )
-                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                        .callTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
                         .build()
                 }
                 .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.2).build() }

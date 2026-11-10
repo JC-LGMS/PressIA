@@ -96,12 +96,13 @@ object ThumbStore {
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            // Une image qui ne répond pas ne doit pas retenir une synchro : 30 s au total (les
-            // originales de 5 Mo servies par certains CDN mettent plus de 10 s à six de front),
-            // et l'image est comptée dans le détail de fin de synchro (voir `imageFailures`).
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(30, TimeUnit.SECONDS)
+            // Une image qui ne répond pas est coupée vite (5 s pour joindre l'hôte, 5 s sans
+            // le moindre octet) ; une image qui répond mais descend lentement a 20 s en tout
+            // (une originale de 5 Mo peut dépasser 5 s à six de front). L'image est comptée
+            // dans le détail de fin de synchro (voir `imageFailures`), la passe n'attend pas.
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .callTimeout(20, TimeUnit.SECONDS)
             .build()
     }
 

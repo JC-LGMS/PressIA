@@ -48,6 +48,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.2",
+        listOf(
+            ChangelogItem(
+                "2026-11-10",
+                "Téléchargement des images : le compteur avance même quand une image échoue",
+                "- Synchronisation, étape « Téléchargement des images… n/total » : le compteur " +
+                    "n'avançait que sur les images réussies. Il se figeait donc au nombre de " +
+                    "réussites (« 42/78 ») pendant que les images restantes épuisaient leur " +
+                    "délai (30 s chacune, six à la fois) — la synchronisation semblait bloquée " +
+                    "alors qu'elle avançait. Chaque image terminée compte désormais, échec " +
+                    "compris, et le compteur atteint toujours le total ; les images non " +
+                    "récupérées restent annoncées en fin de synchronisation, avec leur détail. " +
+                    "Délai resserré : 5 s quand l'image ne répond pas, 20 s au total quand " +
+                    "elle répond mais descend lentement. Le total, lui, est normal : il compte " +
+                    "les images (une à deux par article), pas les articles.",
+                time = "14:14"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.1",
         listOf(
             ChangelogItem(

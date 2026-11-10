@@ -1557,6 +1557,9 @@ class PressRepository(
         onProgress?.invoke(0, total)
         val (maxW, maxH) = ThumbStore.maxThumbSize(ctx)
         val permits = Semaphore(6)
+        // Images **terminées** (réussies ou non) : un échec compte aussi, sinon le compteur se
+        // fige sur « 42/78 » pendant que les images restantes épuisent leur délai (30 s chacune,
+        // six à la fois) et la synchronisation semble bloquée alors qu'elle avance.
         val doneCount = AtomicInteger(0)
         // Dernier affichage publié (horloge monotone) : les 6 téléchargements parallèles
         // partagent ce garde-fou via compareAndSet, sans verrou.
@@ -1571,7 +1574,7 @@ class PressRepository(
                         else if (ThumbStore.cachedFile(ctx, url) != null) null
                         else prefetchImage(url)
                     }
-                    if (reason == null && onProgress != null) {
+                    if (onProgress != null) {
                         val n = doneCount.incrementAndGet()
                         if (n == total) {
                             onProgress(n, total)
