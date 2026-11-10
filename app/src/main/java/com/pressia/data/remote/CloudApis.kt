@@ -136,24 +136,16 @@ interface InoreaderService {
     // Déclarée `String`, elle passait par le convertisseur kotlinx et levait une
     // JsonDecodingException — la ligne restait dans la file alors que le serveur avait
     // bien marqué l'article (constaté en direct sur une session cookie).
+    //
+    // `i` est **répétable** (l'API accepte une liste d'identifiants, courts ou `tag:…`) : un
+    // lot de la file part en un appel. Vérifié en direct : 20 identifiants, `a` puis `r` →
+    // compteur 20 → 0 → 20.
     @FormUrlEncoded @POST("reader/api/0/edit-tag")
     suspend fun editTag(
         @HeaderMap h: Map<String, String>,
-        @Field("i") itemId: String,
+        @Field("i") itemIds: List<String>,
         @Field("a") add: String? = null,
         @Field("r") remove: String? = null,
-        @Field("T") token: String
-    )
-    /**
-     * « Marquer tout comme lu » du site : tout ce qui est **plus ancien que `ts`** passe en lu
-     * sur le flux donné (`feed/…`, `user/-/label/…`, `user/-/state/com.google/reading-list`).
-     * `ts` = maintenant marque tout. Réponse texte `OK`, d'où `Unit` comme [editTag].
-     */
-    @FormUrlEncoded @POST("reader/api/0/mark-all-as-read")
-    suspend fun markAllAsRead(
-        @HeaderMap h: Map<String, String>,
-        @Field("s") stream: String,
-        @Field("ts") ts: String,
         @Field("T") token: String
     )
     /** Jeton CSRF : texte nu, d'où `ResponseBody` (le convertisseur JSON le refuserait). */
@@ -171,7 +163,8 @@ interface InoreaderService {
     ): InoreaderUnreadCounts
     /**
      * IDs seuls d'un flux (`stream/items/ids`) : détecteur de changement pour le tableau
-     * « Starred », pendant léger de `stream/contents` (mêmes paramètres de fenêtre).
+     * « Starred », pendant léger de `stream/contents` (mêmes paramètres de fenêtre), et
+     * énumération des non-lus (`xt` = étiquette lue) pour le marquage de masse réversible.
      */
     @GET("reader/api/0/stream/items/ids")
     suspend fun itemsIds(
@@ -179,7 +172,8 @@ interface InoreaderService {
         @Query("s") stream: String,
         @Query("n") n: Int = 200,
         @Query("c") cont: String? = null,
-        @Query("output") o: String = "json"
+        @Query("output") o: String = "json",
+        @Query("xt") xt: String? = null
     ): InoreaderIdList
 
     companion object {

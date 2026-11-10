@@ -52,7 +52,7 @@ private const val DELETED_FEED_LABEL = "Flux supprimé"
  * Favoris affichait tous les articles au lieu des seuls étoilés.
  */
 fun favScopeArg(set: String): String = when (set) {
-    "later" -> "later"
+    "later", "later_ino" -> set
     "all" -> "all"
     // L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
     "app", "starred" -> "starred"
@@ -1023,19 +1023,27 @@ class PressRepository(
      * Bascule un favori.
      *
      * L'étoile reste un état **local**, jamais poussé vers le compte — sauf pour un article
-     * Feedly : Feedly ne connaît qu'un seul état « enregistré » (son tableau « Read later »),
-     * donc l'étoile y est rangée (`save` / `unsave` en file, comme le lu/non-lu) au lieu d'un
-     * favori local. Inoreader et les flux locaux gardent l'étoile locale.
+     * Feedly ou Inoreader : ces comptes ne connaissent qu'un seul état « enregistré » (leur
+     * tableau « Read later » — chez Inoreader c'est l'étiquette `starred`, que son site nomme
+     * « Read later »), donc l'étoile y est rangée (`save` / `unsave` en file, comme le
+     * lu/non-lu) au lieu d'un favori local. Les flux locaux gardent l'étoile locale.
      */
     suspend fun setStarred(id: String, starred: Boolean) = withContext(Dispatchers.IO) {
         val a = dao.article(id)
         val owner = a?.feedId?.let { dao.subscription(it)?.provider }
-        val feedly = cloudAccounts().any { sameAccount(it.id, owner) && providerBase(it.id) == "feedly" }
-        if (a != null && feedly) {
-            // Pas de favori local pour Feedly (son étoile = « Read later »), mais on efface
-            // aussi l'étoile locale héritée d'avant : sinon elle ne part plus jamais.
+        // L'étoile de ces comptes est leur tableau « à lire plus tard » (voir
+        // `providerUsesSaved`), pas un favori local : c'est lui que le serveur doit voir.
+        val accountSaved = cloudAccounts().any { sameAccount(it.id, owner) && providerUsesSaved(it.id) }
+        if (a != null && accountSaved) {
+            // Pas de favori local pour ces comptes (leur étoile = « Read later »), mais on
+            // efface aussi l'étoile locale héritée d'avant : sinon elle ne part plus jamais.
             dao.setStarred(id, false)
-            if (starred) dao.markLaterSaved(listOf(id)) else dao.unmarkLaterSaved(listOf(id))
+            if (starred) {
+                dao.markLaterSaved(listOf(id))
+                dao.setLaterProvider(listOf(id), providerBase(owner))
+            } else {
+                dao.unmarkLaterSaved(listOf(id))
+            }
             dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (starred) "save" else "unsave"))
             pushQueue()
         } else {
@@ -1999,6 +2007,17 @@ class PressRepository(
     }
 
     /**
+     * Empreinte du tableau « Read later » d'un compte, **service compris**.
+     *
+     * Le suffixe force une réimportation unique après l'ajout de la provenance
+     * (`ArticleEntity.laterProvider`, migration 8→9) : les empreintes enregistrées sans lui
+     * ne correspondent plus, donc chaque tableau redescend une fois et ses lignes reçoivent
+     * leur service — y compris celles des flux désabonnés, que rien d'autre ne nomme.
+     */
+    private fun savedHash(account: CloudAccount, ids: Set<String>): String =
+        com.pressia.data.remote.readLaterHash(ids) + "|" + providerFor(account.provider).id
+
+    /**
      * Fenêtre d'auto-lecture du service, ou null quand le réglage « Feedly : garder non lu au-delà
      * de 31 jours » est coupé : l'état lu/non-lu du service fait alors foi, même au-delà du délai.
      */
@@ -2432,7 +2451,7 @@ class PressRepository(
                         val idSet = providerFor(account.provider).readLaterIds(account.token)
                         if (idSet != null) alive = true
                         if (idSet != null && idSet.complete && keepSaved.isEmpty() && keepUnsaved.isEmpty()) {
-                            val hash = com.pressia.data.remote.readLaterHash(idSet.ids)
+                            val hash = savedHash(account, idSet.ids)
                             if (readLaterHashes()[account.id] == hash) {
                                 android.util.Log.i("PressIA", "read later ${account.id} inchangé (${idSet.ids.size} articles)")
                                 return@runCatching 0
@@ -2447,7 +2466,7 @@ class PressRepository(
                             // abouti : pas de scope, endpoint refusé) : on ne touche à rien —
                             // ni tableau, ni quitus de session (le drapeau expiré éventuel
                             // posé par la passe articles doit survivre).
-                            if (idSet != null) storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(emptySet()))
+                            if (idSet != null) storeReadLaterHash(account.id, savedHash(account, emptySet()))
                             return@runCatching 0
                         }
                         // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
@@ -2460,9 +2479,15 @@ class PressRepository(
                             items,
                             keepReadBeforeMs = cutoffFor(providerFor(account.provider).id)
                         )
+                        // Le tableau redescendu est marqué de son service : c'est ce qui sépare
+                        // « À lire plus tard - Feedly » de celui d'Inoreader dans les Favoris.
+                        dao.setLaterProvider(
+                            items.map { it.id },
+                            providerFor(account.provider).id
+                        )
                         if (keepSaved.isNotEmpty()) dao.markLaterSaved(keepSaved)
                         if (keepUnsaved.isNotEmpty()) dao.unmarkLaterSaved(keepUnsaved)
-                        storeReadLaterHash(account.id, com.pressia.data.remote.readLaterHash(items.map { it.id }.toSet()))
+                        storeReadLaterHash(account.id, savedHash(account, items.map { it.id }.toSet()))
                         n
                     }.onSuccess { if (alive) clearAccountExpired(account.id) }
                         .onFailure {
@@ -3348,6 +3373,9 @@ fun mergeIncomingArticle(
     return incoming.copy(
         starred = prev.starred,
         laterSaved = prev.laterSaved || incoming.laterSaved,
+        // Provenance du tableau : sans elle, l'article sortait du filtre « À lire plus tard »
+        // de son compte à la première resynchronisation du flux (voir `laterProvider`).
+        laterProvider = incoming.laterProvider.ifBlank { prev.laterProvider },
         imageCached = prev.imageCached,
         // La miniature ne se perd pas au retour du serveur : Feedly ne renvoie son champ
         // « visual » que sur les entrées récentes, et une entrée rejouée sans image effaçait
@@ -3505,6 +3533,6 @@ fun buildDatabase(ctx: Context): PressDatabase =
         .addMigrations(
             PressDatabase.MIGRATION_1_2, PressDatabase.MIGRATION_2_3,
             PressDatabase.MIGRATION_3_4, PressDatabase.MIGRATION_4_5, PressDatabase.MIGRATION_5_6,
-            PressDatabase.MIGRATION_6_7, PressDatabase.MIGRATION_7_8
+            PressDatabase.MIGRATION_6_7, PressDatabase.MIGRATION_7_8, PressDatabase.MIGRATION_8_9
         )
         .build()

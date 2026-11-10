@@ -48,6 +48,34 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.3",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Inoreader : tout marquer lu réversible, étoile = « Read later », Favoris par compte",
+                "- « Tout marquer lu » n'emploie plus le « tout comme lu » de l'API Inoreader : ce dernier " +
+                    "avance la borne du flux et le service refuse ensuite de rouvrir un article plus " +
+                    "ancien, si bien que l'annulation ne tenait que jusqu'à la synchronisation suivante. " +
+                    "Les articles non lus du périmètre sont marqués lus sur le serveur par lots : " +
+                    "« Annuler » (pastille en bas ou flèche de la barre) les rouvre aussi côté Inoreader, " +
+                    "et les étiquettes coûtent un appel par page de file au lieu d'un par article.\n" +
+                    "- Un article Inoreader mis en favori rejoint le tableau « Read later » du compte " +
+                    "(l'étiquette « starred », que le site Inoreader nomme « Read later ») ; le retirer " +
+                    "l'en retire, et le tableau redescend à la synchronisation. Une étoile posée sur le " +
+                    "site apparaît donc dans les Favoris, et inversement. Les favoris des flux locaux " +
+                    "restent locaux.\n" +
+                    "- Le filtre des Favoris distingue « À lire plus tard - Feedly » et « À lire plus tard - " +
+                    "Inoreader » : chaque tableau ne montre que les articles de son compte, y compris " +
+                    "ceux d'un flux désabonné. L'entrée n'apparaît que si le compte est connecté, et le " +
+                    "déconnecter ramène le filtre à « Tous les favoris », qui reste la réunion des " +
+                    "étoiles PressIA et des tableaux.\n" +
+                    "- La provenance du tableau est rangée avec l'article (mise à jour de la base) : la " +
+                    "synchronisation suivante réimporte une fois chaque tableau pour la poser.",
+                time = "00:14"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.2",
         listOf(
             ChangelogItem(

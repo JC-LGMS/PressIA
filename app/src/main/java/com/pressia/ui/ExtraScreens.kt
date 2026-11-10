@@ -2019,19 +2019,22 @@ private val ABOUT_TOPICS = listOf(
         "Appui long : marquages groupés",
         "Un appui long sur un article propose « marquer lus les plus récents / les plus anciens », l'article " +
             "touché restant tel quel. Sur l'accueil, un appui long sur un flux ou sur un dossier ouvre le menu " +
-            "de la ligne, où « Tout marquer comme lu » porte exactement le périmètre touché. Sur Inoreader, ce " +
-            "marquage emprunte le « Marquer tout comme lu » du site (un appel par flux, ou sur tout le compte " +
-            "pour la vue « Tous les articles ») : le serveur est à jour tout de suite. Les favoris et le " +
+            "de la ligne, où « Tout marquer comme lu » porte exactement le périmètre touché. Sur Inoreader, les " +
+            "articles non lus sont marqués sur le serveur sans passer par le « tout comme lu » du site, qui lui " +
+            "ne se défait pas : l'annulation y fonctionne donc aussi. Les favoris et le " +
             "Read later ne sont jamais touchés par ces marquages. Chaque marquage groupé (« tout marquer lu » " +
-            "inclus) propose un bouton Annuler — chez Inoreader, cette annulation reste locale : le site ne " +
-            "sait pas rouvrir un article plus ancien. Pendant l'envoi au compte, une barre en bas montre " +
+            "inclus) propose un bouton Annuler. Pendant l'envoi au compte, une barre en bas montre " +
             "l'avancement (« n/total », une étape par compte) ; annuler pendant l'envoi arrête les marquages " +
             "pas encore partis, et ceux déjà partis sont corrigés."
     ),
     AboutTopic(
         "Favoris et Read later : jamais marqués lus",
-        "L'étoile PressIA et le tableau « Read later » du compte sont deux choses distinctes (périmètre réglable " +
-            "dans les Favoris). Ni « tout marquer lu », ni le menu d'appui long, ni les doublons ne les font passer " +
+        "Pour Feedly et Inoreader, l'étoile de l'application est le « Read later » du compte — le " +
+            "tableau du service (nommé « Read later » chez Inoreader), que son propre site alimente aussi — ; " +
+            "ailleurs c'est un favori local. Le filtre des Favoris propose chaque tableau séparément " +
+            "(« À lire plus tard - Feedly », « À lire plus tard - Inoreader ») et leur réunion avec les " +
+            "étoiles PressIA (« Tous les favoris »), avec le périmètre de flux réglable. " +
+            "Ni « tout marquer lu », ni le menu d'appui long, ni les doublons ne les font passer " +
             "en lu : « tout marquer lu » bascule à l'unité dès qu'un favori ou un Read later doit rester non lu. " +
             "Un favori garde aussi sa source (le nom du flux) figée avec lui, même si ce flux est supprimé ensuite."
     ),
@@ -2077,7 +2080,7 @@ private val ABOUT_TOPICS = listOf(
             "Feedly, lui, marque lu tout seul au-delà de 31 jours : PressIA garde donc l'état local " +
             "des articles plus vieux déjà connus (désactivable dans Réglages, « Feedly : garder non lu au-delà " +
             "de 31 jours »). Inoreader n'a pas ce délai : l'état du service fait foi, et un article passé en lu " +
-            "dans PressIA l'est aussi sur le site (les marquages de masse passent par son « tout comme lu »). " +
+            "dans PressIA l'est aussi sur le site, y compris par un marquage groupé. " +
             "Les favoris et le Read later ne sont jamais marqués lus en masse."
     ),
     AboutTopic(

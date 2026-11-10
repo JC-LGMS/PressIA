@@ -60,10 +60,10 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
     var feedScope by remember { mutableStateOf(Scope(label = "Tous les articles")) }
     val fav = FavScope(set, feedScope)
 
-    LaunchedEffect(vm.favSet, vm.hasCloudAccounts) {
-        if (vm.favSet.value == "later" && !vm.hasCloudAccounts) {
-            vm.setFavSet("all")
-        }
+    LaunchedEffect(vm.favSet, vm.accounts) {
+        // Le jeu choisi perd son compte (déconnexion) : retour aux favoris locaux, sinon la
+        // liste resterait vide sans explication.
+        if (!vm.favSetAvailable(vm.favSet.value)) vm.setFavSet("all")
     }
     val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
     val articles by live.collectAsState(initial = emptyList())
@@ -204,8 +204,11 @@ private fun FavScopeChooser(
             Column(Modifier.padding(vertical = 4.dp)) {
                 FavChoiceRow("Tous les favoris", set == "all") { onPickSet("all") }
                 FavChoiceRow("Favoris PressIA", set == "app") { onPickSet("app") }
-                if (vm.hasCloudAccounts) {
+                if (vm.hasAccount("feedly")) {
                     FavChoiceRow("À lire plus tard - Feedly", set == "later") { onPickSet("later") }
+                }
+                if (vm.hasAccount("inoreader")) {
+                    FavChoiceRow("À lire plus tard - Inoreader", set == "later_ino") { onPickSet("later_ino") }
                 }
             }
         } else {

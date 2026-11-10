@@ -262,11 +262,11 @@ fun ArticleScreen(
     /** Actions de la barre et des gestes, en un seul endroit : icônes, double-tap, balayages. */
     fun doStar() {
         article?.let {
-            // Même étoile effective que dans les listes : « Read later » pour
-            // Feedly (pas de favori local), étoile locale ailleurs.
+            // Même étoile effective que dans les listes : « Read later » du compte (Feedly,
+            // Inoreader), étoile locale ailleurs.
             val on = vm.starState(it)
             vm.setStar(it.id, !on)
-            article = if (vm.isFeedlyArticle(it)) it.copy(laterSaved = !on)
+            article = if (vm.isSavedInAccount(it)) it.copy(laterSaved = !on)
             else it.copy(starred = !on)
             toast(ctx, if (!on) "Ajouté aux favoris" else "Retiré des favoris")
         }

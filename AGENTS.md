@@ -666,16 +666,37 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - Feedly, identifiant de compte : `cachedUserId` le met en cache **par jeton**
   (`ConcurrentHashMap`), pas dans un champ unique — plusieurs comptes connectés se seraient
   servi le flux global l'un de l'autre. `userId(token)` (connexion) reste sans cache.
-- Marquage de masse Inoreader : `POST /reader/api/0/mark-all-as-read` (`s` = identifiant de flux,
-  `T` = jeton CSRF, `ts` = unix **secondes**) répond `OK` — c'est le bouton « Marquer tout comme
-  lu » du site. `ts` = maintenant marque tout ; **omettre `ts` ou le mettre à 0 revient au même**,
-  et l'opération est **irréversible** : elle avance `firstitemmsec` du flux, et l'API *ignore
-  silencieusement* tout passage en non lu d'un article plus ancien (vérifié en direct : un appel
-  `ts=0` a ramené le compte entier de 3366 non-lus à 0, sans retour). Conséquence de tous les
-  jours : « Annuler » après un marquage groupé Inoreader ne se voit que localement, la
-  réconciliation suivante referme les articles au tour d'après. Un dossier est marqué flux par
-  flux par l'appelant (même effet que son étiquette, sans faire descendre le dossier jusqu'à la
-  file montante) ; un compte connecté par cookie porte un jeton CSRF vide, et l'API l'accepte.
+- Marquage de masse Inoreader : **pas** `mark-all-as-read`. Ce bouton du site (`POST
+  reader/api/0/mark-all-as-read`, `s`, `ts` en secondes, `T`) marque tout ce qui est plus ancien
+  que `ts` — **omettre `ts` ou le mettre à 0 revient à maintenant** — et il avance
+  `firstitemmsec` du flux. Or l'API **ne rouvre que les articles plus récents que
+  `firstitemmsec`** : pour un article plus ancien, `edit-tag` avec `r=read` répond `OK` et
+  **n'applique rien**, sans le dire (vérifié sur un même flux, deux articles de part et d'autre
+  de la borne : celui d'avant garde son étiquette lue, celui d'après la perd et reçoit `fresh`).
+  L'app n'emploie donc pas `mark-all-as-read` : elle énumère les non-lus (`stream/items/ids`
+  avec `xt` = étiquette lue, pagination suivie jusqu'à épuisement) puis pose l'étiquette lue par
+  `edit-tag` — `i` est **répétable**, tout un lot de la file (100) part en un appel, la borne ne
+  bouge pas, et « Annuler » repart exactement d'où l'on était (vérifié : 5 → 0 → 5 et 20 → 0 →
+  20). Limite qui reste, la même que sur le site : un article déjà plus ancien que
+  `firstitemmsec` (après un « tout comme lu » fait ailleurs) ne se rouvre pas.
+  Un dossier est marqué flux par flux par l'appelant ; un compte connecté par cookie porte un
+  jeton CSRF vide, et l'API l'accepte.
+- **L'étoile d'un article Inoreader est son « Read later »** : l'étiquette
+  `user/-/state/com.google/starred` — le flux qu'elle désigne s'intitule « Read later » (vérifié
+  en direct ; le flux `saved`, lui, est le « Reading List » des pages web enregistrées, autre
+  chose). `InoreaderProvider.markSaved` / `markUnsaved` la posent et la retirent par `edit-tag`,
+  et `readLater` / `readLaterIds` la redescendent comme `tag/global.saved` chez Feedly.
+  `providerUsesSaved` (pure, testée) dit quels services suivent ce chemin : `setStarred` et
+  `PressVM.starState` s'y réfèrent — ne pas remettre « feedly » en dur. Les favoris des flux
+  locaux restent locaux.
+  **Le service d'un tableau est rangé avec l'article** (`articles.laterProvider`, colonne ajoutée
+  par `MIGRATION_8_9`) : c'est ce qui sépare les filtres « À lire plus tard - Feedly » et
+  « - Inoreader » des Favoris, y compris pour les articles d'un flux **désabonné** — filtrer sur
+  `subscriptions` en laissait 15 sur 19 dans « tous seulement ». La provenance est posée à
+  l'étoile (`setStarred`) et à chaque import de tableau (`syncReadLater`), préservée par
+  `mergeIncomingArticle` ; l'empreinte du tableau (`savedHash`) porte le **service**, ce qui force
+  une réimportation unique après la migration 8→9 (sans elle, un tableau « inchangé » ne se
+  réattribuait jamais).
 - **Feedly marque lu tout seul au-delà de 31 jours** : son état lu/non-lu ne dit plus ce que
   l'utilisateur a lu passé ce délai. `autoReadAgeMs("feedly")` = `FEEDLY_AUTO_READ_AGE_MS`, et
   `autoReadCutoff` borne **deux** chemins : `storeArticles(..., keepReadBeforeMs = …)` préserve
@@ -709,7 +730,7 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 ## Pièges connus — données, cache et stockage
 
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
-  `exportSchema = false`, version DB actuelle : 8.
+  `exportSchema = false`, version DB actuelle : 9 (provenance du « Read later », `MIGRATION_8_9`).
 - **Un ajout d'`Index` sur une entité exige une migration** (Room compare le schéma et son
   empreinte à l'ouverture : sans `MIGRATION_6_7`, l'app plantait sur une base v6 existante) :
   `CREATE INDEX IF NOT EXISTS` sur les trois index des stats (`articles.readAt`,

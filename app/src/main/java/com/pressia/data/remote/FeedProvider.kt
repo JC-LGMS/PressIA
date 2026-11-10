@@ -4,6 +4,7 @@ import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.CategoryEntity
 import com.pressia.data.local.ReconcileState
 import com.pressia.data.local.SubscriptionEntity
+import com.pressia.data.providerBase
 
 /** Contrat commun — permet Feedly, Inoreader (API compatibles) et RSS local. */
 interface FeedProvider {
@@ -39,7 +40,7 @@ interface FeedProvider {
     val bulkMarkAllRead: Boolean get() = false
     /**
      * Range des articles dans le « à lire plus tard » du compte. Défaut : non supporté (état
-     * local seul) — seul Feedly mappe son étoile dessus pour l'instant.
+     * local seul) — Feedly et Inoreader le mappent sur leur tableau (voir [providerUsesSaved]).
      */
     suspend fun markSaved(token: String?, articleIds: List<String>) {}
     /** Retire des articles du « à lire plus tard » du compte (défaut : non supporté). */
@@ -177,6 +178,14 @@ const val FEEDLY_AUTO_READ_AGE_MS = 31L * 24 * 3600 * 1000
  */
 fun autoReadAgeMs(providerId: String): Long? =
     if (providerId == "feedly") FEEDLY_AUTO_READ_AGE_MS else null
+
+/**
+ * L'étoile de l'application pilote le tableau « à lire plus tard » du **compte** au lieu d'un
+ * favori local : Feedly (`tag/global.saved`) et Inoreader, dont l'étiquette `starred` est ce
+ * tableau — son site l'appelle « Read later » (titre du flux vérifié en direct).
+ */
+fun providerUsesSaved(provider: String?): Boolean =
+    providerBase(provider) == "feedly" || providerBase(provider) == "inoreader"
 
 /** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */
 fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =

@@ -26,6 +26,7 @@ import com.pressia.data.remote.inoreaderAuth
 import com.pressia.data.remote.inoreaderAuthHeader
 import com.pressia.data.remote.inoreaderCookieCandidates
 import com.pressia.data.remote.inoreaderCookieHasSession
+import com.pressia.data.remote.providerUsesSaved
 import com.pressia.data.readability.Readability
 import com.pressia.ui.theme.toHex
 import androidx.compose.ui.graphics.luminance
@@ -74,6 +75,7 @@ class PressLogicTest {
         assertEquals("starred", favScopeArg("app"))
         assertEquals("starred", favScopeArg("starred"))
         assertEquals("later", favScopeArg("later"))
+        assertEquals("later_ino", favScopeArg("later_ino"))
         assertEquals("all", favScopeArg("all"))
         assertEquals("", favScopeArg(""))
         assertEquals("", favScopeArg("nimporte-quoi"))
@@ -1345,7 +1347,8 @@ class PressLogicTest {
 
     @Test fun `libelle du jeu de favoris`() {
         assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("app"))
-        assertEquals("Read later", com.pressia.ui.favSetLabel("later"))
+        assertEquals("À lire plus tard - Feedly", com.pressia.ui.favSetLabel("later"))
+        assertEquals("À lire plus tard - Inoreader", com.pressia.ui.favSetLabel("later_ino"))
         // Une valeur inconnue retombe sur les étoiles plutôt que d'afficher un libellé vide.
         assertEquals("Favoris PressIA", com.pressia.ui.favSetLabel("inconnu"))
     }
@@ -1736,8 +1739,9 @@ class PressLogicTest {
 
     private fun flags(
         id: String = "a", starred: Boolean = false, later: Boolean = false,
-        cached: Boolean = false, unread: Boolean = true, readAt: Long? = null
-    ) = com.pressia.data.local.ArticleFlags(id, starred, later, cached, unread, readAt)
+        cached: Boolean = false, unread: Boolean = true, readAt: Long? = null,
+        laterProvider: String = ""
+    ) = com.pressia.data.local.ArticleFlags(id, starred, later, laterProvider, cached, unread, readAt)
 
     @Test fun `resync d un flux local garde l etat lu`() {
         // Le fichier du flux ne porte aucun état de lecture : sans préservation, chaque
@@ -1825,5 +1829,15 @@ class PressLogicTest {
         assertEquals(listOf("x", "y"), keptIds(setOf("x", "y"), listOf("x")).toList())
         assertEquals(setOf("x"), keptIds(setOf("x"), emptyList()))
         assertEquals(listOf("y"), keptIds(setOf("x", "y"), emptyList(), max = 1).toList())
+    }
+
+    @Test fun `lecture plus tard du compte, feedly et inoreader seulement`() {
+        // L'étoile pilote le tableau du compte (clé d'appropriation complète ou service seul).
+        assertTrue(providerUsesSaved("feedly"))
+        assertTrue(providerUsesSaved("feedly#e20273de"))
+        assertTrue(providerUsesSaved("inoreader#1f526b58"))
+        assertFalse(providerUsesSaved("local"))
+        assertFalse(providerUsesSaved(""))
+        assertFalse(providerUsesSaved(null))
     }
 }

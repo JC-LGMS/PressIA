@@ -18,6 +18,15 @@ import kotlinx.coroutines.sync.withPermit
 private const val MARKER_CHUNK = 100
 
 /**
+ * Identifiants par `edit-tag` Inoreader : `i` est répétable, tout un lot de la file (une page
+ * de 100) part en un appel — ~1,2 Ko de corps.
+ */
+private const val TAG_BATCH = 100
+
+/** Non-lus par page de `stream/items/ids` : la pagination suit `continuation` sans plafond. */
+private const val MARK_ALL_PAGE = 200
+
+/**
  * Charge utile d'un « tout marquer lu » Feedly : des marqueurs **par identifiant d'article**,
  * groupés par paquets de [MARKER_CHUNK]. Feedly accepte `type":"feeds"` — et `"categories"` —
  * puis les ignore : seul `type":"entries"` marque réellement les articles (voir
@@ -294,8 +303,10 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
 /**
  * Provider Inoreader (OAuth2 + API Google-Reader-like).
  *
- * Comme pour Feedly, les « starred items » du compte restent son tableau à part : les favoris
- * PressIA sont un état local de l'application et ne sont jamais déduits des étiquettes du compte.
+ * Comme Feedly, son étiquette `starred` **est** le tableau « Read later » du compte (le site
+ * l'appelle ainsi) : l'étoile PressIA d'un article Inoreader la pose ou la retire
+ * (`markSaved` / `markUnsaved`), et le tableau redescend à la synchronisation. Les favoris des
+ * autres flux restent un état local de l'application.
  */
 class InoreaderProvider(private val api: InoreaderService = InoreaderService.create()) : FeedProvider {
     override val id = "inoreader"
@@ -378,33 +389,55 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
             // Il vaut pour la session : le redemander à chaque article doublait les requêtes
             // (un GET token + un POST edit-tag par article).
             val t = csrf(h)
-            ids.forEach { api.editTag(h, it, add, remove, t) }
+            // `i` est répétable : tout un lot de la file part en un seul appel.
+            ids.distinct().chunked(TAG_BATCH).forEach { api.editTag(h, it, add, remove, t) }
         }
     }
-    override suspend fun markRead(t: String?, ids: List<String>) = tag(t, ids, "user/-/state/com.google/read", null)
-    override suspend fun markUnread(t: String?, ids: List<String>) = tag(t, ids, null, "user/-/state/com.google/read")
+    override suspend fun markRead(t: String?, ids: List<String>) = tag(t, ids, READ_STATE, null)
+    override suspend fun markUnread(t: String?, ids: List<String>) = tag(t, ids, null, READ_STATE)
     /**
-     * « Marquer tout comme lu » du site, un appel par flux : c'est exactement ce que le bouton
-     * de la page Inoreader fait (tout ce qui est plus ancien que `ts`, ici maintenant). Un
-     * dossier est marqué flux par flux par l'appelant — l'effet est le même que sur son
-     * étiquette, sans avoir à faire descendre le dossier jusqu'à la file montante.
+     * Marquage de masse **réversible** : Inoreader a bien un bouton « Marquer tout comme lu »
+     * (`mark-all-as-read`), mais il avance `firstitemmsec` du flux et l'API refuse ensuite
+     * silencieusement de rouvrir un article plus ancien — « Annuler » ne vaudrait que pour
+     * l'affichage local. On énumère donc les non-lus (`stream/items/ids`, `xt` = lue) et on
+     * pose l'étiquette lue par lots : le retour en arrière repart exactement d'où l'on était
+     * (20 → 0 → 20 vérifié en direct). Un dossier est marqué flux par flux par l'appelant.
      */
     override val bulkMarkAllRead = true
     override suspend fun markAllRead(t: String?, feedIds: List<String>) {
-        if (feedIds.isEmpty()) return
-        markStreamsRead(t, feedIds)
+        feedIds.distinct().forEach { markStreamRead(t, it) }
     }
     override suspend fun markAllReadGlobal(t: String?) =
-        markStreamsRead(t, listOf("user/-/state/com.google/reading-list"))
+        markStreamRead(t, "user/-/state/com.google/reading-list")
 
-    private suspend fun markStreamsRead(token: String?, streams: List<String>) {
-        val ts = (System.currentTimeMillis() / 1000).toString()
-        call(token) { h ->
-            val t = csrf(h)
-            streams.distinct().forEach { api.markAllAsRead(h, it, ts, t) }
-        }
-        android.util.Log.d("PressIA", "inoreader tout lu : ${streams.distinct().size} flux marqués")
+    private suspend fun markStreamRead(token: String?, stream: String) {
+        val ids = unreadIdsOf(token, stream)
+        android.util.Log.d("PressIA", "inoreader tout lu : ${ids.size} non-lus sur $stream")
+        tag(token, ids, READ_STATE, null)
     }
+    /** IDs non lus d'un flux, pagination suivie jusqu'à épuisement (aucun plafond). */
+    private suspend fun unreadIdsOf(token: String?, stream: String): List<String> {
+        val ids = ArrayList<String>()
+        var cont: String? = null
+        do {
+            val page = call(token) { h ->
+                api.itemsIds(h, stream, n = MARK_ALL_PAGE, cont = cont, xt = READ_STATE)
+            }
+            ids += page.itemRefs.map { it.id }
+            val next = page.continuation
+            cont = if (next.isNullOrBlank() || next == cont) null else next
+        } while (cont != null)
+        return ids
+    }
+    /**
+     * Tableau « Read later » du compte : c'est l'étiquette `starred` d'Inoreader (son site la
+     * nomme « Read later », titre du flux vérifié en direct). L'étoile PressIA y range
+     * l'article, et le tableau redescend à la synchronisation comme celui de Feedly.
+     */
+    override suspend fun markSaved(token: String?, articleIds: List<String>) =
+        tag(token, articleIds, SAVED_STATE, null)
+    override suspend fun markUnsaved(token: String?, articleIds: List<String>) =
+        tag(token, articleIds, null, SAVED_STATE)
     override suspend fun profile(token: String?): String? {
         val u = call(token) { h -> api.userInfo(h) }
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
@@ -460,12 +493,12 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
         call(token) { h -> api.unreadCount(h) }.unreadcounts.associate { it.id to it.count }
     }.getOrNull()
-    /** Étoiles du compte (« Starred items » chez Inoreader), paginées jusqu'à épuisement. */
+    /** Étoiles du compte (« Starred items » chez Inoreader, son « Read later »), paginées. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
         while (true) {
-            val s = call(token) { h -> api.stream(h, "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont) }
+            val s = call(token) { h -> api.stream(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
@@ -483,7 +516,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val ids = HashSet<String>()
         var cont: String? = null
         while (true) {
-            val page = call(token) { h -> api.itemsIds(h, "user/-/state/com.google/starred", n = max.coerceIn(1, 200), cont = cont) }
+            val page = call(token) { h -> api.itemsIds(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
             if (page.itemRefs.isEmpty()) break
             page.itemRefs.mapTo(ids) { it.id }
             val next = page.continuation
@@ -518,6 +551,8 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
 
     companion object {
         const val READ_STATE = "user/-/state/com.google/read"
+        /** Tableau « Read later » du compte (nom donné par Inoreader à cette étiquette). */
+        const val SAVED_STATE = "user/-/state/com.google/starred"
     }
 
     private fun InoreaderItem.toEntity(): ArticleEntity {

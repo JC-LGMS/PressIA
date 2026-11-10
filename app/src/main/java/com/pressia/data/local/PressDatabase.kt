@@ -65,6 +65,13 @@ data class ArticleEntity(
     val starred: Boolean = false,
     /** Rangé par le compte dans son tableau « Read later » (à distinguer d'une étoile PressIA). */
     val laterSaved: Boolean = false,
+    /**
+     * Service dont le tableau « Read later » porte cet article (« feedly », « inoreader ») : les
+     * deux comptes partagent le drapeau [laterSaved], sans quoi les filtres des Favoris ne
+     * sauraient pas à qui l'attribuer. Vide tant que la provenance n'est pas connue (ligne
+     * d'avant la migration, article d'un flux désabonné).
+     */
+    val laterProvider: String = "",
     val fullFetched: Boolean = false, // article complet extrait ?
     val imageCached: Boolean = false,
     val titleHash: String = "",  // pour déduplication
@@ -213,11 +220,15 @@ interface PressDao {
     suspend fun article(id: String): ArticleEntity?
     /**
      * [favScope] sélectionne le périmètre des favoris : "" = aucun filtre, "starred" = les étoiles
-     * PressIA, "later" = le tableau « Read later » du compte, "all" = les deux réunis.
+     * PressIA, "later" = le tableau « Read later » du compte **Feedly**, "later_ino" celui
+     * d'Inoreader (leur étiquette `starred`), "all" = étoiles et tableaux réunis.
      *
-     * Les deux ensembles sont volontairement disjoints : une étoile PressIA est un état local, le
-     * tableau « Read later » appartient au compte. Un article peut appartenir aux deux — il a pu
-     * être Gauché sur l'appareil puis enregistré depuis un autre — d'où un filtre « tous ».
+     * Les deux tableaux portent le même drapeau [ArticleEntity.laterSaved] : c'est
+     * [ArticleEntity.laterProvider], posé à l'import du tableau et à l'étoile, qui les sépare.
+     *
+     * Les ensembles sont disjoints : une étoile PressIA est un état local, le tableau
+     * « Read later » appartient au compte. Un article peut être étoilé et enregistré — il a pu
+     * être mis en favori sur l'appareil puis enregistré depuis un autre — d'où « tous ».
      */
     /**
      * Même périmètre que [streamFlow], mais **sans les colonnes lourdes** : les identifiants
@@ -228,7 +239,7 @@ interface PressDao {
     @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
     /** Même requête, réactive : la liste visible se rafraîchit dès que la sync insère des articles. */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlow(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): Flow<List<ArticleEntity>>
     /**
      * Variante « collante » : les articles passés en lus pendant la session restent listés
@@ -239,7 +250,7 @@ interface PressDao {
      * depuis « Tous les articles » restait « collant » et réapparaissait en tête de Favoris alors
      * qu'il n'est pas étoilé.
      */
-    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1) OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
     @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId")
     suspend fun articleCount(feedId: String): Int
@@ -267,11 +278,14 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, imageCached, unread, readAt, imageUrl, feedTitle FROM articles WHERE id IN (:ids)")
+    @Query("SELECT id, starred, laterSaved, laterProvider, imageCached, unread, readAt, imageUrl, feedTitle FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
+    /** Provenance du « Read later » (voir [ArticleEntity.laterProvider]) pour les articles importés. */
+    @Query("UPDATE articles SET laterProvider = :provider WHERE id IN (:ids)")
+    suspend fun setLaterProvider(ids: List<String>, provider: String)
     /** Pose le marquage « Read later » (étoile optimiste, rattrapage de file). */
     @Query("UPDATE articles SET laterSaved = 1 WHERE id IN (:ids)")
     suspend fun markLaterSaved(ids: List<String>)
@@ -619,6 +633,8 @@ data class ArticleFlags(
     val id: String,
     val starred: Boolean,
     val laterSaved: Boolean,
+    /** Service dont le tableau porte l'article (voir [ArticleEntity.laterProvider]). */
+    val laterProvider: String = "",
     val imageCached: Boolean,
     /** État lu/non-lu et date de lecture : locaux pour un flux RSS sans compte (voir [mergeIncomingArticle]). */
     val unread: Boolean = true,
@@ -660,7 +676,7 @@ fun capArticleHtml(html: String?): String? =
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 8, exportSchema = false
+    version = 9, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -762,6 +778,17 @@ abstract class PressDatabase : RoomDatabase() {
                     "UPDATE articles SET summary = substr(summary, 1, $MAX_ARTICLE_HTML) " +
                         "WHERE length(summary) > $MAX_ARTICLE_HTML"
                 )
+            }
+        }
+        /**
+         * v8 → v9 : provenance du tableau « Read later » (Feedly ou Inoreader), pour que le
+         * filtre des Favoris puisse montrer l'un sans l'autre. Les lignes existantes gardent
+         * une provenance vide : la synchronisation suivante la repose en réimportant chaque
+         * tableau (rien n'est perdu, elles restent visibles dans « Tous les favoris »).
+         */
+        val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `articles` ADD COLUMN `laterProvider` TEXT NOT NULL DEFAULT ''")
             }
         }
     }

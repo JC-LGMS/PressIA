@@ -11,6 +11,7 @@ import com.pressia.data.FailedImage
 import com.pressia.data.SEARCH_PAGE
 import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
+import com.pressia.data.remote.providerUsesSaved
 import com.pressia.data.isSyncFresh
 import com.pressia.data.rateLimitMessage
 import com.pressia.data.ReadingStats
@@ -55,7 +56,8 @@ data class FavScope(
 
 /** Libellé court du jeu de favoris, pour les sélecteurs. */
 fun favSetLabel(set: String): String = when (set) {
-    "later" -> "Read later"
+    "later" -> "À lire plus tard - Feedly"
+    "later_ino" -> "À lire plus tard - Inoreader"
     "all" -> "Tous les favoris"
     else -> "Favoris PressIA"
 }
@@ -343,6 +345,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")
     val hasCloudAccounts: Boolean get() = accounts.isNotEmpty()
+    /** Un compte de ce service (« feedly », « inoreader ») est-il connecté ? */
+    fun hasAccount(service: String): Boolean = accounts.any { providerBase(it.id) == service }
+    /** Le jeu de favoris choisi a-t-il encore un compte pour l'alimenter ? */
+    fun favSetAvailable(set: String): Boolean = when (set) {
+        "later" -> hasAccount("feedly")
+        "later_ino" -> hasAccount("inoreader")
+        else -> true
+    }
     /** Faux = un dossier par compte même si les noms se ressemblent. */
     val mergeFolders: StateFlow<Boolean> = prefs.flow(Prefs.MERGE_FOLDERS, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /** Jeu de favoris retenu par l'écran Favoris : « app » (étoiles) | « later » (Read later) | « all ». */
@@ -928,11 +938,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
     }
-    /** Article d'un flux Feedly : son étoile est le « Read later » du compte. */
-    fun isFeedlyArticle(a: ArticleEntity): Boolean =
-        subs.firstOrNull { it.id == a.feedId }?.provider?.let { providerBase(it) == "feedly" } == true
-    /** Étoile affichée : étoile locale, ou « Read later » pour un article Feedly. */
-    fun starState(a: ArticleEntity): Boolean = a.starred || (isFeedlyArticle(a) && a.laterSaved)
+    /** Article d'un compte dont l'étoile est le « Read later » (Feedly, Inoreader). */
+    fun isSavedInAccount(a: ArticleEntity): Boolean =
+        subs.firstOrNull { it.id == a.feedId }?.provider?.let { providerUsesSaved(it) } == true
+    /** Étoile affichée : étoile locale, ou « Read later » du compte. */
+    fun starState(a: ArticleEntity): Boolean = a.starred || (isSavedInAccount(a) && a.laterSaved)
     /** Journalise une lecture (viewModelScope : survit à la fermeture de l'écran article). */
     fun logReading(articleId: String, feedId: String, durationSec: Int) = viewModelScope.launch {
         repo.logReading(articleId, feedId, durationSec)
