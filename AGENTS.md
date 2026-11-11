@@ -762,6 +762,75 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `attemptedAt` (mémoire) évite de retenter chaque minute une synchro en échec, `LAST_SYNC_AT`
   n'avançant qu'en cas de succès.
 
+## Ajouter un agrégateur (fournisseur cloud)
+
+Un agrégateur se branche par son **service** (`"feedly"`, `"inoreader"`), jamais par son nom : une
+clé de compte vaut `"<service>#<empreinte du jeton>"` et `providerBase` la ramène au service.
+Liste complète des points à toucher — aucun n'est facultatif si le compte doit se comporter comme
+les autres (chaque point a coûté un bug quand il manquait).
+
+1. **API** (`data/remote/CloudApis.kt`) : les interfaces Retrofit du service et leurs modèles
+   `@Serializable` (`ignoreUnknownKeys = true`), plus un `companion.create()` si le service exige
+   des en-têtes propres (l'« authentification applicative » d'Inoreader). Une réponse en **texte**
+   (`OK`, jeton CSRF) se type `Unit` ou `ResponseBody`, **jamais** `String` : le convertisseur
+   JSON lève une `JsonDecodingException` et la ligne de file reste bloquée alors que le serveur a
+   agi (vécu sur `edit-tag`).
+2. **Fournisseur** (`data/remote/Providers.kt`) : une classe `FeedProvider`. Obligatoire : `id`,
+   `categories`, `subscriptions`, `stream`, `markRead`, `markUnread`, `markAllRead`. Tout le reste
+   a un défaut qu'il faut lever **délibérément** :
+   - `markAllReadGlobal` + `bulkMarkAllRead = true` : sans eux, « tout marquer lu » retombe à
+     l'unité ; un marquage de masse **accepté sans effet** (HTTP 200) rouvre tout à la synchro
+     suivante (Feedly `type:"feeds"`, Inoreader `mark-all-as-read` qui avance `firstitemmsec`) ;
+   - `markSaved` / `markUnsaved` + `readLater` / `readLaterIds` : sinon l'étoile reste locale ;
+   - `unreadIds`, `unreadTotal`, `unreadCountsByFeed` : réconciliation distante, rattrapage des
+     flux en retard, détection de changement ;
+   - `profile` + `userId` : libellé du compte et **anti-doublon** à la reconnexion (sans
+     `userId`, chaque reconnexion crée un second compte) ;
+   - `verifyWebSession` si la session se capture dans une WebView (cookie) ;
+   - `search` : facultatif et **inutile** — la recherche de l'app est locale, par choix.
+   Préférer l'énumération d'identifiants + un tag par lots (`i` répétable chez Inoreader) au
+   marqueur de masse du site : c'est ce qui rend « Annuler » réel.
+3. **Enregistrement** : `providerFor(service)` (`PressRepository`) pour l'instance et
+   `serviceLabel(service)` (`Accounts.kt`) pour le libellé — sans ça, « Compte » partout.
+4. **Règles pures du service** (`data/remote/FeedProvider.kt`, testées en JVM) : `autoReadAgeMs`
+   si le service marque lu de lui-même (Feedly, 31 j — consulté par `cutoffFor` à la synchro) et
+   `providerUsesSaved` si son étoile est son « à lire plus tard » — consulté par `setStarred` et
+   `starState`. Tester les deux.
+5. **Connexion** : un écran (page officielle intégrée, comme `FeedlySignInScreen` /
+   `InoreaderSignInScreen`), sa route dans `MainActivity` (et dans `UTILITY_ROUTES`, sinon le
+   retour remonte tout l'empilement), une entrée dans `LoginScreen`, `expiredReconnectRoute`
+   (`SessionExpired.kt`) pour le raccourci « Reconnecter », et
+   `PressVM.connectAccount(service, token, name, refreshToken)` →
+   `PressRepository.addAccount` (profil, `userId`, fusion du compte existant, compte actif).
+   - **OAuth** : `OAuth.fooAuthUrl` / `fooToken` / `fooRefresh` (`data/remote/OAuth.kt`), retour
+     `pressia://oauth` (`MainActivity` + manifeste), `CloudAccount.refreshToken` pour la durée, et
+     le champ `renewToken` du fournisseur câblé par le dépôt (bloc `init` de `PressRepository`,
+     `renewInoreaderToken` sert de modèle : il garde l'identité du compte, donc dossiers et
+     articles).
+6. **Clés du service** : `Prefs` (`INOREADER_APP_ID`…), `Prefs.ENTRIES` (export/import) et
+   `SECRET_PREFS` (`Backup.kt`) pour tout ce qui est secret ; étendre le test « entrées de
+   préférences ». Si l'API les exige à chaque appel, les publier dans un objet lu par
+   l'intercepteur Retrofit (`InoreaderAppAuth` + `PressRepository.refreshInoreaderAppAuth`) plutôt
+   que de relire DataStore à chaque requête.
+7. **Réglages propres au service** : clé dans `Prefs`, état + `save()` dans l'écran Réglages,
+   entrée dans `ENTRIES`, valeur par défaut lue au même endroit partout (`cutoffFor` pour
+   « Feedly : garder non lu au-delà de 31 jours »).
+8. **Favoris** : si le service a un tableau « à lire plus tard », sa provenance est écrite sur
+   l'article (`ArticleEntity.laterProvider`) à l'étoile (`setStarred`) et à l'import
+   (`syncReadLater`), avec un jeu `favScopeArg` + un libellé `favSetLabel` + une ligne dans
+   `FavorisScreen` conditionnée par `PressVM.hasAccount(service)`. Attention : un tableau
+   inchangé ne rejoue **pas** l'import (empreinte `savedHash`) — d'où le suffixe de service dans
+   cette empreinte, qui force la réimportation une fois et pose la provenance sur les lignes
+   existantes.
+9. **Textes** : `ABOUT_TOPICS` (« Comptes », « Favoris et Read later », « Ce qui reste non lu »…)
+   et `Changelog.kt`. Les règles annoncées doivent être **vérifiées en direct** : le site et l'API
+   ne se racontent pas pareil (`saved` renvoie le flux principal, `starred` est le « Read later »).
+10. **Vérification** : connexion réelle, synchro (dossiers, abonnements, articles, miniatures),
+    lu/non-lu poussé, réconciliation, marquage de masse **et son annulation**, tableau « à lire
+    plus tard » dans les deux sens, déconnexion (aucune trace restante), et session expirée
+    (bandeau + « Reconnecter »). Les tests unitaires ne couvrent que le pur : le reste se voit à
+    l'écran.
+
 ## Pièges connus — données, cache et stockage
 
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
