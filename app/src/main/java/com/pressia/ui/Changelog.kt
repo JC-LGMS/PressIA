@@ -4,7 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +46,20 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  * l'ouverture de la page ([changelog] n'est pas une constante chargée au démarrage).
  */
 fun changelog(): List<ChangelogEntry> = listOf(
+    ChangelogEntry(
+        "1.7",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Journal des modifications : date et heure affichées une seule fois",
+                "- Dans une même version, la date et l'heure d'un changement ne se répètent plus " +
+                    "ligne après ligne : elles s'affichent sur la première ligne du groupe, la " +
+                    "colonne restant vide et alignée en dessous. Une heure différente (un " +
+                    "changement livré plus tôt) réapparaît pour elle-même.",
+                time = "23:10"
+            )
+        )
+    ),
     ChangelogEntry(
         "1.6",
         listOf(
@@ -1286,7 +1300,16 @@ fun ChangelogScreen() {
                         )
                         Spacer(Modifier.height(8.dp))
                     }
-                    items(entry.items) { item -> ChangelogRow(item) }
+                    itemsIndexed(entry.items) { index, item ->
+                        val prev = entry.items.getOrNull(index - 1)
+                        // Date et heure ne se répètent pas : la colonne garde sa hauteur (blanc)
+                        // pour que les lignes restent alignées les unes sous les autres.
+                        ChangelogRow(
+                            item,
+                            showDate = prev?.date != item.date,
+                            showTime = prev?.time != item.time
+                        )
+                    }
                     item {
                         Spacer(Modifier.height(18.dp))
                         HorizontalDivider()
@@ -1355,19 +1378,19 @@ private fun ChangelogScrollBar(state: LazyListState, modifier: Modifier = Modifi
 
 /** Une ligne du journal : date et heure à gauche, titre puis détail du commit à droite. */
 @Composable
-private fun ChangelogRow(item: ChangelogItem) {
+private fun ChangelogRow(item: ChangelogItem, showDate: Boolean, showTime: Boolean) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
         // Colonne étroite : la date sur une ligne, l'heure juste en dessous. Réduite au strict
         // nécessaire (« 2026-11-06 » en 11 sp ≈ 64 dp) pour laisser la place au texte.
         Column(Modifier.width(70.dp).padding(top = 2.dp, end = 4.dp)) {
             Text(
-                item.date,
+                if (showDate) item.date else " ",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (!item.time.isNullOrBlank()) {
                 Text(
-                    item.time,
+                    if (showTime) item.time!! else " ",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                 )
