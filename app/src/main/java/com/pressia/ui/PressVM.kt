@@ -313,6 +313,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val articleSwipeRight: StateFlow<String> = prefs.flow(Prefs.ARTICLE_SWIPE_RIGHT, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
         .map { articleGestureAction(it, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT, ARTICLE_SWIPE_IDS - "older") }
         .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
+    /** Balayage vers le haut dans un article (bas atteint) : older (défaut) | action | none. */
+    val articleSwipeUp: StateFlow<String> = prefs.flow(Prefs.ARTICLE_SWIPE_UP, Prefs.ARTICLE_SWIPE_UP_DEFAULT)
+        .map { articleGestureAction(it, Prefs.ARTICLE_SWIPE_UP_DEFAULT, ARTICLE_SWIPE_IDS - "newer") }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.ARTICLE_SWIPE_UP_DEFAULT)
+    /** Balayage vers le bas dans un article (haut atteint) : newer (défaut) | action | none. */
+    val articleSwipeDown: StateFlow<String> = prefs.flow(Prefs.ARTICLE_SWIPE_DOWN, Prefs.ARTICLE_SWIPE_DOWN_DEFAULT)
+        .map { articleGestureAction(it, Prefs.ARTICLE_SWIPE_DOWN_DEFAULT, ARTICLE_SWIPE_IDS - "older") }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Prefs.ARTICLE_SWIPE_DOWN_DEFAULT)
     /** Glissement d'un article vers la gauche : "star" (défaut) | "read" | "share" | "instapaper" | "none". */
     val swipeAction: StateFlow<String> = prefs.flow(Prefs.SWIPE_ACTION, "star").stateIn(viewModelScope, SharingStarted.Eagerly, "star")
     /** Glissement d'un article vers la droite : mêmes options, "read" par défaut. */

@@ -560,6 +560,16 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   **Recherche** : l'action ouvre l'écran Recherche sur le flux de l'article. « Icônes d'action »
   l'ajoute par défaut en tête (`ARTICLE_ACTIONS_DEFAULT`), et `migrateArticleActions` la donne aux
   configurations restées à l'ancien défaut.
+- **Balayages haut et bas dans un article** (`Prefs.ARTICLE_SWIPE_UP` / `ARTICLE_SWIPE_DOWN`,
+  `detectArticleVerticalSwipe`) : le geste n'est pris **qu'au bord** de l'article — vers le haut
+  une fois le bas atteint (défaut : article plus ancien), vers le bas une fois le haut atteint
+  (défaut : article plus récent) ; ailleurs il fait défiler, et un doigt sur un lecteur lui
+  appartient (même exception que l'horizontale). Le détecteur est posé **après** `verticalScroll`
+  dans la chaîne de modificateurs : dans le passage montant, il voit l'évènement avant le
+  défilement et peut lui prendre la course au bord. Sans voisin dans ce sens, un message le dit et
+  l'on **revient à la liste**, comme pour le balayage horizontal. Comme les balayages
+  gauche/droite, chaque sens interdit la navigation inverse de l'autre (« newer » n'est pas
+  proposé en haut, « older » pas en bas).
 
 ## Pièges connus — réseau, comptes et synchronisation
 

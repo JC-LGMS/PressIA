@@ -48,6 +48,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.5",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Balayages haut et bas dans un article : action réglable, navigation par défaut",
+                "- En bas d'un article, un balayage vers le haut ouvre l'article plus ancien ; en " +
+                    "haut, un balayage vers le bas ouvre l'article plus récent. Ailleurs, le geste " +
+                    "continue de faire défiler l'article : il ne compte qu'une fois le bord atteint.\n" +
+                    "- Ces deux sens se règlent comme les balayages gauche et droite (Réglages → Dans " +
+                    "un article) : article plus ancien, article plus récent, Favoris, Lu/non-lu, " +
+                    "Partager, Instapaper, Recherche ou Aucun. Sans article voisin dans ce sens, un " +
+                    "message le dit et le retour ramène à la liste, comme pour les balayages " +
+                    "gauche et droite.",
+                time = "01:37"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.4",
         listOf(
             ChangelogItem(

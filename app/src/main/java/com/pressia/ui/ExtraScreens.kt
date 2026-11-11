@@ -754,6 +754,8 @@ fun SettingsScreen(vm: PressVM) {
     var doubleTap by remember { mutableStateOf(Prefs.DOUBLE_TAP_DEFAULT) }
     var artSwipeLeft by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_LEFT_DEFAULT) }
     var artSwipeRight by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT) }
+    var artSwipeUp by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_UP_DEFAULT) }
+    var artSwipeDown by remember { mutableStateOf(Prefs.ARTICLE_SWIPE_DOWN_DEFAULT) }
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
@@ -794,6 +796,8 @@ fun SettingsScreen(vm: PressVM) {
         doubleTap = get(Prefs.DOUBLE_TAP_ACTION, Prefs.DOUBLE_TAP_DEFAULT)
         artSwipeLeft = get(Prefs.ARTICLE_SWIPE_LEFT, Prefs.ARTICLE_SWIPE_LEFT_DEFAULT)
         artSwipeRight = get(Prefs.ARTICLE_SWIPE_RIGHT, Prefs.ARTICLE_SWIPE_RIGHT_DEFAULT)
+        artSwipeUp = get(Prefs.ARTICLE_SWIPE_UP, Prefs.ARTICLE_SWIPE_UP_DEFAULT)
+        artSwipeDown = get(Prefs.ARTICLE_SWIPE_DOWN, Prefs.ARTICLE_SWIPE_DOWN_DEFAULT)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
         feedlyKeepUnread = get(Prefs.FEEDLY_KEEP_UNREAD, true)
@@ -843,6 +847,8 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DOUBLE_TAP_ACTION, doubleTap)
         vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_LEFT, artSwipeLeft)
         vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_RIGHT, artSwipeRight)
+        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_UP, artSwipeUp)
+        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_DOWN, artSwipeDown)
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
@@ -1051,6 +1057,28 @@ fun SettingsScreen(vm: PressVM) {
             Text(
                 "Par défaut, gauche = article plus ancien et droite = article plus récent. " +
                     "Toute autre action remplace la navigation dans ce sens (« Aucun » : le geste ne fait rien).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text("Balayage vers le haut dans un article (une fois le bas atteint)")
+            ActionDropDown(
+                options = ARTICLE_SWIPE_IDS.filter { it != "newer" }.map { it to articleNavLabel(it) },
+                selected = artSwipeUp,
+                label = "Balayage vers le haut",
+                onSelect = { artSwipeUp = it; save() }
+            )
+            Text("Balayage vers le bas dans un article (une fois le haut atteint)")
+            ActionDropDown(
+                options = ARTICLE_SWIPE_IDS.filter { it != "older" }.map { it to articleNavLabel(it) },
+                selected = artSwipeDown,
+                label = "Balayage vers le bas",
+                onSelect = { artSwipeDown = it; save() }
+            )
+            Text(
+                "Le geste vertical ne compte qu'au bord de l'article : vers le haut une fois le bas " +
+                    "atteint (par défaut : article plus ancien), vers le bas une fois le haut atteint " +
+                    "(par défaut : article plus récent). Ailleurs, il fait défiler l'article. " +
+                    "Sans article voisin dans ce sens, un message le dit et le retour ramène à la liste.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

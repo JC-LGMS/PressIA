@@ -1118,7 +1118,8 @@ class PressLogicTest {
         // Réglage exporté : la persistance du mode Readability doit survivre à une restauration.
         assertTrue("readability_sticky doit figurer dans ENTRIES", "readability_sticky" in names)
         // Réglages exportés : les gestes d'article doivent survivre à une restauration.
-        listOf("double_tap_action", "article_swipe_left", "article_swipe_right").forEach {
+        listOf("double_tap_action", "article_swipe_left", "article_swipe_right",
+            "article_swipe_up", "article_swipe_down").forEach {
             assertTrue("$it doit figurer dans ENTRIES", it in names)
         }
         // Borne de remise à zéro des stats : une sauvegarde restaurée doit la retrouver, sinon

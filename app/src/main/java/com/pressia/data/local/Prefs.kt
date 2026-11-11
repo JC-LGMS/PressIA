@@ -92,6 +92,10 @@ class Prefs(private val ctx: Context) {
         const val ARTICLE_SWIPE_LEFT_DEFAULT = "older"
         /** Balayage droit par défaut dans un article : article plus récent. */
         const val ARTICLE_SWIPE_RIGHT_DEFAULT = "newer"
+        /** Balayage vers le haut (bas de l'article atteint) par défaut : article plus ancien. */
+        const val ARTICLE_SWIPE_UP_DEFAULT = "older"
+        /** Balayage vers le bas (haut de l'article atteint) par défaut : article plus récent. */
+        const val ARTICLE_SWIPE_DOWN_DEFAULT = "newer"
         /**
          * Source des favicons : agrégateur (service Google, défaut) ou sites eux-mêmes
          * (`/favicon.ico`, en direct). L'icône fournie par le compte reste prioritaire
@@ -166,6 +170,10 @@ class Prefs(private val ctx: Context) {
         val ARTICLE_SWIPE_LEFT = stringPreferencesKey("article_swipe_left")
         /** Balayage droit dans un article : "newer" (article plus récent, défaut) | action | "none". */
         val ARTICLE_SWIPE_RIGHT = stringPreferencesKey("article_swipe_right")
+        /** Balayage vers le haut dans un article (une fois le bas atteint) : "older" (défaut) | action | "none". */
+        val ARTICLE_SWIPE_UP = stringPreferencesKey("article_swipe_up")
+        /** Balayage vers le bas dans un article (une fois le haut atteint) : "newer" (défaut) | action | "none". */
+        val ARTICLE_SWIPE_DOWN = stringPreferencesKey("article_swipe_down")
 
         val INOREADER_APP_ID = stringPreferencesKey("inoreader_app_id")
         val INOREADER_APP_KEY = stringPreferencesKey("inoreader_app_key")
@@ -290,6 +298,8 @@ class Prefs(private val ctx: Context) {
             PrefEntry.Str("double_tap_action", DOUBLE_TAP_ACTION),
             PrefEntry.Str("article_swipe_left", ARTICLE_SWIPE_LEFT),
             PrefEntry.Str("article_swipe_right", ARTICLE_SWIPE_RIGHT),
+            PrefEntry.Str("article_swipe_up", ARTICLE_SWIPE_UP),
+            PrefEntry.Str("article_swipe_down", ARTICLE_SWIPE_DOWN),
             PrefEntry.Str("inoreader_app_id", INOREADER_APP_ID), PrefEntry.Str("inoreader_app_key", INOREADER_APP_KEY),
             PrefEntry.Str("feedly_client_id", FEEDLY_CLIENT_ID), PrefEntry.Str("feedly_client_secret", FEEDLY_CLIENT_SECRET),
             PrefEntry.Str("instapaper_user", INSTAPAPER_USER), PrefEntry.Str("instapaper_pass", INSTAPAPER_PASS),

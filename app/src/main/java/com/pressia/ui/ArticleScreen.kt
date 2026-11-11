@@ -129,6 +129,8 @@ fun ArticleScreen(
     val doubleTap by vm.doubleTapAction.collectAsState()
     val swipeLeft by vm.articleSwipeLeft.collectAsState()
     val swipeRight by vm.articleSwipeRight.collectAsState()
+    val swipeUp by vm.articleSwipeUp.collectAsState()
+    val swipeDown by vm.articleSwipeDown.collectAsState()
     // Un doigt posé sur un lecteur (barre d'avancée, pincer, plein écran) lui appartient : le
     // balayage d'article ne doit pas le confisquer, sinon tirer la barre de la vidéo change
     // d'article au lieu d'avancer dans la vidéo.
@@ -157,6 +159,9 @@ fun ArticleScreen(
     // faire (voisin absent) : c'est elle qui déclenche le message « pas d'article plus ancien ».
     var dragX by remember(articleId) { mutableFloatStateOf(0f) }
     var dragging by remember(articleId) { mutableStateOf(false) }
+    // Course verticale du balayage haut/bas, comptée seulement quand l'article est déjà au bord
+    // (bas pour un geste vers le haut, haut pour un geste vers le bas).
+    var dragY by remember(articleId) { mutableFloatStateOf(0f) }
     // Le défilement repart du haut à chaque article : sans clé, le voisin ouvert par balayage
     // s'affichait à la position de l'article quitté.
     val scrollState = remember(articleId) { ScrollState(0) }
@@ -425,6 +430,34 @@ fun ArticleScreen(
                 // entier) : c'est l'échelle de la barre de défilement.
                 .onSizeChanged { viewportPx = it.height }
                 .verticalScroll(scrollState)
+                // Balayage haut/bas : il ne prend le geste que là où l'article ne peut plus
+                // défiler (bas atteint vers le haut, haut atteint vers le bas) ; partout ailleurs
+                // le défilement reste maître.
+                .pointerInput(prevId, nextId, swipeUp, swipeDown) {
+                    val upNav = swipeUp == "older"
+                    val downNav = swipeDown == "newer"
+                    detectArticleVerticalSwipe(
+                        onPlayer = { inPlayer.value },
+                        atTop = { scrollState.value <= 0 },
+                        atBottom = { scrollState.value >= scrollState.maxValue },
+                        onStart = { dragY = 0f },
+                        onDrag = { dy -> dragY = (dragY + dy).coerceIn(-600f, 600f) },
+                        onEnd = {
+                            when {
+                                dragY <= -120f && upNav && nextId != null -> onShowArticle(nextId)
+                                dragY >= 120f && downNav && prevId != null -> onShowArticle(prevId)
+                                // Sens « navigation » sans voisin : on revient à la liste (comme
+                                // le balayage horizontal), le message disant pourquoi.
+                                dragY <= -120f && upNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
+                                dragY >= 120f && downNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
+                                dragY <= -120f && !upNav && swipeUp != "none" -> fireArticleAction(swipeUp)
+                                dragY >= 120f && !downNav && swipeDown != "none" -> fireArticleAction(swipeDown)
+                            }
+                            dragY = 0f
+                        },
+                        onCancel = { dragY = 0f }
+                    )
+                }
                 .graphicsLayer { translationX = offsetX }
                 .pointerInput(doubleTap) {
                     detectTapGestures(onDoubleTap = { fireArticleAction(doubleTap) })
@@ -1979,6 +2012,60 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
             } else {
                 change.consume()
                 onDrag(change, dx)
+            }
+        }
+        if (started) onEnd() else onCancel()
+    }
+}
+
+/**
+ * Balayage vertical de l'écran article : il ne prend le geste que là où l'article ne peut pas
+ * défiler — vers le haut quand le bas est atteint, vers le bas quand le haut l'est. Ailleurs le
+ * geste reste au défilement, et un doigt posé sur un lecteur appartient au lecteur (même exception
+ * que le balayage horizontal).
+ *
+ * Posé **après** `verticalScroll` dans la chaîne de modificateurs : dans le passage montant, il
+ * voit l'évènement avant le défilement et peut donc lui prendre la course au bord de l'article.
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectArticleVerticalSwipe(
+    onPlayer: () -> Boolean,
+    atTop: () -> Boolean,
+    atBottom: () -> Boolean,
+    onStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onEnd: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        if (onPlayer()) {
+            do {
+                val event = awaitPointerEvent()
+            } while (event.changes.any { it.pressed })
+            return@awaitEachGesture
+        }
+        val slop = viewConfiguration.touchSlop
+        var total = 0f
+        var started = false
+        while (true) {
+            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+            val dy = change.positionChange().y
+            if (!started) {
+                total += dy
+                if (kotlin.math.abs(total) > slop) {
+                    // Vers le haut : seulement au bas de l'article ; vers le bas : seulement en
+                    // haut. Sinon le défilement garde le geste (rien n'est consommé).
+                    if (!(if (total < 0) atBottom() else atTop())) break
+                    started = true
+                    change.consume()
+                    onStart()
+                    onDrag(total)
+                    total = 0f
+                }
+            } else {
+                change.consume()
+                onDrag(dy)
             }
         }
         if (started) onEnd() else onCancel()
