@@ -27,6 +27,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -2019,9 +2022,9 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             shown.forEach { topic ->
                 Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(topic.title, style = MaterialTheme.typography.titleSmall)
+                        Text(highlightTerm(topic.title, query), style = MaterialTheme.typography.titleSmall)
                         Text(
-                            topic.body, style = MaterialTheme.typography.bodyMedium,
+                            highlightTerm(topic.body, query), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -2034,6 +2037,36 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
 
 /** Un sujet du résumé « À propos » : titre court + règle ou fonctionnalité en une phrase. */
 private data class AboutTopic(val title: String, val body: String)
+
+/**
+ * Occurrences de [term] dans [text], casse ignorée — le même test que le filtre de la recherche,
+ * qui retient un sujet dès que son titre ou son résumé le contient.
+ */
+fun termRanges(text: String, term: String): List<IntRange> {
+    if (term.isEmpty()) return emptyList()
+    val out = mutableListOf<IntRange>()
+    var from = 0
+    while (true) {
+        val at = text.indexOf(term, from, ignoreCase = true)
+        if (at < 0) return out
+        out.add(at until at + term.length)
+        from = at + term.length
+    }
+}
+
+/** Texte du résumé avec le terme cherché surligné : on voit tout de suite pourquoi il est là. */
+@Composable
+private fun highlightTerm(text: String, term: String): AnnotatedString {
+    val background = MaterialTheme.colorScheme.primaryContainer
+    return remember(text, term, background) {
+        val ranges = termRanges(text, term)
+        if (ranges.isEmpty()) AnnotatedString(text)
+        else buildAnnotatedString {
+            append(text)
+            ranges.forEach { addStyle(SpanStyle(background = background), it.first, it.last + 1) }
+        }
+    }
+}
 
 /**
  * Ce que PressIA sait faire et les règles qu'elle applique, en langage utilisateur.

@@ -1943,8 +1943,7 @@ class PressLogicTest {
         assertTrue(buildOpml(feeds).contains("A &amp; B &quot;cite&quot;"))
     }
 
-    @Test fun `opml dossier imbrique retient le plus proche et ignore le reste`() {
-        val xml = """<?xml version="1.0"?>
+    @Test fun `opml dossier imbrique retient le plus proche et ignore le reste`() {        val xml = """<?xml version="1.0"?>
             <opml version="1.0"><body>
               <outline text="Parent">
                 <outline text="Enfant">
@@ -1967,5 +1966,15 @@ class PressLogicTest {
         assertTrue(parseOpml("<opml><body><outline text=\"rien\"/></body></opml>").isEmpty())
         assertTrue(parseOpml("").isEmpty())
         assertEquals("a &amp; &lt;b&gt; &quot;c&quot; &apos;d&apos;", escapeXml("a & <b> \"c\" 'd'"))
+    }
+
+    @Test fun `surlignage du terme cherche dans A propos`() {
+        // Meme regle que le filtre : casse ignoree, toutes les occurrences.
+        assertEquals(listOf(0 until 4, 15 until 19), com.pressia.ui.termRanges("OPML et encore opml", "opml"))
+        // Terme vide ou absent : aucune plage (une plage vide ferait boucler le surlignage).
+        assertTrue(com.pressia.ui.termRanges("OPML", "").isEmpty())
+        assertTrue(com.pressia.ui.termRanges("OPML", "rss").isEmpty())
+        // Un terme qui chevaucherait sa propre repetition n'est pas compte deux fois.
+        assertEquals(listOf(0 until 2), com.pressia.ui.termRanges("aaa", "aa"))
     }
 }

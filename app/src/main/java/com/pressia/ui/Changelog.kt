@@ -47,6 +47,20 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.9",
+        listOf(
+            ChangelogItem(
+                "2026-11-12",
+                "Recherche de l'écran À propos : termes surlignés",
+                "- La recherche retient un sujet dès que son titre ou son résumé contient le terme, " +
+                    "et le terme y est maintenant surligné — toutes ses occurrences, casse ignorée. " +
+                    "On voit donc d'un coup d'œil pourquoi un sujet est là, le mot n'apparaissant " +
+                    "parfois qu'au bout du paragraphe. Le surlignage suit le thème et le fond choisi.",
+                time = "00:10"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.8",
         listOf(
             ChangelogItem(

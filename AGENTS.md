@@ -1201,6 +1201,10 @@ les autres (chaque point a coûté un bug quand il manquait).
   date rendait invisibles les doublons anciens — l'écran annonçait alors « aucun doublon » alors
   qu'il y en avait. L'écran est une `LazyColumn` : sans plafond, tout composer d'un coup peinerait
   sur une grosse base.
+- Écran À propos : la recherche retient un sujet dès que son titre **ou** son résumé contient le
+  terme, et le terme y est **surligné** (`termRanges`, casse ignorée, testé) — sans cela on ne
+  voyait pas pourquoi un sujet était là, le mot n'apparaissant parfois qu'au bout du paragraphe.
+  Le surlignage prend `primaryContainer`, qui suit le thème et le fond choisi.
 
 ## Commit automatique
 
