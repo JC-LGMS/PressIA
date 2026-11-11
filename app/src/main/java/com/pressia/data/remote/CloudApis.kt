@@ -177,7 +177,20 @@ interface InoreaderService {
     ): InoreaderIdList
 
     companion object {
-        fun create(): InoreaderService {
+        /**
+         * Service de l'API Google Reader.
+         *
+         * [baseUrl] est le serveur : celui d'Inoreader par défaut, celui d'un FreshRSS
+         * (`https://freshrss.exemple.org/api/greader.php/`) pour ce fournisseur — l'API est la
+         * même, seule l'adresse change.
+         *
+         * [appAuth] ajoute l'authentification **applicative** d'Inoreader (`AppId`/`AppKey`) :
+         * elle n'a pas de sens chez FreshRSS, où l'utilisateur est seul maître de son serveur.
+         */
+        fun create(
+            baseUrl: String = "https://www.inoreader.com/",
+            appAuth: Boolean = true
+        ): InoreaderService {
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
             val client = OkHttpClient.Builder()
                 // Authentification applicative Inoreader : exigée sur *chaque* appel, à côté
@@ -194,14 +207,14 @@ interface InoreaderService {
                     // identifiant enregistré ne peut de toute façon pas passer
                     // l'authentification applicative, et Inoreader répond 403 dans les
                     // deux cas — autant ne pas envoyer un en-tête vide.
-                    if (id.isNotEmpty() && key.isNotEmpty()) {
+                    if (appAuth && id.isNotEmpty() && key.isNotEmpty()) {
                         builder.header("AppId", id)
                         builder.header("AppKey", key)
                     }
                     chain.proceed(builder.build())
                 }
                 .build()
-            return Retrofit.Builder().baseUrl("https://www.inoreader.com/")
+            return Retrofit.Builder().baseUrl(baseUrl)
                 .client(client)
                 .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
                 .build().create(InoreaderService::class.java)

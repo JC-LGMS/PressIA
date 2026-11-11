@@ -732,7 +732,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   et `readLater` / `readLaterIds` la redescendent comme `tag/global.saved` chez Feedly.
   `providerUsesSaved` (pure, testée) dit quels services suivent ce chemin : `setStarred` et
   `PressVM.starState` s'y réfèrent — ne pas remettre « feedly » en dur. Les favoris des flux
-  locaux restent locaux.
+  locaux restent locaux. Chez **FreshRSS**, la même étiquette `starred` est sa liste de
+  **favoris** (son site ne parle pas de « Read later ») : même chemin, jeu `later_fr` et libellé
+  « Favoris - FreshRSS » à part.
   **Le service d'un tableau est rangé avec l'article** (`articles.laterProvider`, colonne ajoutée
   par `MIGRATION_8_9`) : c'est ce qui sépare les filtres « À lire plus tard - Feedly » et
   « - Inoreader » des Favoris, y compris pour les articles d'un flux **désabonné** — filtrer sur
@@ -845,6 +847,41 @@ les autres (chaque point a coûté un bug quand il manquait).
     plus tard » dans les deux sens, déconnexion (aucune trace restante), et session expirée
     (bandeau + « Reconnecter »). Les tests unitaires ne couvrent que le pur : le reste se voit à
     l'écran.
+
+### FreshRSS (implémenté, exemple complet)
+
+FreshRSS est **auto-hébergé** et expose l'**API Google Reader** sous
+`<serveur>/api/greader.php/` : mêmes endpoints qu'Inoreader, d'où un fournisseur qui **hérite**
+d'`InoreaderProvider` (`FreshRssProvider`, `data/remote/Providers.kt`) et ne remplace que trois
+choses :
+
+- **le serveur**, que porte le jeton du compte — `freshrss|<serveur>|<auth>`
+  (`data/remote/FreshRss.kt`, pur et testé : `freshRssBaseUrl`, `freshRssToken`, `freshrssAuth`) —
+  plutôt qu'une colonne de plus dans le registre des comptes ; un service Retrofit par serveur, en
+  cache (`InoreaderService.create(base, appAuth = false)` : pas d'`AppId`/`AppKey` hors Inoreader) ;
+- **l'authentification** : identifiant + mot de passe → `accounts/ClientLogin` rend `Auth=…`,
+  envoyé en `Authorization: GoogleLogin auth=…`. La connexion n'est retenue qu'après un vrai appel
+  `user-info`. C'est le seul agrégateur qui **saisit le mot de passe** : la page de connexion
+  intégrée n'existe pas, et le formulaire vit dans `LoginScreen` (adresse, identifiant, mot de
+  passe → `PressVM.connectFreshRss`). Le mot de passe n'est pas conservé, seul le jeton. Le schéma
+  est ajouté quand il manque (`https://` par défaut) : **un serveur en HTTP simple doit être saisi
+  avec `http://`**, sinon la poignée de main TLS échoue et la connexion est refusée ;
+- **le chemin du flux** : FreshRSS découpe le chemin sur les barres, l'identifiant d'un flux doit
+  donc y arriver **encodé** (`feed%2Fhttp%3A%2F%2F…`), ce que fait `streamPath` (Inoreader, lui,
+  accepte la forme brute — vérifié en direct, ne pas changer ce comportement).
+
+L'étoile PressIA est l'étiquette `starred` de FreshRSS, sa liste de **favoris** :
+`providerUsesSaved("freshrss")` est vrai, l'import du tableau pose `laterProvider = "freshrss"`, et
+l'écran Favoris a son propre jeu (`later_fr`, « Favoris - FreshRSS » — libellé propre, le site ne
+parle pas de « Read later »). Rien d'autre n'est propre au service : dossiers, abonnements,
+articles, lu/non-lu (marquage de masse réversible par `edit-tag`, jeton CSRF compris), compteurs,
+profil, `userId` et réconciliation viennent d'Inoreader. La session expirée renvoie vers Comptes
+(`expiredReconnectRoute`, cas par défaut), seul écran qui sait ressaisir le mot de passe.
+
+Vérifié sur un faux serveur Google Reader (`10.0.2.2:8898`, script jetable) : connexion, dossiers
+et abonnements, articles, lu poussé, étoile dans les deux sens, marquage de masse, session expirée
+(401 → mention sur le compte, levée dès un appel réussi), déconnexion sans trace (abonnements,
+articles et favoris du compte compris).
 
 ## Pièges connus — données, cache et stockage
 

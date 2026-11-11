@@ -182,10 +182,12 @@ fun autoReadAgeMs(providerId: String): Long? =
 /**
  * L'étoile de l'application pilote le tableau « à lire plus tard » du **compte** au lieu d'un
  * favori local : Feedly (`tag/global.saved`) et Inoreader, dont l'étiquette `starred` est ce
- * tableau — son site l'appelle « Read later » (titre du flux vérifié en direct).
+ * tableau — son site l'appelle « Read later » (titre du flux vérifié en direct). Chez FreshRSS,
+ * l'étiquette `starred` est la liste des **favoris** du serveur, et l'étoile y écrit donc
+ * directement.
  */
 fun providerUsesSaved(provider: String?): Boolean =
-    providerBase(provider) == "feedly" || providerBase(provider) == "inoreader"
+    providerBase(provider) in setOf("feedly", "inoreader", "freshrss")
 
 /** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */
 fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =

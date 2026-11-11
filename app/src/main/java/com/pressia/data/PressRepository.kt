@@ -57,7 +57,7 @@ private const val DELETED_FEED_LABEL = "Flux supprimé"
  * Favoris affichait tous les articles au lieu des seuls étoilés.
  */
 fun favScopeArg(set: String): String = when (set) {
-    "later", "later_ino" -> set
+    "later", "later_ino", "later_fr" -> set
     "all" -> "all"
     // L'UI et la préférence historique parlent de « app » ; la base ne connaît que « starred ».
     "app", "starred" -> "starred"
@@ -346,6 +346,7 @@ class PressRepository(
     val prefs: Prefs,
     private val feedly: FeedProvider = FeedlyProvider(),
     private val inoreader: InoreaderProvider = InoreaderProvider(),
+    private val freshrss: FreshRssProvider = FreshRssProvider(),
     private val local: LocalProvider = LocalProvider()
 ) {
     /** Contexte applicatif. */
@@ -679,10 +680,11 @@ class PressRepository(
         prefs.set(Prefs.TOKEN, account.token)
     }
 
-    /** Provider d'un service donné (« feedly », « inoreader », « local »). */
+    /** Provider d'un service donné (« feedly », « inoreader », « freshrss », « local »). */
     private fun providerFor(service: String?): FeedProvider = when (service) {
         "feedly" -> feedly
         "inoreader" -> inoreader
+        "freshrss" -> freshrss
         else -> local
     }
 

@@ -221,7 +221,8 @@ interface PressDao {
     /**
      * [favScope] sélectionne le périmètre des favoris : "" = aucun filtre, "starred" = les étoiles
      * PressIA, "later" = le tableau « Read later » du compte **Feedly**, "later_ino" celui
-     * d'Inoreader (leur étiquette `starred`), "all" = étoiles et tableaux réunis.
+     * d'Inoreader (leur étiquette `starred`), "later_fr" les **favoris** d'un serveur FreshRSS
+     * (même étiquette), "all" = étoiles et tableaux réunis.
      *
      * Les deux tableaux portent le même drapeau [ArticleEntity.laterSaved] : c'est
      * [ArticleEntity.laterProvider], posé à l'import du tableau et à l'étoile, qui les sépare.
@@ -239,7 +240,7 @@ interface PressDao {
     @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
     /** Même requête, réactive : la liste visible se rafraîchit dès que la sync insère des articles. */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlow(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): Flow<List<ArticleEntity>>
     /**
      * Variante « collante » : les articles passés en lus pendant la session restent listés
@@ -250,7 +251,7 @@ interface PressDao {
      * depuis « Tous les articles » restait « collant » et réapparaissait en tête de Favoris alors
      * qu'il n'est pas étoilé.
      */
-    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
     @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId")
     suspend fun articleCount(feedId: String): Int

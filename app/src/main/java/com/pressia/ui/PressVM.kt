@@ -61,6 +61,8 @@ data class FavScope(
 fun favSetLabel(set: String): String = when (set) {
     "later" -> "À lire plus tard - Feedly"
     "later_ino" -> "À lire plus tard - Inoreader"
+    // FreshRSS nomme « favoris » son étiquette `starred` : la ligne porte son vocabulaire.
+    "later_fr" -> "Favoris - FreshRSS"
     "all" -> "Tous les favoris"
     else -> "Favoris PressIA"
 }
@@ -368,6 +370,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun favSetAvailable(set: String): Boolean = when (set) {
         "later" -> hasAccount("feedly")
         "later_ino" -> hasAccount("inoreader")
+        "later_fr" -> hasAccount("freshrss")
         else -> true
     }
     /** Faux = un dossier par compte même si les noms se ressemblent. */
@@ -1638,6 +1641,28 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             }
         }
     }
+    /**
+     * Connexion d'un serveur FreshRSS : identifiant et mot de passe, puis le jeton du compte
+     * (adresse du serveur + jeton d'accès, voir [com.pressia.data.remote.FreshRss]) est
+     * enregistré comme celui d'un agrégateur, avec sa première synchronisation.
+     *
+     * `onDone` reçoit le message d'échec, ou null quand le compte est connecté.
+     */
+    fun connectFreshRss(server: String, user: String, password: String, onDone: (String?) -> Unit) =
+        viewModelScope.launch {
+            val res = com.pressia.data.remote.FreshRss.login(server, user, password)
+            if (res == null) {
+                onDone(
+                    "Connexion refusée : vérifiez l'adresse du serveur (en HTTP simple, écrivez " +
+                        "« http:// » devant), l'identifiant et le mot de passe, et que l'API est " +
+                        "active sur le serveur (FreshRSS → Réglages → API)."
+                )
+                return@launch
+            }
+            connectAccount("freshrss", res.token, res.label)
+            onDone(null)
+        }
+
     fun useAccount(acc: com.pressia.data.CloudAccount) = viewModelScope.launch {
         repo.setActiveAccount(acc.id)
         refreshNow()

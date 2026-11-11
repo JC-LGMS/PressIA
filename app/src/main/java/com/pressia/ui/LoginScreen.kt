@@ -50,6 +50,13 @@ fun LoginScreen(
     var inoreaderKey by remember { mutableStateOf("") }
     var rssUrl by remember { mutableStateOf("") }
     var msg by remember { mutableStateOf("") }
+    // FreshRSS : adresse du serveur, identifiant, mot de passe (rien n'est conservé sauf le
+    // jeton rendu par le serveur, dans le compte).
+    var frServer by remember { mutableStateOf("") }
+    var frUser by remember { mutableStateOf("") }
+    var frPass by remember { mutableStateOf("") }
+    var frBusy by remember { mutableStateOf(false) }
+    var frMsg by remember { mutableStateOf("") }
     var instaUser by remember { mutableStateOf("") }
     var instaPass by remember { mutableStateOf("") }
     var instaBusy by remember { mutableStateOf(false) }
@@ -204,6 +211,75 @@ fun LoginScreen(
                 "Nécessite une application créée sur inoreader.com/developers, avec l'URL de " +
                     "redirection « pressia://oauth/inoreader ». La page Inoreader s'ouvre ensuite " +
                     "dans l'application.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // ---- FreshRSS (serveur personnel) ---------------------------------------------------
+        // Agrégateur auto-hébergé : pas de page de connexion à ouvrir ni d'OAuth, mais
+        // l'adresse du serveur avec un identifiant et un mot de passe. PressIA n'en garde que
+        // le jeton rendu par le serveur.
+        OutlinedButton(
+            { service = if (service == "freshrss") null else "freshrss"; frMsg = "" },
+            Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Cloud, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (service == "freshrss") "Annuler la connexion FreshRSS"
+                else "Se connecter à un serveur FreshRSS"
+            )
+        }
+        if (service == "freshrss") {
+            OutlinedTextField(
+                frServer, { frServer = it }, label = { Text("Adresse du serveur") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                placeholder = { Text("https://freshrss.exemple.org") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                    autoCorrectEnabled = false
+                )
+            )
+            OutlinedTextField(
+                frUser, { frUser = it }, label = { Text("Identifiant") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true
+            )
+            OutlinedTextField(
+                frPass, { frPass = it }, label = { Text("Mot de passe") },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password
+                )
+            )
+            Button(
+                {
+                    frBusy = true; frMsg = ""
+                    vm.connectFreshRss(frServer, frUser, frPass) { err ->
+                        frBusy = false
+                        if (err == null) {
+                            frPass = ""
+                            service = null
+                            toast(ctx, "Compte FreshRSS connecté")
+                        } else {
+                            frMsg = err
+                        }
+                    }
+                },
+                Modifier.fillMaxWidth(),
+                enabled = frServer.isNotBlank() && frUser.isNotBlank() && frPass.isNotEmpty() && !frBusy
+            ) { Text(if (frBusy) "Connexion…" else "Valider et connecter") }
+            if (frMsg.isNotBlank()) {
+                Text(frMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Text(
+                "L'adresse est celle de l'instance (« https://freshrss.exemple.org » ; un " +
+                    "« /api/greader.php » collé en trop est retiré, et un serveur sans certificat " +
+                    "se saisit avec « http:// » devant). L'API doit être active pour votre " +
+                    "utilisateur (Réglages → API sur le serveur) : son mot de passe d'API y " +
+                    "est préférable à celui du compte. Seul le jeton rendu par le serveur est " +
+                    "conservé dans l'application.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

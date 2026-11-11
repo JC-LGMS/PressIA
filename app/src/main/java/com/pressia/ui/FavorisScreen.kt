@@ -212,6 +212,9 @@ private fun FavScopeChooser(
                 if (vm.hasAccount("inoreader")) {
                     FavChoiceRow("À lire plus tard - Inoreader", set == "later_ino") { onPickSet("later_ino") }
                 }
+                if (vm.hasAccount("freshrss")) {
+                    FavChoiceRow("Favoris - FreshRSS", set == "later_fr") { onPickSet("later_fr") }
+                }
             }
         } else {
             ScopeChooser(

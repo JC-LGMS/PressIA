@@ -2075,9 +2075,11 @@ private fun highlightTerm(text: String, term: String): AnnotatedString {
  */
 private val ABOUT_TOPICS = listOf(
     AboutTopic(
-        "Comptes : Feedly, Inoreader, flux locaux",
+        "Comptes : Feedly, Inoreader, FreshRSS, flux locaux",
         "Feedly et Inoreader se connectent sur leur page officielle intégrée (le jeton ou le cookie de " +
-            "session est repris automatiquement), et les flux RSS/Atom saisis à la main restent dans PressIA " +
+            "session est repris automatiquement), FreshRSS par l'adresse de son serveur avec un " +
+            "identifiant et un mot de passe (l'API Google Reader du serveur doit être active), et les " +
+            "flux RSS/Atom saisis à la main restent dans PressIA " +
             "sans compte (HTTP accepté comme HTTPS, un serveur qui répond 5xx ou 429 est retenté une fois, et " +
             "le flux prend le nom que son fichier annonce). Plusieurs comptes coexistent, l'actif est " +
             "synchronisé en premier ; reconnecter le " +

@@ -308,8 +308,27 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
  * (`markSaved` / `markUnsaved`), et le tableau redescend à la synchronisation. Les favoris des
  * autres flux restent un état local de l'application.
  */
-class InoreaderProvider(private val api: InoreaderService = InoreaderService.create()) : FeedProvider {
-    override val id = "inoreader"
+open class InoreaderProvider(private val api: InoreaderService = InoreaderService.create()) : FeedProvider {
+    open override val id = "inoreader"
+
+    /**
+     * Service d'API du compte.
+     *
+     * Inoreader a un serveur unique, donc un service unique. FreshRSS ([FreshRssProvider])
+     * hérite de tout ce fournisseur et remplace seulement cette fabrique : le sien dépend de
+     * l'adresse du serveur, que porte le jeton du compte.
+     */
+    protected open fun apiFor(token: String?): InoreaderService = api
+
+    /**
+     * Identifiant de flux tel qu'il part dans le **chemin** de `stream/contents/…`.
+     *
+     * L'API Google Reader attend cet identifiant encodé (`feed%2Fhttp%3A%2F%2F…`), mais le
+     * chemin Retrofit est déclaré `encoded = true` : la valeur brute part telle quelle, et
+     * Inoreader l'accepte (vérifié en direct). FreshRSS, lui, découpe le chemin sur les barres :
+     * son fournisseur encode donc lui-même (voir [FreshRssProvider.streamPath]).
+     */
+    protected open fun streamPath(stream: String): String = stream
 
     /**
      * En-têtes d'authentification d'un compte Inoreader.
@@ -320,7 +339,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
      * exactement ce que fait l'extension officielle du navigateur, et l'API l'accepte tel
      * quel sur tous les endpoints `reader/api/0/`.
      */
-    private fun headers(token: String?): Map<String, String> = when (val a = inoreaderAuth(token)) {
+    protected open fun headers(token: String?): Map<String, String> = when (val a = inoreaderAuth(token)) {
         is InoreaderAuth.OAuth -> mapOf("Authorization" to inoreaderAuthHeader(a.token))
         is InoreaderAuth.WebCookie -> mapOf("Cookie" to a.cookie)
         null -> emptyMap()
@@ -361,12 +380,12 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     }
 
     override suspend fun categories(token: String?): List<CategoryEntity> {
-        val tags = call(token) { h -> api.tags(h) }
+        val tags = call(token) { h -> apiFor(token).tags(h) }
         return tags.tags.filter { it.id.contains("label/") || it.id.contains("folder/") }
             .map { CategoryEntity(id = it.id, label = it.label ?: it.id.substringAfterLast("/"), provider = id) }
     }
     override suspend fun subscriptions(token: String?): List<SubscriptionEntity> {
-        val l = call(token) { h -> api.subs(h) }
+        val l = call(token) { h -> apiFor(token).subs(h) }
         return l.subscriptions.map {
             SubscriptionEntity(id = it.id, title = it.title, url = it.url.orEmpty(), siteUrl = it.htmlUrl.orEmpty(),
                 categoryId = it.categories.firstOrNull()?.id, iconUrl = it.iconUrl, provider = id)
@@ -376,21 +395,21 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val stream = feedId ?: categoryId ?: "user/-/state/com.google/reading-list"
         // `newerThanMs` ignoré : l'équivalent Reader API (`nt`) n'est pas vérifié en live
         // (unité/sémantique incertaines) — le filtre par date reste client, comme avant.
-        val s = call(token) { h -> api.stream(h, stream, n = max.coerceIn(1, 200), cont = continuation) }
+        val s = call(token) { h -> apiFor(token).stream(h, streamPath(stream), n = max.coerceIn(1, 200), cont = continuation) }
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
     /** Jeton CSRF de la session, cherché avec le même en-tête que l'appel qu'il protège. */
-    private suspend fun csrf(h: Map<String, String>): String =
-        try { api.token(h).string().trim() } catch (_: Exception) { "" }
+    private suspend fun csrf(token: String?, h: Map<String, String>): String =
+        try { apiFor(token).token(h).string().trim() } catch (_: Exception) { "" }
 
     private suspend fun tag(token: String?, ids: List<String>, add: String?, remove: String?) {
         if (ids.isEmpty()) return
         call(token) { h ->
             // Il vaut pour la session : le redemander à chaque article doublait les requêtes
             // (un GET token + un POST edit-tag par article).
-            val t = csrf(h)
+            val t = csrf(token, h)
             // `i` est répétable : tout un lot de la file part en un seul appel.
-            ids.distinct().chunked(TAG_BATCH).forEach { api.editTag(h, it, add, remove, t) }
+            ids.distinct().chunked(TAG_BATCH).forEach { apiFor(token).editTag(h, it, add, remove, t) }
         }
     }
     override suspend fun markRead(t: String?, ids: List<String>) = tag(t, ids, READ_STATE, null)
@@ -421,7 +440,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         var cont: String? = null
         do {
             val page = call(token) { h ->
-                api.itemsIds(h, stream, n = MARK_ALL_PAGE, cont = cont, xt = READ_STATE)
+                apiFor(token).itemsIds(h, stream, n = MARK_ALL_PAGE, cont = cont, xt = READ_STATE)
             }
             ids += page.itemRefs.map { it.id }
             val next = page.continuation
@@ -439,7 +458,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     override suspend fun markUnsaved(token: String?, articleIds: List<String>) =
         tag(token, articleIds, null, SAVED_STATE)
     override suspend fun profile(token: String?): String? {
-        val u = call(token) { h -> api.userInfo(h) }
+        val u = call(token) { h -> apiFor(token).userInfo(h) }
         return listOfNotNull(u.userName?.takeIf { it.isNotBlank() }, u.userEmail?.takeIf { it.isNotBlank() })
             .joinToString(" · ").takeIf { it.isNotBlank() }
     }
@@ -484,21 +503,21 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
     /**
      * Identifiant distant stable (voir l'interface) : `userId` du profil Inoreader. */
     override suspend fun userId(token: String?): String =
-        runCatching { call(token) { h -> api.userInfo(h) }.userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
+        runCatching { call(token) { h -> apiFor(token).userInfo(h) }.userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
-        call(token) { h -> api.unreadCount(h) }.unreadcounts.sumOf { it.count }
+        call(token) { h -> apiFor(token).unreadCount(h) }.unreadcounts.sumOf { it.count }
     }.getOrNull()
     /** Non-lus par flux (`unread-count` donne aussi le détail par flux). */
     override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
-        call(token) { h -> api.unreadCount(h) }.unreadcounts.associate { it.id to it.count }
+        call(token) { h -> apiFor(token).unreadCount(h) }.unreadcounts.associate { it.id to it.count }
     }.getOrNull()
     /** Étoiles du compte (« Starred items » chez Inoreader, son « Read later »), paginées. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
         while (true) {
-            val s = call(token) { h -> api.stream(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
+            val s = call(token) { h -> apiFor(token).stream(h, streamPath(SAVED_STATE), n = max.coerceIn(1, 200), cont = cont) }
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
@@ -516,7 +535,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         val ids = HashSet<String>()
         var cont: String? = null
         while (true) {
-            val page = call(token) { h -> api.itemsIds(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
+            val page = call(token) { h -> apiFor(token).itemsIds(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
             if (page.itemRefs.isEmpty()) break
             page.itemRefs.mapTo(ids) { it.id }
             val next = page.continuation
@@ -536,7 +555,7 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
-            val s = call(token) { h -> api.stream(h, "user/-/state/com.google/reading-list", n = 1000, cont = cont, xt = READ_STATE) }
+            val s = call(token) { h -> apiFor(token).stream(h, streamPath("user/-/state/com.google/reading-list"), n = 1000, cont = cont, xt = READ_STATE) }
             if (s.items.isEmpty()) { complete = true; break }
             s.items
                 .filter { !it.categories.contains(READ_STATE) && publishedMs(it.published) >= cutoff }
@@ -571,6 +590,49 @@ class InoreaderProvider(private val api: InoreaderService = InoreaderService.cre
             // l'abonnement (tableau « à lire plus tard », flux supprimé depuis).
             feedTitle = origin?.title.orEmpty())
     }
+}
+
+/**
+ * Provider FreshRSS : l'API Google Reader d'un serveur **auto-hébergé**.
+ *
+ * Tout le travail (dossiers, abonnements, articles, lu/non-lu, étoiles, marquage de masse,
+ * compteurs, profil) est celui d'Inoreader — mêmes endpoints, mêmes réponses. Deux choses
+ * changent, et c'est tout ce que cette classe remplace :
+ * - le **serveur**, que porte le jeton du compte (`freshrss|<serveur>|<auth>`) : un service
+ *   Retrofit par serveur, mis en cache ;
+ * - l'**authentification** : un simple `Authorization: GoogleLogin auth=…` — pas de cookie de
+ *   session web (la connexion se fait par identifiant et mot de passe, voir [FreshRss.login])
+ *   et pas d'authentification applicative (`AppId`/`AppKey`, propres à Inoreader).
+ *
+ * L'étoile PressIA est l'étiquette `starred` de FreshRSS, ses « favoris » — voir
+ * [providerUsesSaved].
+ */
+class FreshRssProvider : InoreaderProvider() {
+    override val id = "freshrss"
+
+    /** Un service par serveur : l'adresse d'un FreshRSS est propre à chaque compte. */
+    private val services = java.util.concurrent.ConcurrentHashMap<String, InoreaderService>()
+
+    override fun headers(token: String?): Map<String, String> =
+        freshrssAuth(token)?.let { mapOf("Authorization" to inoreaderAuthHeader(it.token)) }
+            ?: emptyMap()
+
+    override fun apiFor(token: String?): InoreaderService {
+        val base = freshrssAuth(token)?.baseUrl ?: return super.apiFor(token)
+        return services.getOrPut("$base/api/greader.php/") {
+            InoreaderService.create("$base/api/greader.php/", appAuth = false)
+        }
+    }
+
+    /**
+     * FreshRSS découpe le chemin sur les barres : l'identifiant d'un flux
+     * (`feed/http://…/rss`) doit donc y arriver encodé, comme le veut l'API Google Reader.
+     */
+    override fun streamPath(stream: String): String =
+        java.net.URLEncoder.encode(stream, "UTF-8").replace("+", "%20")
+
+    /** Rien à capturer : FreshRSS ne se connecte pas par une session web dans l'application. */
+    override suspend fun verifyWebSession(tokens: List<String>): WebSession? = null
 }
 
 /** Provider 100 % local : N flux RSS/Atom saisis par l'utilisateur, sans cloud. */

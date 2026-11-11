@@ -48,6 +48,7 @@ data class CloudAccount(
 fun serviceLabel(service: String): String = when (service) {
     "feedly" -> "Feedly"
     "inoreader" -> "Inoreader"
+    "freshrss" -> "FreshRSS"
     else -> "Compte"
 }
 

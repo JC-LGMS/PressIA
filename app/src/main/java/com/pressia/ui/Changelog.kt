@@ -47,6 +47,26 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.10",
+        listOf(
+            ChangelogItem(
+                "2026-11-12",
+                "FreshRSS : serveur personnel pris en charge",
+                "- Un troisième agrégateur : FreshRSS, auto-hébergé. Il se connecte par l'adresse " +
+                    "de son serveur, un identifiant et un mot de passe (Comptes → Se connecter à " +
+                    "un serveur FreshRSS), échangés contre le jeton de son API Google Reader — " +
+                    "qui doit être active pour l'utilisateur ; le mot de passe n'est pas conservé. " +
+                    "Tout le reste est commun avec Inoreader : dossiers, abonnements, articles, " +
+                    "lu/non-lu poussé, marquage de masse réversible, miniatures et images, " +
+                    "réconciliation, session expirée signalée avec retour sur Comptes. L'étoile " +
+                    "PressIA écrit dans les favoris du serveur, et l'écran Favoris gagne " +
+                    "l'ensemble « Favoris - FreshRSS ». Un serveur sans certificat se saisit avec " +
+                    "« http:// » devant l'adresse.",
+                time = "00:54"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.9",
         listOf(
             ChangelogItem(

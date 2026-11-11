@@ -21,6 +21,10 @@ import com.pressia.data.remote.LocalRssFetcher
 import com.pressia.data.remote.isSupportedFeedUrl
 import com.pressia.data.remote.sanitizeFeedUrl
 import com.pressia.data.mergeIncomingArticle
+import com.pressia.data.serviceLabel
+import com.pressia.data.remote.freshRssBaseUrl
+import com.pressia.data.remote.freshRssToken
+import com.pressia.data.remote.freshrssAuth
 import com.pressia.data.OpmlFeed
 import com.pressia.data.buildOpml
 import com.pressia.data.escapeXml
@@ -1976,5 +1980,37 @@ class PressLogicTest {
         assertTrue(com.pressia.ui.termRanges("OPML", "rss").isEmpty())
         // Un terme qui chevaucherait sa propre repetition n'est pas compte deux fois.
         assertEquals(listOf(0 until 2), com.pressia.ui.termRanges("aaa", "aa"))
+    }
+
+    @Test fun `freshrss adresse du serveur et jeton du compte`() {
+        // Le schema manque souvent a la saisie : on l'ajoute.
+        assertEquals("https://freshrss.exemple.org", freshRssBaseUrl("freshrss.exemple.org"))
+        // Barres de fin, adresse complete des reglages, casse du schema : meme serveur.
+        assertEquals("https://freshrss.exemple.org", freshRssBaseUrl("https://freshrss.exemple.org/"))
+        assertEquals("https://freshrss.exemple.org", freshRssBaseUrl(" https://freshrss.exemple.org/api/greader.php/ "))
+        assertEquals("http://10.0.2.2:8898", freshRssBaseUrl("http://10.0.2.2:8898/"))
+        // Un autre protocole ou une adresse vide ne menent nulle part.
+        assertEquals("", freshRssBaseUrl("ftp://freshrss.exemple.org"))
+        assertEquals("", freshRssBaseUrl("https://"))
+        assertEquals("", freshRssBaseUrl("   "))
+        // Le jeton stocke porte le serveur : relu, il redonne les deux morceaux.
+        val stored = freshRssToken("freshrss.exemple.org/", "jc/abc=123")
+        assertEquals("freshrss|https://freshrss.exemple.org|jc/abc=123", stored)
+        assertEquals("https://freshrss.exemple.org", freshrssAuth(stored)?.baseUrl)
+        assertEquals("jc/abc=123", freshrssAuth(stored)?.token)
+        // Jeton d'un autre service, ou morceau manquant : illisible, jamais devine.
+        assertEquals(null, freshrssAuth("cookie:al=xyz"))
+        assertEquals(null, freshrssAuth("freshrss|https://freshrss.exemple.org|"))
+        assertEquals(null, freshrssAuth("freshrss||abc"))
+        assertEquals(null, freshrssAuth(null))
+    }
+
+    @Test fun `freshrss est un agregateur a part entiere`() {
+        // Libelle du compte, etoile poussee au serveur (etiquette `starred` = ses favoris).
+        assertEquals("FreshRSS", serviceLabel("freshrss"))
+        assertTrue(providerUsesSaved("freshrss"))
+        assertTrue(providerUsesSaved("freshrss#1f526b58"))
+        // Pas de marquage lu automatique cote serveur : l'etat local reste fiable sans borne.
+        assertEquals(null, com.pressia.data.remote.autoReadAgeMs("freshrss"))
     }
 }
