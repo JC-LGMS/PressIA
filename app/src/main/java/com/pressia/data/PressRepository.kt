@@ -243,6 +243,14 @@ sealed interface LocalFeedAdd {
     data object InvalidUrl : LocalFeedAdd
 }
 
+/** Compte rendu d'un import OPML : ce qui est entré, ce qui était déjà là, ce qui a été refusé. */
+data class OpmlImport(
+    val added: Int,
+    val existing: Int,
+    val invalid: Int,
+    val folders: Int
+)
+
 /**
  * Cibles d'un segment de « tout marquer lu » : les flux listés, et/ou tout le compte.
  *
@@ -3236,6 +3244,65 @@ class PressRepository(
         // l'application sur la clé étrangère.
         if (folderId != null) moveFeedsToFolder(listOf(link), folderId)
         LocalFeedAdd.Added(link)
+    }
+
+    /**
+     * Importe un fichier OPML : chaque flux devient un abonnement RSS **local**, rangé dans son
+     * dossier (créé s'il n'existe pas). Un flux déjà abonné — chez un compte aussi bien que dans
+     * les flux locaux, l'identifiant d'un abonnement de compte portant son URL (`feed/…`) — est
+     * laissé tel quel : ni déplacé, ni resynchronisé, comme à la saisie à la main. Sans cela,
+     * importer l'export d'un service déjà connecté créait un flux local en double de chacun de
+     * ses abonnements. Les articles n'arrivent pas ici : la synchro qui suit les récupère.
+     */
+    suspend fun importOpml(xml: String): OpmlImport = withContext(Dispatchers.IO) {
+        val feeds = parseOpml(xml)
+        require(feeds.isNotEmpty()) { "aucun flux dans ce fichier" }
+        val known = dao.subscriptions().filter { it.id.contains("://") }
+            .map { feedUrlKey(it.id) }.toMutableSet()
+        val folders = mutableMapOf<String, String?>()
+        var created = 0
+        var added = 0
+        var existing = 0
+        var invalid = 0
+        for (f in feeds) {
+            val link = sanitizeFeedUrl(f.url)
+            if (link.isEmpty() || !isSupportedFeedUrl(link)) {
+                invalid++
+                continue
+            }
+            if (!known.add(feedUrlKey(link))) {
+                existing++
+                continue
+            }
+            dao.upsertSubscriptions(
+                listOf(
+                    SubscriptionEntity(
+                        id = link, title = f.title ?: link, url = link, siteUrl = link,
+                        provider = LOCAL_PROVIDER
+                    )
+                )
+            )
+            val folder = f.folder?.takeIf { it.isNotBlank() }
+            if (folder != null) {
+                val id = folders.getOrPut(folder.lowercase()) {
+                    localMirror(folder).also { if (it != null) created++ }
+                }
+                if (id != null) moveFeedsToFolder(listOf(link), id)
+            }
+            added++
+        }
+        OpmlImport(added = added, existing = existing, invalid = invalid, folders = created)
+    }
+
+    /**
+     * Flux RSS locaux au format OPML, dossiers compris. Les abonnements d'un compte n'y sont
+     * pas : ils appartiennent au service, qui sait déjà les exporter, et les réimporter ici
+     * créerait des flux locaux en double.
+     */
+    suspend fun exportOpml(): String = withContext(Dispatchers.IO) {
+        val cats = dao.categories().filter { isLocalProvider(it.provider) }.associateBy { it.id }
+        val subs = dao.subscriptions().filter { isLocalProvider(it.provider) }
+        buildOpml(subs.map { OpmlFeed(it.id, it.title, it.categoryId?.let(cats::get)?.label) })
     }
 
     /**

@@ -997,6 +997,17 @@ les autres (chaque point a coûté un bug quand il manquait).
   courante). Un fichier sans champ vaut la version 1. Le numéro ne s'incrémente que pour un
   changement **incompatible** — tant que le format ne fait que s'ajouter, l'ancien import lit le
   reste.
+- **OPML (écran Sauvegarde/Restauration, `data/Opml.kt`)** : import et export des **flux locaux**
+  seulement, dossiers compris. Les abonnements d'un compte appartiennent au service, qui sait déjà
+  les exporter ; les réimporter ici créerait des flux locaux en double. `parseOpml` retient tout
+  `outline` porteur d'un `xmlUrl` (`xmlurl` en minuscules dans de vieux exports), un outline sans
+  adresse étant un dossier — et seul le **parent immédiat** compte, PressIA n'ayant qu'un niveau.
+  L'import nettoie l'adresse (`sanitizeFeedUrl` + `isSupportedFeedUrl`), dédoublonne par
+  `feedUrlKey` sur **tous** les abonnements — l'identifiant d'un abonnement de compte porte son URL
+  (`feed/https://…`, la clé en sort identique), donc réimporter l'export d'un service connecté ne
+  crée aucun doublon — puis crée les dossiers par `localMirror` et range par `moveFeedsToFolder` ;
+  le titre du fichier est gardé. `buildOpml` échappe les valeurs (`&` d'abord), et la lecture est
+  plafonnée (`MAX_OPML_BYTES`, 2 Mo).
 - **Rappel de sauvegarde, au plus une fois par mois** (`backupReminderDue`, `Backup.kt` ; modale
   « Pense à sauvegarder » de `MainActivity`, posée par `PressVM.maybeRemindBackup` au retour au
   premier plan) : il paraît quand des réglages ont changé depuis la **référence** (dernier export

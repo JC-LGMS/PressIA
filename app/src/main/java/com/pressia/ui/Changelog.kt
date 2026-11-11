@@ -47,6 +47,25 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.8",
+        listOf(
+            ChangelogItem(
+                "2026-11-12",
+                "Import et export OPML des flux locaux",
+                "- L'écran Sauvegarde/Restauration importe et exporte un fichier OPML, le format " +
+                    "d'échange des abonnements RSS (Feedly, Inoreader, FreshRSS). Chaque flux du " +
+                    "fichier devient un flux local, rangé dans son dossier — créé au besoin — et " +
+                    "sa première synchronisation suit l'import. Un flux déjà abonné — chez un " +
+                    "compte comme en local, même écrit autrement — est laissé tel quel et compté, " +
+                    "si bien que réimporter l'export d'un service connecté ne crée aucun doublon. " +
+                    "L'export écrit les flux locaux groupés par dossier, avec les entités XML " +
+                    "échappées : les abonnements d'un compte n'y figurent pas, puisque le service " +
+                    "sait déjà les exporter.",
+                time = "00:02"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.7",
         listOf(
             ChangelogItem(

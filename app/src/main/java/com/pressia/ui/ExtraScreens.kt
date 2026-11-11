@@ -41,6 +41,7 @@ import android.hardware.SensorManager
 import kotlin.math.roundToInt
 import com.pressia.data.FailedImage
 import com.pressia.data.FeedSort
+import com.pressia.data.MAX_OPML_BYTES
 import com.pressia.data.Sections
 import com.pressia.data.StatsPeriod
 import com.pressia.data.dayLabelShort
@@ -50,6 +51,7 @@ import com.pressia.data.importJson
 import com.pressia.data.markBackupPoint
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.Prefs
+import com.pressia.data.readCapped
 import com.pressia.data.sortFeeds
 import com.pressia.ui.theme.toHex
 import kotlinx.coroutines.delay
@@ -1448,6 +1450,40 @@ fun BackupScreen(vm: PressVM) {
             }
         }
     }
+    val opmlExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/x-opml")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val written = writeBackupFile(ctx, uri, vm.repo.exportOpml().toByteArray())
+                backupMsg = "OPML exporté (${byteSizeText(written)})."
+                toast(ctx, "OPML exporté")
+            } catch (e: Exception) {
+                backupMsg = "Export OPML impossible : ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+    val opmlImportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val bytes = ctx.contentResolver.openInputStream(uri)
+                    ?.use { readCapped(it, MAX_OPML_BYTES) }
+                    ?: throw Exception("fichier illisible ou plus de 2 Mo")
+                val r = vm.repo.importOpml(bytes.toString(Charsets.UTF_8))
+                backupMsg = "OPML : ${r.added} flux ajouté(s), ${r.folders} dossier(s) créé(s)" +
+                    (if (r.existing > 0) ", ${r.existing} déjà abonné(s)" else "") +
+                    (if (r.invalid > 0) ", ${r.invalid} refusé(s)" else "") + "."
+                vm.refresh(); vm.loadAccount()
+                // Les nouveaux flux n'ont pas d'articles : la synchro qui suit les récupère.
+                if (r.added > 0) vm.sync()
+                toast(ctx, "OPML importé")
+            } catch (e: Exception) {
+                backupMsg = "Import OPML impossible : ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -1504,6 +1540,21 @@ fun BackupScreen(vm: PressVM) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ showExportDialog = true }) { Text("Sauvegarder…") }
             OutlinedButton({ showImportDialog = true }) { Text("Restaurer…") }
+        }
+        Text(
+            "OPML : la liste des flux RSS locaux, dossiers compris, au format des autres lecteurs " +
+                "(Feedly, Inoreader, FreshRSS). L'import crée des flux locaux ; les abonnements " +
+                "d'un compte restent chez lui.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button({ opmlImportLauncher.launch(arrayOf("text/x-opml", "text/xml", "application/xml", "*/*")) }) {
+                Text("Importer un OPML…")
+            }
+            OutlinedButton({
+                opmlExportLauncher.launch("pressia-flux-${stampNow()}.opml")
+            }) { Text("Exporter en OPML…") }
         }
         if (backupMsg.isNotBlank()) Text(backupMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     }
@@ -2131,7 +2182,11 @@ private val ABOUT_TOPICS = listOf(
             "sauvegardés : ceux des comptes sont re-créés par la synchronisation. En plus, la sauvegarde " +
             "Google du téléphone garde les réglages et les jetons de compte, mais jamais le contenu des " +
             "articles (trop lourd pour son quota) : flux locaux, favoris et lus sont recopiés dans un petit " +
-            "fichier, réécrit en arrière-plan et après chaque synchronisation."
+            "fichier, réécrit en arrière-plan et après chaque synchronisation. PressIA rappelle de " +
+            "sauvegarder au plus une fois par mois, et seulement si des réglages ont changé depuis la " +
+            "dernière sauvegarde. Un fichier OPML s'importe et s'exporte aussi : les flux locaux avec " +
+            "leurs dossiers, les abonnements d'un compte restant chez leur service (un flux déjà suivi " +
+            "n'est pas dupliqué)."
     ),
     AboutTopic(
         "Cache, favicons, déconnexion",

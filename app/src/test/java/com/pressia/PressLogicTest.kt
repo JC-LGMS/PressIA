@@ -21,6 +21,10 @@ import com.pressia.data.remote.LocalRssFetcher
 import com.pressia.data.remote.isSupportedFeedUrl
 import com.pressia.data.remote.sanitizeFeedUrl
 import com.pressia.data.mergeIncomingArticle
+import com.pressia.data.OpmlFeed
+import com.pressia.data.buildOpml
+import com.pressia.data.escapeXml
+import com.pressia.data.parseOpml
 import com.pressia.data.remote.INOREADER_COOKIE_PREFIX
 import com.pressia.data.remote.InoreaderAuth
 import com.pressia.data.remote.inoreaderAuth
@@ -239,6 +243,10 @@ class PressLogicTest {
         assertEquals(ref, com.pressia.data.remote.feedUrlKey("https://WWW.MiniMachines.NET/FEED"))
         // Le chemin, lui, reste distinct : deux flux peuvent cohabiter sur le même hôte.
         assertNotEquals(ref, com.pressia.data.remote.feedUrlKey("https://www.minimachines.net/actu/feed"))
+        // Un abonnement de compte porte son URL derrière « feed/ » : la même clé en sort, ce qui
+        // fait qu'un OPML réimporté ne double pas un flux déjà suivi chez un agrégateur.
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("feed/https://www.minimachines.net/feed"))
+        assertEquals(ref, com.pressia.data.remote.feedUrlKey("feed/http://www.minimachines.net/feed/"))
     }
     @Test fun `atom youtube - miniature et description dans media group`() {
         // YouTube niche ses médias dans `media:group` : le parcours des enfants directs ne les
@@ -1920,5 +1928,44 @@ class PressLogicTest {
         assertFalse(providerUsesSaved("local"))
         assertFalse(providerUsesSaved(""))
         assertFalse(providerUsesSaved(null))
+    }
+
+    @Test fun `opml aller-retour avec dossiers et caracteres speciaux`() {
+        val feeds = listOf(
+            OpmlFeed("https://a.example/feed?a=1&b=2", "A & B \"cite\"", "Actualites"),
+            OpmlFeed("https://b.example/rss", "Sans dossier", null),
+            OpmlFeed("https://c.example/atom", "Techno", "Techno & co")
+        )
+        val parsed = parseOpml(buildOpml(feeds, "Mes flux & plus"))
+        // Meme ordre, memes noms, memes dossiers : le fichier est relu comme il a ete ecrit.
+        assertEquals(feeds, parsed)
+        // Les entites sont bien echappees dans le fichier lui-meme.
+        assertTrue(buildOpml(feeds).contains("A &amp; B &quot;cite&quot;"))
+    }
+
+    @Test fun `opml dossier imbrique retient le plus proche et ignore le reste`() {
+        val xml = """<?xml version="1.0"?>
+            <opml version="1.0"><body>
+              <outline text="Parent">
+                <outline text="Enfant">
+                  <outline text="Flux" xmlUrl="https://x.example/feed" htmlUrl="https://x.example"/>
+                </outline>
+              </outline>
+              <outline text="Direct" xmlurl="https://y.example/feed"/>
+              <outline text="Dossier vide"/>
+            </body></opml>"""
+        // PressIA n'a qu'un niveau : le dossier retenu est le parent immediat, et un outline
+        // sans xmlUrl n'est pas un flux (dossier vide compris).
+        assertEquals(
+            listOf(
+                OpmlFeed("https://x.example/feed", "Flux", "Enfant"),
+                OpmlFeed("https://y.example/feed", "Direct", null)
+            ),
+            parseOpml(xml)
+        )
+        // Fichier sans flux, ou pas un OPML du tout : liste vide, que l'appelant annonce.
+        assertTrue(parseOpml("<opml><body><outline text=\"rien\"/></body></opml>").isEmpty())
+        assertTrue(parseOpml("").isEmpty())
+        assertEquals("a &amp; &lt;b&gt; &quot;c&quot; &apos;d&apos;", escapeXml("a & <b> \"c\" 'd'"))
     }
 }
