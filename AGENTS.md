@@ -98,10 +98,11 @@ Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assembl
 - **Évolution abandonnée** après l'incrément (tout annulé) : rendre `version.properties` au
   commité (`git restore version.properties`) puis recompiler ; sinon le fichier porte un numéro
   pour un changement qui n'existe pas.
-- **Ce que l'application affiche** : « Version installée : 1.0.21 (2026-11-03 00:03) ». Le numéro
-  vient du `PackageManager`, la date de `BuildConfig.BUILD_TIME` — donc du **build de l'APK**, pas
-  du commit. Un APK construit avant la dernière édition montre une date plus ancienne, et c'est ce
-  qui le trahit.
+- **Ce que l'application affiche** : « v1.6 (2026-11-11 23:04) » sous le tiroir et sur l'écran À
+  propos (le journal, lui, n'a plus d'en-tête : il s'ouvre sur le décompte des changements). Le
+  numéro vient du `PackageManager`, la date de `BuildConfig.BUILD_TIME` — donc du **build de
+  l'APK**, pas du commit. Un APK construit avant la dernière édition montre une date plus
+  ancienne, et c'est ce qui le trahit.
 - **Journal des modifications** (`ui/Changelog.kt`, écran `ChangelogScreen`) : ouvert en touchant
   le numéro de version avec sa date de build, en bas du tiroir ou sur l'écran À propos. **À
   chaque commit qui touche l'application, ajouter un `ChangelogItem`** (date, heure du commit,
