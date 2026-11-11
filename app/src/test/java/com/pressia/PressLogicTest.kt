@@ -12,6 +12,7 @@ import com.pressia.data.local.MAX_ARTICLE_HTML
 import com.pressia.data.local.capArticleHtml
 import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.OAuth
+import okhttp3.ResponseBody.Companion.toResponseBody
 import com.pressia.data.remote.feedlyGlobalStream
 import com.pressia.data.remote.feedlyMarkAllMarkers
 import com.pressia.data.remote.reconcileUnchanged
@@ -431,7 +432,7 @@ class PressLogicTest {
         assertEquals("GoogleLogin auth=abc123", inoreaderAuthHeader("abc123"))
     }
     private fun httpError(code: Int): retrofit2.HttpException {
-        val body = okhttp3.ResponseBody.create(null, "")
+        val body = "".toResponseBody(null)
         return retrofit2.HttpException(retrofit2.Response.error<String>(code, body))
     }
     @Test fun `echec auth detecte 401 et 403`() {
@@ -452,7 +453,7 @@ class PressLogicTest {
             .apply { headers.forEach { (name, value) -> header(name, value) } }
             .build()
         return retrofit2.HttpException(
-            retrofit2.Response.error<String>(okhttp3.ResponseBody.create(null, ""), raw)
+            retrofit2.Response.error<String>("".toResponseBody(null), raw)
         )
     }
 
@@ -1003,6 +1004,28 @@ class PressLogicTest {
         assertFalse("last_sync_at ne doit pas être réimportable", "last_sync_at" in entryNames())
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
+    }
+
+    @Test fun `sauvegarde d'un format plus recent refusee`() {
+        // Un fichier écrit par une version future : refusé, plutôt que restauré en moins sans
+        // rien dire (sections et clés inconnues ignorées). Le message nomme les deux versions.
+        val futur = org.json.JSONObject()
+            .put("backupVersion", com.pressia.data.BACKUP_VERSION + 1)
+            .put("appVersionName", "1.9")
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            com.pressia.data.checkBackupFormat(futur)
+        }
+        assertTrue(e.message!!.contains("1.9"))
+        assertTrue(e.message!!.contains(com.pressia.BuildConfig.VERSION_NAME))
+        // Sans version d'auteur (fichier trafiqué), le message le dit au lieu de mentir.
+        val anonyme = org.json.JSONObject().put("backupVersion", com.pressia.data.BACKUP_VERSION + 1)
+        val e2 = assertThrows(IllegalArgumentException::class.java) {
+            com.pressia.data.checkBackupFormat(anonyme)
+        }
+        assertTrue(e2.message!!.contains("inconnue"))
+        // Le format courant passe, et l'absence de champ vaut 1 (fichiers d'avant le versionnage).
+        com.pressia.data.checkBackupFormat(org.json.JSONObject().put("backupVersion", com.pressia.data.BACKUP_VERSION))
+        com.pressia.data.checkBackupFormat(org.json.JSONObject())
     }
 
     @Test fun `favoris restaures additionnes entre deux imports`() {
@@ -1698,6 +1721,15 @@ class PressLogicTest {
         assertTrue(n1.endsWith(".jpg"))
         // SHA-1 hexadécimal : pas de séparateur, pas de casse ambiguë.
         assertTrue(n1.dropLast(4).matches(Regex("[0-9a-f]{40}")))
+        // Une image transparente est rangée en PNG : même empreinte, autre extension, et les deux
+        // noms sont proposés (le cache doit retrouver l'un comme l'autre).
+        val png = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg", "png")
+        assertTrue(png.endsWith(".png"))
+        assertEquals(n1.dropLast(4), png.dropLast(4))
+        assertEquals(
+            listOf(n1, png),
+            com.pressia.data.local.ThumbStore.thumbFileNames("https://ex.com/a.jpg")
+        )
     }
 
     @Test fun `sous-echantillonnage cale dans le gabarit`() {

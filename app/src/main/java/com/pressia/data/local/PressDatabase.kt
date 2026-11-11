@@ -283,6 +283,10 @@ interface PressDao {
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
+    /** Oublie le marquage « Read later » d'un service supprimé (compte retiré) : sans cela les
+     *  articles d'un autre flux gardaient le marquage et restaient dans les Favoris. */
+    @Query("UPDATE articles SET laterSaved = 0, laterProvider = '' WHERE laterProvider = :provider")
+    suspend fun clearLaterOf(provider: String)
     /** Provenance du « Read later » (voir [ArticleEntity.laterProvider]) pour les articles importés. */
     @Query("UPDATE articles SET laterProvider = :provider WHERE id IN (:ids)")
     suspend fun setLaterProvider(ids: List<String>, provider: String)

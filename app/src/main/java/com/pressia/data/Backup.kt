@@ -32,7 +32,29 @@ object Sections {
     const val INCLUDE_TOKENS = "tokens"
 }
 
+/**
+ * Version du format du fichier de sauvegarde. **À n'incrémenter que pour un changement
+ * incompatible** : tant que le format ne fait que s'ajouter, l'ancien import lit ce qu'il connaît
+ * et ignore le reste (section inconnue, clé de préférence absente de `Prefs`, champ surnuméraire).
+ */
 const val BACKUP_VERSION = 1
+
+/**
+ * Refuse un fichier écrit par un format plus récent que celui que cette version sait lire : sans
+ * ce refus, une application plus ancienne restaurerait **silencieusement en moins** (sections et
+ * clés qu'elle ne connaît pas ignorées, rapport comptant seulement ce qui a été appliqué). Un
+ * fichier sans champ est d'avant le versionnage : version 1, comme lui. Le message remonte tel
+ * quel à l'écran Sauvegarde (« Import impossible : … ») et nomme les deux versions en présence,
+ * celle qui a écrit le fichier (`appVersionName`, mis à l'export) et celle qui le refuse.
+ */
+fun checkBackupFormat(root: JSONObject) {
+    val format = root.optInt("backupVersion", 1)
+    require(format <= BACKUP_VERSION) {
+        val author = root.optString("appVersionName").takeIf { it.isNotBlank() } ?: "inconnue"
+        "sauvegarde de la version $author (format $format) ; cette version-ci " +
+            "(${BuildConfig.VERSION_NAME}) ne sait pas la lire"
+    }
+}
 
 /**
  * Préférences tenant un secret (mots de passe d'API) : jamais exportées / restaurées
@@ -235,6 +257,7 @@ suspend fun PressRepository.restaurationJson(
 ): ImportReport = withContext(Dispatchers.IO) {
     val dao = db.dao()
     val root = JSONObject(json)
+    checkBackupFormat(root)
     val hasTokens = root.optBoolean("tokens", false)
     var report = ImportReport()
 

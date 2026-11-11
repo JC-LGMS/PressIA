@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -50,6 +49,103 @@ fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
         "1.6",
         listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Journal des modifications : en-tête allégé",
+                "- La page s'ouvre directement sur le décompte des changements : le titre, la " +
+                    "version installée avec sa date de build et le rappel « Toucher le numéro de " +
+                    "version… » sont retirés. La version reste accessible là où on la touchait " +
+                    "(bas du tiroir, écran À propos), et le décompte des changements est toujours " +
+                    "en tête de page.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Sauvegarde : un fichier d'un format plus récent est refusé",
+                "- Le fichier de sauvegarde porte depuis toujours sa version de format " +
+                    "(« backupVersion »), mais personne ne la lisait : une version ancienne de " +
+                    "l'application restaurait un fichier récent en silence et en moins, les " +
+                    "sections et les réglages qu'elle ne connaît pas étant simplement ignorés. " +
+                    "Le format est maintenant vérifié à l'ouverture : au-delà de ce que cette " +
+                    "version sait lire, l'import est refusé avec un message clair plutôt que " +
+                    "partiellement appliqué, et ce message nomme la version qui a écrit le " +
+                    "fichier comme la version courante (« sauvegarde de la version 1.9 " +
+                    "(format 2) ; cette version-ci (1.6) ne sait pas la lire »). Un fichier sans " +
+                    "ce champ reste accepté (ceux d'avant " +
+                    "le versionnage valent la version 1). La copie automatique, elle, n'est " +
+                    "simplement pas réimportée. Rien ne change pour les fichiers au format courant.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Avertissements de compilation corrigés",
+                "- Les trente avertissements du compilateur sont traités : icônes déplacées vers leurs " +
+                    "variantes « AutoMirrored » (flèche de retour, Readability, liste, annuler, " +
+                    "ouvrir dans un navigateur, déplacer vers un dossier) — elles se retournent d'elles-" +
+                    "mêmes en lecture droite-à-gauche —, `KeyboardOptions` construit avec " +
+                    "`autoCorrectEnabled`, `LocalLifecycleOwner` lu depuis `lifecycle-runtime-compose` " +
+                    "et opt-in déclaré là où le code emploie volontairement une API expérimentale " +
+                    "(cache disque de Coil, `flatMapLatest`). Une condition devenue toujours vraie " +
+                    "dans le plein écran vidéo est retirée. Rien ne change à l'écran.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Miniatures orphelines : nettoyage à chaque synchronisation",
+                "- Les fichiers de `filesDir/thumbs` qu'aucun article ne réclame (image du flux " +
+                    "remplacée, passe de téléchargement interrompue, article retiré hors des chemins " +
+                    "qui purgeaient déjà) s'accumulaient jusqu'au prochain dépassement de quota. " +
+                    "`gcThumbs()` passe désormais à la fin de chaque synchronisation, une fois la " +
+                    "table des articles à jour, et le journal dit combien de fichiers il a retirés. " +
+                    "Mesuré au premier passage : 10 fichiers.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Suppression d'un compte : ses favoris partent avec lui",
+                "- Les articles du tableau « Read later » d'un compte supprimé gardaient le marquage " +
+                    "du service : ceux d'un flux encore abonné (autre compte, flux local) restaient " +
+                    "dans « Tous les favoris », et le jeu du service disparaissait du sélecteur " +
+                    "faute de compte — ils n'étaient donc plus atteignables nulle part. La " +
+                    "suppression du compte efface maintenant le marquage de son service " +
+                    "(`clearLaterOf`). Vérifié sur une copie de la base : 20 favoris → 18, les deux " +
+                    "articles Inoreader retirés.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Miniatures : les images transparentes gardent leur PNG",
+                "- Une image dont les pixels sont vraiment transparents (logos, illustrations) est " +
+                    "maintenant enregistrée en PNG au lieu d'être aplatie sur fond blanc en JPEG ; " +
+                    "les autres restent en JPEG — une photo livrée en PNG RGBA opaque pèserait dix " +
+                    "fois plus. Les deux extensions cohabitent dans le cache (`<empreinte>.jpg` ou " +
+                    "`.png`) : recherche et nettoyage des orphelines connaissent les deux. Vérifié " +
+                    "sur l'émulateur avec un logo transparent servi en local : miniature « .png » de " +
+                    "264 octets ; un PNG opaque du même lot reste en « .jpg ».",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Balayage d'un article à l'autre : la suite des voisins se charge au besoin",
+                "- Les voisins du balayage s'arrêtaient au 400e article du périmètre alors que la " +
+                    "liste en affiche jusqu'à 2000 : passé cette borne, le geste annonçait « pas " +
+                    "d'article plus ancien » et revenait à la liste. En approchant du bout, la suite " +
+                    "est demandée (400 identifiants de plus, la requête ne lit que les " +
+                    "identifiants) jusqu'au plafond de la liste. Rien ne change dans les premiers " +
+                    "articles.",
+                time = "23:05"
+            ),
+            ChangelogItem(
+                "2026-11-11",
+                "Liste d'articles paginée : plus de plafond à 2000",
+                "- La liste charge désormais 200 articles puis la page suivante en approchant du " +
+                    "bas (flux principal comme Favoris), au lieu de tout charger d'un coup jusqu'à " +
+                    "2000. Une grosse bibliothèque tient donc en mémoire par tranches, et le " +
+                    "balayage d'un article à l'autre continue aussi loin que le périmètre va. " +
+                    "Changer de flux, de filtre non-lus ou de jeu de favoris repart de la première " +
+                    "page.",
+                time = "23:05"
+            ),
             ChangelogItem(
                 "2026-11-11",
                 "Vidéo : le lecteur ne se compose qu'à l'appui",
@@ -1146,13 +1242,11 @@ fun changelog(): List<ChangelogEntry> = listOf(
 )
 
 /**
- * Écran « Journal des modifications » : version courante (celle du build, avec sa date) puis,
- * version par version, les changements repris des messages de commit.
+ * Écran « Journal des modifications » : version par version, les changements repris des messages
+ * de commit. Pas d'en-tête : la page s'ouvre sur le décompte, puis les versions.
  */
 @Composable
 fun ChangelogScreen() {
-    val ctx = LocalContext.current
-    val version = remember { appVersionName(ctx) }
     // Journal (et son historique de 208 entrées) construit **à l'ouverture de cette page**, et
     // seulement retenu tant qu'elle est affichée : la liste repart à la fermeture, rien ne reste
     // en mémoire pour une page consultée une fois.
@@ -1163,31 +1257,13 @@ fun ChangelogScreen() {
     // les entrées du journal se citent souvent pour décrire une version.
     SelectableArea {
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp)) {
-            Text(
-                "Journal des modifications",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (version.isNullOrBlank()) "Version installée inconnue" else "Version installée : $version",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "$total changement(s) consigné(s), du plus récent au plus ancien",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Toucher le numéro de version (tiroir ou à propos) rouvre cette page.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            "$total changement(s) consigné(s), du plus récent au plus ancien",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp)
+        )
         HorizontalDivider()
         // La liste et sa barre de défilement partagent le même espace : la barre se pose au bord
         // droit, sur la marge que le contenu laisse libre (contentPadding de fin), sans masquer

@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -77,7 +77,7 @@ fun ScopeChoiceRow(entry: ScopeEntry, selected: Boolean, onClick: () -> Unit) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
             else -> Icon(
-                Icons.Filled.List, null, Modifier.size(18.dp),
+                Icons.AutoMirrored.Filled.List, null, Modifier.size(18.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

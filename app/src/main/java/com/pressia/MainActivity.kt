@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
             // la même porte, qui revérifie l'option et la fraîcheur (voir `syncOnLaunch`) ; la
             // minuterie prend le relais tant que l'écran reste visible, et s'arrête en
             // arrière-plan (`ON_PAUSE`) — l'app ne synchronise que lorsqu'elle est ouverte.
-            val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                     when (event) {

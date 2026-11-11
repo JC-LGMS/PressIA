@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -531,7 +532,7 @@ private fun AddFeedDialog(title: String, onDismiss: () -> Unit, onConfirm: (Stri
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                    autoCorrect = false
+                    autoCorrectEnabled = false
                 )
             )
         },
@@ -611,7 +612,7 @@ private fun SubRow(
                 )
                 DropdownMenuItem(
                     text = { Text("Déplacer vers un dossier") },
-                    leadingIcon = { Icon(Icons.Filled.DriveFileMove, null) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, null) },
                     onClick = { menu = false; onMove() }
                 )
                 DropdownMenuItem(

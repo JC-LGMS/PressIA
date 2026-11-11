@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import com.pressia.data.exceedsCap
 import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
@@ -106,11 +105,18 @@ object ThumbStore {
             .build()
     }
 
-    /** Nom de fichier déterministe pour une URL : testable sans Android. */
-    fun thumbFileName(url: String): String {
+    /**
+     * Nom de fichier déterministe pour une URL : testable sans Android. L'extension suit le
+     * format écrit : `.jpg` par défaut, `.png` quand l'image a de la transparence (le JPEG la
+     * perdrait).
+     */
+    fun thumbFileName(url: String, ext: String = "jpg"): String {
         val sha1 = MessageDigest.getInstance("SHA-1").digest(url.toByteArray(Charsets.UTF_8))
-        return sha1.joinToString("") { "%02x".format(it) } + ".jpg"
+        return sha1.joinToString("") { "%02x".format(it) } + "." + ext
     }
+
+    /** Les deux noms possibles d'une miniature (JPEG, ou PNG si l'image a de l'alpha). */
+    fun thumbFileNames(url: String): List<String> = listOf(thumbFileName(url), thumbFileName(url, "png"))
 
     /**
      * Facteur de sous-échantillonnage (puissance de 2) qui fait tenir une image source dans
@@ -144,9 +150,9 @@ object ThumbStore {
 
     fun fileFor(ctx: Context, url: String): File = File(dir(ctx), thumbFileName(url))
 
-    /** Fichier local si la miniature est déjà stockée, `null` sinon. */
+    /** Fichier local si la miniature est déjà stockée (JPEG, ou PNG transparent), `null` sinon. */
     fun cachedFile(ctx: Context, url: String): File? =
-        fileFor(ctx, url).takeIf { it.exists() }
+        thumbFileNames(url).firstNotNullOfOrNull { File(dir(ctx), it).takeIf { f -> f.exists() } }
 
     /**
      * Télécharge [url], la réduit au gabarit et l'enregistre. Renvoie `null` si le fichier
@@ -155,8 +161,7 @@ object ThumbStore {
      */
     suspend fun fetch(ctx: Context, url: String, maxW: Int, maxH: Int): String? =
         withContext(Dispatchers.IO) {
-            val target = fileFor(ctx, url)
-            if (target.exists()) return@withContext null
+            if (cachedFile(ctx, url) != null) return@withContext null
             try {
                 val bytes = http.newCall(Request.Builder().url(url).get().build())
                     .execute().use { resp ->
@@ -181,27 +186,30 @@ object ThumbStore {
                 else Bitmap.createScaledBitmap(decoded, w, h, true).also {
                     if (it != decoded) decoded.recycle()
                 }
-                // Le JPEG ne connaît pas la transparence : on aplatit sur fond blanc plutôt
-                // que de laisser un fond noir aux logos PNG.
-                val opaque = if (scaled.hasAlpha()) {
-                    Bitmap.createBitmap(scaled.width, scaled.height, Bitmap.Config.RGB_565).also { out ->
-                        val c = Canvas(out)
-                        c.drawColor(Color.WHITE)
-                        c.drawBitmap(scaled, 0f, 0f, null)
-                    }.also { scaled.recycle() }
-                } else scaled
+                // La transparence décide du format : PNG gardé tel quel quand l'image a des
+                // pixels transparents (logos, illustrations — le JPEG les aplatirait), JPEG
+                // sinon. Un canal alpha ne suffit pas à décider : beaucoup de photos sont
+                // livrées en PNG RGBA parfaitement opaque, et le PNG y pèserait dix fois plus.
+                val alpha = scaled.hasAlpha() && hasTransparency(scaled)
                 val d = dir(ctx)
                 if (!d.exists()) d.mkdirs()
+                val target = File(d, thumbFileName(url, if (alpha) "png" else "jpg"))
                 val tmp = File(d, target.name + ".tmp")
                 try {
-                    tmp.outputStream().use { opaque.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
+                    tmp.outputStream().use {
+                        scaled.compress(
+                            if (alpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
+                            if (alpha) 100 else JPEG_QUALITY,
+                            it
+                        )
+                    }
                     if (!tmp.renameTo(target)) {
                         tmp.delete()
                         return@withContext "écriture impossible"
                     }
                 } finally {
                     tmp.delete()
-                    opaque.recycle()
+                    scaled.recycle()
                 }
                 null
             } catch (e: Exception) {
@@ -209,8 +217,22 @@ object ThumbStore {
             }
         }
 
-    /** Décode un raster (JPEG, PNG, WebP…) sous-échantillonné au plus près du gabarit. */
-    private fun decodeRaster(bytes: ByteArray, maxW: Int, maxH: Int): Bitmap? {
+    /**
+     * L'image a-t-elle vraiment des pixels transparents ? Un canal alpha ne suffit pas : nombre
+     * de photos sont livrées en PNG RGBA entièrement opaque, et les garder en PNG coûterait dix
+     * fois leur taille. Lecture par tranches pour ne pas tenir l'image en plus en mémoire.
+     */
+    private fun hasTransparency(bmp: Bitmap): Boolean {
+        val w = bmp.width
+        val row = IntArray(w)
+        for (y in 0 until bmp.height) {
+            bmp.getPixels(row, 0, w, 0, y, w, 1)
+            for (p in row) if ((p ushr 24) != 0xFF) return true
+        }
+        return false
+    }
+
+    /** Décode un raster (JPEG, PNG, WebP…) sous-échantillonné au plus près du gabarit. */    private fun decodeRaster(bytes: ByteArray, maxW: Int, maxH: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -254,7 +276,9 @@ object ThumbStore {
         var n = 0
         dir(ctx).listFiles()?.forEachIndexed { i, f ->
             if (i % 128 == 0) kotlinx.coroutines.yield()
-            if (f.name.endsWith(".tmp") || (f.name.endsWith(".jpg") && f.name !in keepNames)) {
+            if (f.name.endsWith(".tmp") ||
+                ((f.name.endsWith(".jpg") || f.name.endsWith(".png")) && f.name !in keepNames)
+            ) {
                 if (f.delete()) n++
             }
         }

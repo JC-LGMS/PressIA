@@ -160,7 +160,9 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                     vm, showSource = feedScope.feedId == null,
                     // Favoris et « Read later » : le bouton « bas » va toujours tout en bas
                     // directement, sans arrêt à la fin des non-lus.
-                    stopAtUnread = false, onSearch = onSearch)
+                    stopAtUnread = false, onSearch = onSearch,
+                    // Bas de liste : page suivante, comme la liste du périmètre.
+                    onEndReached = { vm.loadMoreStream(articles.size) })
             }
         }
     }

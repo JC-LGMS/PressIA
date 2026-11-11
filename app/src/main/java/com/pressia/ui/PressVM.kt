@@ -9,6 +9,7 @@ import com.pressia.data.BulkProgress
 import com.pressia.data.LocalFeedAdd
 import com.pressia.data.FailedImage
 import com.pressia.data.SEARCH_PAGE
+import com.pressia.data.STREAM_PAGE
 import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
 import com.pressia.data.remote.providerUsesSaved
@@ -509,6 +510,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (s.feedId != scope.feedId || s.categoryId != scope.categoryId) {
             keepIds.value = emptySet()
             scanIds = emptyList()  // vide l'écran immédiatement, évite le flash du flux précédent
+            resetStreamPages()
         }
         // Changer de périmètre (ou quitter la page), c'est abandonner l'annulation en cours :
         // elle ne porte que sur le marquage qu'on vient de voir.
@@ -547,6 +549,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun setUnreadOnly(next: Boolean) = viewModelScope.launch {
         // Même « collant » que le flux principal : réactiver le filtre oublie les lus.
         if (next) clearKept()
+        resetStreamPages()
         val key = unreadScopeKey(scope)
         val raw = prefs.data.first()[Prefs.UNREAD_ONLY_BY_FEED].orEmpty()
         val o = runCatching { org.json.JSONObject(raw) }.getOrDefault(org.json.JSONObject())
@@ -561,12 +564,37 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * (bouton ou tâche d'arrière-plan) enregistre de nouveaux articles, sans rechargement manuel.
      * [fav] n'est fourni que par l'écran Favoris, qui a son propre périmètre.
      */
+    /**
+     * Liste réactive du périmètre courant, paginée : [streamLimit] grandit quand le bas de liste
+     * est atteint (`loadMoreStream`). Le flux est relancé à chaque page (Room re-émet), donc seuls
+     * les articles déjà parcourus sont chargés, HTML compris.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     fun streamList(onlyUnread: Boolean, fav: FavScope? = null): Flow<List<ArticleEntity>> {
         val s = fav?.scope ?: scope
         val kind = if (fav == null) "" else fav.set
-        return keepIds.flatMapLatest { keep ->
-            repo.streamFlow(s.feedId, s.categoryId, onlyUnread, kind, keep)
-        }
+        return combine(keepIds, streamLimit) { keep, limit -> keep to limit }
+            .flatMapLatest { (keep, limit) ->
+                repo.streamFlow(s.feedId, s.categoryId, onlyUnread, kind, keep, limit)
+            }
+    }
+
+    /** Dernière page demandée : chaque bas de liste en ajoute une (voir [loadMoreStream]). */
+    private val streamLimit = MutableStateFlow(STREAM_PAGE)
+
+    /**
+     * Bas de liste atteint : demande une page de plus. [shown] compte les articles déjà arrivés ;
+     * plus court que la page demandée, c'est qu'il n'y a plus rien à charger — ce qui ignore
+     * aussi les appels tardifs, avant que la page demandée n'ait été reçue.
+     */
+    fun loadMoreStream(shown: Int) {
+        if (shown < streamLimit.value) return
+        streamLimit.value += STREAM_PAGE
+    }
+
+    /** Changement de périmètre ou de filtre : la liste repart de la première page. */
+    private fun resetStreamPages() {
+        streamLimit.value = STREAM_PAGE
     }
 
     /** Verrouille / déverrouille l'indicateur (toujours appariés, en `finally`). */
@@ -594,9 +622,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         subs = repo.subscriptions()
         unreads = repo.unreadByFeed()
         folderUnreads = repo.unreadByFolder()
-        // Borné à KEEP_MAX comme `keepIds` : les identifiants servent au balayage de l'écran
-        // article, et une liste de 2000 dépassait les 400 articles que la requête de liste
-        // épingle (au-delà du 400e article, le balayage perdait le voisin).
+        // Borné à KEEP_MAX : la requête rend les identifiants légers (pas le HTML), et le
+        // balayage de l'écran article ne demande la suite qu'en approchant du bout
+        // (`moreScanIds`). La liste, elle, en affiche jusqu'à STREAM_MAX.
         scanIds = repo.streamIds(scope.feedId, scope.categoryId, unreadOnly, limit = KEEP_MAX)
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
@@ -612,6 +640,20 @@ class PressVM(val repo: PressRepository) : ViewModel() {
 
     /** Non-lus du périmètre affiché, pour le compteur du titre (voir [scopeUnread]). */
     fun unreadCountFor(s: Scope = scope): Int = scopeUnread(s, unreads, folderUnreads)
+
+    /**
+     * Balayage de l'écran article : redemande les voisins du périmètre courant avec `KEEP_MAX`
+     * de plus (la requête rend les identifiants, pas le HTML). Au-delà de [STREAM_MAX], la
+     * liste elle-même s'arrête : on rend la même longueur et l'appelant cesse de demander.
+     */
+    suspend fun moreScanIds(current: Int): List<String> {
+        val ids = repo.streamIds(
+            scope.feedId, scope.categoryId, unreadOnly,
+            limit = current + KEEP_MAX
+        )
+        if (ids.size > current) android.util.Log.i("PressIA", "balayage : voisins $current → ${ids.size}")
+        return ids
+    }
 
     /** Supprime un flux RSS local ; les autres comptes ne sont pas touchés. */
     fun deleteLocalFeed(feedId: String) = viewModelScope.launch {
@@ -1244,7 +1286,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     // ----- Favoris -----
-    fun setFavSet(set: String) = viewModelScope.launch { prefs.set(Prefs.STARRED_SCOPE, set) }
+    fun setFavSet(set: String) = viewModelScope.launch { resetStreamPages(); prefs.set(Prefs.STARRED_SCOPE, set) }
 
     // ----- Comptes -----
     /**

@@ -6,7 +6,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -137,7 +137,7 @@ fun OAuthWebViewScreen(vm: PressVM, provider: String, onBack: () -> Unit, onDone
                 if (vm.syncing) SyncProgress()
                 TopAppBar(
                     title = { Text(if (provider == "feedly") "Connexion Feedly" else "Connexion Inoreader", fontSize = 19.sp) },
-                    navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
+                    navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "retour") } },
                     actions = {
                         IconButton({ webView?.reload() }) { Icon(Icons.Filled.Refresh, "recharger") }
                     }

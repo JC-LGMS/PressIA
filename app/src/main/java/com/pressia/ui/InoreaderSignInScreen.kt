@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -218,7 +218,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 if (vm.syncing) SyncProgress()
                 TopAppBar(
                     title = { Text("Connexion Inoreader", fontSize = 19.sp) },
-                    navigationIcon = { IconButton(onBack) { Icon(Icons.Filled.ArrowBack, "retour") } },
+                    navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "retour") } },
                     actions = {
                         IconButton({ webView?.loadUrl(INOREADER_LOGIN_URL) }) { Icon(Icons.Filled.Refresh, "recharger") }
                     }

@@ -266,7 +266,7 @@ fun LoginScreen(
             modifier = Modifier.fillMaxWidth(), singleLine = true,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                autoCorrect = false
+                autoCorrectEnabled = false
             )
         )
         Button(
@@ -353,7 +353,7 @@ fun LoginScreen(
                 modifier = Modifier.fillMaxWidth(), singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
-                    autoCorrect = false
+                    autoCorrectEnabled = false
                 )
             )
             OutlinedTextField(
@@ -362,7 +362,7 @@ fun LoginScreen(
                 visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                    autoCorrect = false
+                    autoCorrectEnabled = false
                 )
             )
             Button(

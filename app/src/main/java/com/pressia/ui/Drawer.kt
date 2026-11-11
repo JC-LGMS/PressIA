@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -113,7 +114,7 @@ fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit,
             // La liste à plat de tous les flux n'était atteignable que par le bouton retour depuis
             // un dossier : elle a maintenant sa propre entrée.
             DrawerRow(
-                Icons.Filled.List, "Tous les articles",
+                Icons.AutoMirrored.Filled.List, "Tous les articles",
                 currentRoute == "stream" && vm.scope.feedId == null && vm.scope.categoryId == null, feedSp
             ) {
                 vm.switchScope(Scope(label = "Tous les articles"))

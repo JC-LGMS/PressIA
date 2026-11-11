@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -40,7 +41,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -147,13 +148,27 @@ fun ArticleScreen(
     // changer d'écran, et la liste peut se reconstruire en fond (synchro, filtre).
     // Rattrapée tant qu'elle est vide : à la reprise après mort du processus, `vm.scanIds`
     // arrive après la première composition — sans quoi plus aucun balayage de navigation.
-    var ids by remember { mutableStateOf(vm.takeArticleNeighbours() ?: vm.scanIds) }
+    // Voisins fournis par l'écran appelant (Favoris, Recherche, Doublons) : cette liste est la
+    // sienne, on ne la remplace pas en cours de route (`null` = liste du périmètre courant).
+    val ownNeighbours = remember { vm.takeArticleNeighbours() }
+    var ids by remember { mutableStateOf(ownNeighbours ?: vm.scanIds) }
     LaunchedEffect(vm.scanIds) {
         if (ids.isEmpty()) ids = vm.scanIds
     }
     val idx = ids.indexOf(articleId)
     val prevId = if (idx > 0) ids[idx - 1] else null
     val nextId = if (idx >= 0 && idx < ids.lastIndex) ids[idx + 1] else null
+    // Les voisins du périmètre s'arrêtent à KEEP_MAX : en approchant du bout, on demande la suite
+    // (KEEP_MAX de plus), sinon le balayage annonçait « pas d'article plus ancien » alors que la
+    // liste en a d'autres. Rien à demander pour une liste fournie par l'écran appelant.
+    var scanEnded by remember { mutableStateOf(false) }
+    LaunchedEffect(articleId, ids) {
+        if (ownNeighbours != null || scanEnded) return@LaunchedEffect
+        val here = ids.indexOf(articleId)
+        if (here < 0 || here < ids.lastIndex - 1) return@LaunchedEffect
+        val more = vm.moreScanIds(ids.size)
+        if (more.size > ids.size) ids = more else scanEnded = true
+    }
     var offsetX by remember(articleId) { mutableFloatStateOf(0f) }
     // Course du doigt réellement parcourue, dans les deux sens et même quand le geste n'a rien à
     // faire (voisin absent) : c'est elle qui déclenche le message « pas d'article plus ancien ».
@@ -321,7 +336,7 @@ fun ArticleScreen(
                     title = {},
                     navigationIcon = {
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            IconButton({ onBack() }) { Icon(Icons.Filled.ArrowBack, "retour") }
+                            IconButton({ onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "retour") }
                             FeedAvatar(feedSub, 28)
                         }
                     },
@@ -359,7 +374,7 @@ fun ArticleScreen(
                                 // de la retirer d'un second appui (voir `toggleReadability`).
                                 "readability" -> IconButton({ scope.launch { toggleReadability() } }) {
                                     Icon(
-                                        Icons.Filled.ChromeReaderMode, "article complet",
+                                        Icons.AutoMirrored.Filled.ChromeReaderMode, "article complet",
                                         tint = if (fullMode || vm.readabilityOn) MaterialTheme.colorScheme.primary
                                         else LocalContentColor.current
                                     )
@@ -589,8 +604,8 @@ fun ArticleScreen(
             }
             Spacer(Modifier.height(12.dp))
             Spacer(Modifier.height(12.dp))
-            if (fullMode || vm.readabilityOn) AssistChip({ scope.launch { toggleReadability() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
-            else AssistChip({ scope.launch { toggleReadability() } }, { Text("Readability : article complet") }, leadingIcon = { Icon(Icons.Filled.ChromeReaderMode, null) })
+            if (fullMode || vm.readabilityOn) AssistChip({ scope.launch { toggleReadability() } }, { Text("Revenir à l'extrait RSS") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ChromeReaderMode, null) })
+            else AssistChip({ scope.launch { toggleReadability() } }, { Text("Readability : article complet") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ChromeReaderMode, null) })
             Spacer(Modifier.height(16.dp))
             // Le bandeau applicatif (fin de synchro…) recouvre le bas de l'écran : quand il
             // est visible, un espace supplémentaire garde la pastille atteignable au scroll
@@ -661,7 +676,7 @@ fun ArticleScreen(
  * même action. `null` pour « Aucun » (ou une valeur inconnue) : rien à annoncer.
  */
 private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when (act) {
-    "readability" -> Icons.Filled.ChromeReaderMode to "Readability"
+    "readability" -> Icons.AutoMirrored.Filled.ChromeReaderMode to "Readability"
     "read" -> (if (unread) Icons.Filled.Circle else Icons.Filled.RadioButtonUnchecked) to
         (if (unread) "marquer lu" else "marquer non lu")
     "share" -> Icons.Filled.Share to "partager"
@@ -2411,7 +2426,7 @@ private fun YoutubeTitleRow(title: String?, watchUrl: String, modifier: Modifier
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            Icons.Filled.OpenInNew,
+            Icons.AutoMirrored.Filled.OpenInNew,
             "ouvrir dans YouTube",
             tint = color,
             modifier = Modifier.size(14.dp)
@@ -2525,7 +2540,7 @@ fun YoutubePlayer(
             val entered = wv != null && screen.enter(context, rootView, wv) { fullscreen = false }
             if (!entered) {
                 fullscreen = false
-            } else if (wv != null) {
+            } else {
                 wv.evaluateJavascript(
                     "document.documentElement.classList.add('pressia-full');" +
                         "window.pressiaFull=true;",

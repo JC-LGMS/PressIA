@@ -1,3 +1,5 @@
+@file:OptIn(coil.annotation.ExperimentalCoilApi::class)
+
 package com.pressia.data
 
 import android.content.Context
@@ -36,6 +38,9 @@ const val MERGED_PREFIX = "merged:"
 
 /** Taille d'une page de résultats de recherche (l'écran en charge une autre au défilement). */
 const val SEARCH_PAGE = 200
+
+/** Taille d'une page de la liste d'articles (le bas de liste en demande une de plus). */
+const val STREAM_PAGE = 200
 
 /**
  * Libellé des lectures rattachées à un flux qui n'existe plus (compte supprimé, désabonnement) :
@@ -560,6 +565,10 @@ class PressRepository(
         // (voir plus bas) : les statistiques ne repartent pas de zéro avec un compte supprimé.
         val feedsOfAccount = dao.subscriptions().filter { it.provider == accountId }.map { it.id }
         dao.clearArticlesOf(accountId)
+        // Les favoris rattachés au compte partent avec lui : un article d'un autre flux (autre
+        // compte, flux local) gardait sinon le marquage « Read later » du service supprimé et
+        // restait dans les Favoris, sans compte pour le porter.
+        dao.clearLaterOf(providerBase(accountId))
         dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
         dao.clearSubscriptionsOf(accountId)
         dao.clearCategoriesOf(accountId)
@@ -949,13 +958,13 @@ class PressRepository(
      * Flux du flux de lecture : la liste affichée se met à jour toute seule quand la
      * synchronisation insère de nouveaux articles.
      */
-    fun streamFlow(feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "", limit: Int = 2000, offset: Int = 0): Flow<List<ArticleEntity>> =
+    fun streamFlow(feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "", limit: Int = STREAM_PAGE, offset: Int = 0): Flow<List<ArticleEntity>> =
         scopeFlow(catId, unreadOnly, favScope) { feeds, empty, un, fav ->
             dao.streamFlow(feedId, feeds, empty, un, fav, limit, offset)
         }
 
     /** Idem, en gardant visibles les articles listés puis passés en lus ([keepIds]). */
-    fun streamFlow(feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String, keepIds: Set<String>, limit: Int = 2000, offset: Int = 0): Flow<List<ArticleEntity>> =
+    fun streamFlow(feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String, keepIds: Set<String>, limit: Int = STREAM_PAGE, offset: Int = 0): Flow<List<ArticleEntity>> =
         scopeFlow(catId, unreadOnly, favScope) { feeds, empty, un, fav ->
             dao.streamFlowSticky(feedId, feeds, empty, un, fav, limit, offset, keepIds.toList())
         }
@@ -1453,6 +1462,11 @@ class PressRepository(
         replayRestoredStarred()
         replayRestoredRead()
         trimToMax()
+        // Fichiers de miniatures qu'aucun article ne réclame (URL d'image remplacée, passe
+        // interrompue, suppression faite hors des chemins qui purgent eux-mêmes) : la fin de
+        // synchro est le moment où la table des articles est fraîche, et une fois par synchro
+        // suffit (un simple listing de dossier et une requête).
+        gcThumbs()
         // Listes et compteurs à jour avant la (longue) passe miniatures : l'accueil n'attend
         // pas la fin de la synchronisation. Les listes d'articles, elles, sont réactives.
         pokeLists()
@@ -2526,8 +2540,9 @@ class PressRepository(
 
     /** Supprime les miniatures dont plus aucun article n'a besoin (purge, compte supprimé). */
     private suspend fun gcThumbs() {
-        val keep = dao.allThumbUrls().mapTo(HashSet()) { ThumbStore.thumbFileName(it) }
-        ThumbStore.gc(ctx, keep)
+        val keep = dao.allThumbUrls().flatMapTo(HashSet()) { ThumbStore.thumbFileNames(it) }
+        val removed = ThumbStore.gc(ctx, keep)
+        if (removed > 0) android.util.Log.i("PressIA", "miniatures orphelines retirées : $removed")
     }
 
     /**

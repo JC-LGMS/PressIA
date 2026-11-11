@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -108,7 +109,7 @@ fun StreamScaffold(
                             IconButton({
                                 vm.undoMarkRead()
                                 toast(ctx, "Marquage annulé")
-                            }) { Icon(Icons.Filled.Undo, "annuler le marquage") }
+                            }) { Icon(Icons.AutoMirrored.Filled.Undo, "annuler le marquage") }
                         } else {
                             // Pas de toast de succès : le bouton qui bascule en « annuler »
                             // (l'annulation est proposée avant l'écriture, voir `markAllRead`)
@@ -167,7 +168,10 @@ fun StreamScaffold(
                     }
                 } else {
                     // Flux d'un seul site : la source se répète sous chaque titre, on ne garde que l'heure.
-                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null, onSearch = onSearch)
+                    ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null,
+                        onSearch = onSearch,
+                        // Bas de liste : page suivante (la liste n'est plus plafonnée à 2000).
+                        onEndReached = { vm.loadMoreStream(localArticles.size) })
                 }
             }
             if (onSwipeBack != null && backDrag > 0f) {

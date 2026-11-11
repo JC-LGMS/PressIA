@@ -455,7 +455,11 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 ## Images / miniatures (non intuitif, tout est là)
 
 - Miniature **déclarée** par le flux (`imageUrl`, bannière de liste et image de tête) :
-  `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans `filesDir/thumbs`.
+  `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans `filesDir/thumbs` —
+  ou `SHA-1(url).png` quand l'image a des **pixels transparents** (logos, illustrations) : un canal
+  alpha ne suffit pas à décider (beaucoup de photos sont livrées en PNG RGBA opaque, et le PNG y
+  pèserait dix fois plus), d'où `hasTransparency`. `thumbFileNames` rend les deux noms, `cachedFile`
+  cherche l'un comme l'autre et `gc` supprime les deux : ne pas revenir à une seule extension.
   Gabarit = **carré de la largeur d'écran** : c'est la plus grande taille à laquelle ce fichier est
   affiché (image de tête d'article, pleine largeur ; la bannière magazine de 180 dp en est un
   recadrage). Toute image plus large que haute est donc enregistrée à la largeur exacte de l'écran
@@ -524,9 +528,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     les fichiers au disque (`cachedThumbUrls`) et **retélécharge** les vignettes disparues (purge,
     cache vidé à la main, synchro interrompue) — sans cela la vignette ne revenait jamais, l'article
     étant « déjà téléchargé ».
-  - `gcThumbs()` (appelé par `trimToMax` quand des articles dépassent le quota) supprime les
-    fichiers dont plus aucun article ne porte l'URL : une `imageUrl` perdue rendait donc la
-    vignette orpheline — c'est pour cela que la perte de l'`imageUrl` était si grave.
+  - `gcThumbs()` supprime les fichiers dont plus aucun article ne porte l'URL : une `imageUrl`
+    perdue rendait donc la vignette orpheline — c'est pour cela que la perte de l'`imageUrl` était
+    si grave. Il tourne **à la fin de chaque synchro** (`syncDown`, juste après `trimToMax`) — un
+    fichier orphelin naît d'une URL remplacée, d'une passe interrompue ou d'une suppression hors
+    des chemins qui purgent eux-mêmes, et sans cette passe il attendait le prochain dépassement de
+    quota — plus aux endroits qui suppriment des articles (`trimToMax` quand il coupe, désabonnement
+    d'un compte, `deleteLocalFeed`, `clearCache`). Coût : un listing de dossier et une requête.
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 : la
   prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits via
   Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec leur
@@ -732,6 +740,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `mergeIncomingArticle` ; l'empreinte du tableau (`savedHash`) porte le **service**, ce qui force
   une réimportation unique après la migration 8→9 (sans elle, un tableau « inchangé » ne se
   réattribuait jamais).
+  **Supprimer le compte efface ce marquage** (`deleteAccount` → `clearLaterOf(providerBase(id))`) :
+  un article d'un flux encore abonné (autre compte, flux local) gardait sinon le drapeau du
+  service supprimé — visible dans « Tous les favoris » alors que le jeu du service avait disparu
+  du sélecteur (`favSetAvailable`, faute de compte). Les articles qui n'étaient là que pour ce
+  tableau s'en vont ensuite avec `deleteOrphanArticles`. L'étoile PressIA, elle, reste : c'est un
+  état local, sans compte.
 - **Feedly marque lu tout seul au-delà de 31 jours** : son état lu/non-lu ne dit plus ce que
   l'utilisateur a lu passé ce délai. `autoReadAgeMs("feedly")` = `FEEDLY_AUTO_READ_AGE_MS`, et
   `autoReadCutoff` borne **deux** chemins : `storeArticles(..., keepReadBeforeMs = …)` préserve
@@ -856,6 +870,16 @@ les autres (chaque point a coûté un bug quand il manquait).
   au lieu de passer au suivant. Côté écran article, la liste est
   `remember` **sans clé** : le balayage change d'article sans changer d'écran, une liste
   re-dérivée par article repartirait du périmètre du flux au premier swipe.
+  `scanIds` ne porte que `KEEP_MAX` (400) identifiants : en approchant du bout, l'écran demande la
+  suite (`PressVM.moreScanIds`, 400 de plus, toujours des identifiants seuls), aussi loin que le
+  périmètre va — sinon le geste annonçait « pas d'article plus ancien » alors que la liste en
+  affichait d'autres. Une liste fournie par l'écran appelant n'est jamais prolongée.
+  **La liste, elle, est paginée** (`STREAM_PAGE` = 200, `PressVM.loadMoreStream` appelé par
+  `ArticleList.onEndReached` sur le flux principal comme sur les Favoris) : plus de plafond à
+  2000 articles chargés d'un coup. `loadMoreStream` ne grandit que si les lignes arrivées égalent
+  la page demandée — un appel tardif (avant que la page n'arrive) est ignoré, et une page
+  incomplète veut dire « fin du périmètre ». `switchScope`, le filtre non-lus et le jeu de
+  favoris remettent la pagination à zéro.
 - Readability : `content` porte **soit** la version du flux, **soit** l'extraction — `fullFetched`
   dit laquelle. La requête est neutre : navigateur mobile en `User-Agent`, `Accept` et
   `Accept-Language`, **pas de `Referer`** (un `https://www.google.com/` traînait depuis le
@@ -965,6 +989,13 @@ les autres (chaque point a coûté un bug quand il manquait).
   complet** : elle exporte par sections (réglages, stats, comptes, favoris et lus) vers un fichier
   choisi par l'utilisateur, jetons exclus tant qu'il ne coche pas la case. La copie automatique
   ci-dessus n'en est qu'un sous-ensemble silencieux, pour la sauvegarde Google.
+  Le fichier porte `backupVersion` (`BACKUP_VERSION`), et **l'import le vérifie**
+  (`checkBackupFormat`) : un format plus récent est refusé, sinon une version ancienne de
+  l'application restaurerait en silence et en moins (sections et réglages inconnus ignorés).
+  Le message nomme les deux versions en présence (`appVersionName` du fichier, `VERSION_NAME`
+  courante). Un fichier sans champ vaut la version 1. Le numéro ne s'incrémente que pour un
+  changement **incompatible** — tant que le format ne fait que s'ajouter, l'ancien import lit le
+  reste.
 
 ## Pièges connus — interface, navigation et gestes
 

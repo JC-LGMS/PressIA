@@ -1,3 +1,5 @@
+@file:OptIn(coil.annotation.ExperimentalCoilApi::class)
+
 package com.pressia.ui
 
 import androidx.compose.foundation.Image
@@ -14,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -226,7 +229,7 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
                 when {
                     offer != null -> IconButton({ vm.undoMarkRead() }) {
                         Icon(
-                            Icons.Filled.Undo,
+                            Icons.AutoMirrored.Filled.Undo,
                             "annuler le marquage (${offer.label})"
                         )
                     }
