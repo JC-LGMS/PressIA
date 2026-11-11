@@ -997,6 +997,24 @@ les autres (chaque point a coûté un bug quand il manquait).
   courante). Un fichier sans champ vaut la version 1. Le numéro ne s'incrémente que pour un
   changement **incompatible** — tant que le format ne fait que s'ajouter, l'ancien import lit le
   reste.
+- **Rappel de sauvegarde, au plus une fois par mois** (`backupReminderDue`, `Backup.kt` ; modale
+  « Pense à sauvegarder » de `MainActivity`, posée par `PressVM.maybeRemindBackup` au retour au
+  premier plan) : il paraît quand des réglages ont changé depuis la **référence** (dernier export
+  ou import ; à défaut l'état de la première ouverture), qu'il y a quelque chose à sauvegarder et
+  que le dernier rappel date de plus d'un mois. **L'ancienneté d'une sauvegarde ne rappelle plus
+  rien par elle-même**, et une application fraîchement installée n'est jamais rappelée : la
+  première ouverture pose l'empreinte de référence sans rien afficher, et le rappel attend une
+  modification réelle (au démarrage suivant). Trois clés propres à l'appareil, hors `ENTRIES` et
+  dans `NON_EXPORTED_PREFS` : `BACKUP_CHECKPOINT` (date du dernier export ou import, 0 = jamais),
+  `BACKUP_CHECKPOINT_HASH` (empreinte de référence des réglages) et `BACKUP_NUDGE_AT` (dernier
+  rappel affiché, posé **à l'affichage** : fermer la fenêtre ne le fait pas revenir avant un
+  mois). `LAST_BACKUP_AT` reste réservé aux exports — c'est la date affichée, qui ne doit pas
+  annoncer une restauration. `markBackupPoint` (fin d'export, fin d'import) pose les deux premiers
+  **après** l'écriture de `LAST_BACKUP_AT`/`LAST_BACKUP_META` : ils font partie des réglages
+  comparés, les poser avant déclencherait un rappel pour un changement qu'on vient de faire.
+  L'empreinte (`backupFingerprint`) est le SHA-256 d'une liste `clé=valeur` triée, restreinte aux
+  noms de `ENTRIES` moins `SECRET_PREFS` et `EXPIRED_ACCOUNTS` : un jeton qui change ou une
+  session expirée ne déclenchent rien.
 
 ## Pièges connus — interface, navigation et gestes
 

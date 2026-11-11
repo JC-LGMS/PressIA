@@ -47,6 +47,7 @@ import com.pressia.data.dayLabelShort
 import com.pressia.data.exportJson
 import com.pressia.data.fmtDuration
 import com.pressia.data.importJson
+import com.pressia.data.markBackupPoint
 import com.pressia.data.local.ArticleEntity
 import com.pressia.data.local.Prefs
 import com.pressia.data.sortFeeds
@@ -1412,6 +1413,9 @@ fun BackupScreen(vm: PressVM) {
                     }
                     vm.repo.prefs.set(Prefs.LAST_BACKUP_META, meta.toString())
                 } catch (_: Exception) {}
+                // Point de comparaison du rappel mensuel, posé **après** la date et la
+                // métadonnée : elles font partie des réglages comparés.
+                vm.repo.markBackupPoint(now)
                 backupMsg = "Sauvegarde créée (${byteSizeText(written)})."
                 toast(ctx, "Sauvegarde effectuée")
             } catch (e: Exception) {
@@ -1430,6 +1434,9 @@ fun BackupScreen(vm: PressVM) {
                 val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                     ?: throw Exception("fichier illisible")
                 val r = vm.repo.importJson(json, importSel, importReplace)
+                // Une restauration vaut sauvegarde : les réglages d'ici sont ceux du fichier, et
+                // le rappel ne doit pas les signaler comme « changés depuis ».
+                vm.repo.markBackupPoint()
                 backupMsg = "Restauration terminée : ${r.prefs} option(s), ${r.accounts} compte(s), " +
                     "${r.stats} statistique(s), ${r.read} favori(s)."
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;

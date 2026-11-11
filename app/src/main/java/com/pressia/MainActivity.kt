@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
                     when (event) {
                         androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
                             vm.syncOnLaunch()
+                            vm.maybeRemindBackup()
                             vm.refresh()
                             vm.startSyncTicker()
                         }
@@ -683,6 +684,24 @@ class MainActivity : ComponentActivity() {
                     }
                     if (showDetail) {
                         SyncDetailDialog(vm.syncFailures, vm.imageFailures) { showDetail = false }
+                    }
+                    // Rappel de sauvegarde (au plus une fois par mois, voir `maybeRemindBackup`) :
+                    // une modale, et non le bandeau de synchro qui se fait écraser par ses étapes.
+                    vm.backupReminder?.let { message ->
+                        AlertDialog(
+                            onDismissRequest = { vm.dismissBackupReminder() },
+                            title = { Text("Pense à sauvegarder") },
+                            text = { Text(message) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    vm.dismissBackupReminder()
+                                    nav.navigate("backup") { launchSingleTop = true }
+                                }) { Text("Sauvegarder") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { vm.dismissBackupReminder() }) { Text("Plus tard") }
+                            }
+                        )
                     }
                     // Toast applicatif (voir ToastBus) : pastille sombre au-dessus du bandeau,
                     // qui s'efface seule après ~2 s. Au-dessus du SnackbarHost pour passer devant.

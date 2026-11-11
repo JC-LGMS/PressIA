@@ -137,6 +137,17 @@ class Prefs(private val ctx: Context) {
         val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
         val LAST_BACKUP_META = stringPreferencesKey("last_backup_meta")
         /**
+         * Instant (ms) du dernier export **ou** import réussi, 0 = aucun. C'est le point de
+         * comparaison du rappel de sauvegarde ([BACKUP_CHECKPOINT_HASH] dit ce que les réglages
+         * valaient alors), distinct de [LAST_BACKUP_AT] qui ne date que les exports (la date
+         * affichée sur l'écran Sauvegarde ne doit pas mentir sur une restauration).
+         */
+        val BACKUP_CHECKPOINT = longPreferencesKey("backup_checkpoint")
+        /** Empreinte des réglages au dernier export/import (voir `backupFingerprint`). */
+        val BACKUP_CHECKPOINT_HASH = stringPreferencesKey("backup_checkpoint_hash")
+        /** Instant (ms) du dernier rappel de sauvegarde affiché : au plus un par mois. */
+        val BACKUP_NUDGE_AT = longPreferencesKey("backup_nudge_at")
+        /**
          * Borne basse des statistiques de lecture (ms, 0 = depuis toujours). Posée par
          * « Remettre les statistiques à zéro » (voir `PressRepository.resetStats`) : tout ce
          * qui précède est ignoré, y compris les compteurs dérivés des articles. Les traces

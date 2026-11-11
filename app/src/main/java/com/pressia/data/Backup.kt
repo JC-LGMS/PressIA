@@ -56,6 +56,34 @@ fun checkBackupFormat(root: JSONObject) {
     }
 }
 
+// ----- Rappel de sauvegarde (pur, testé) -----
+
+/** Un mois : au plus un rappel par période. */
+const val BACKUP_REMIND_MS = 30L * 24 * 60 * 60 * 1000
+
+/**
+ * Empreinte des réglages : ce que la sauvegarde emporterait, moins les mots de passe et l'état
+ * transitoire (session expirée). Triée par clé (l'ordre d'un `Map` n'est pas garanti) puis
+ * hachée : elle change dès qu'une option ou un abonnement change, et c'est tout ce que demande
+ * le rappel — « des réglages ont changé depuis la dernière sauvegarde ».
+ */
+fun backupFingerprint(values: Map<String, Any?>): String {
+    val settings = Prefs.ENTRIES.map { it.name }.toSet() - SECRET_PREFS - Prefs.EXPIRED_ACCOUNTS.name
+    val text = values.filterKeys { it in settings }.toSortedMap()
+        .entries.joinToString("\n") { "${it.key}=${it.value}" }
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    return md.digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+}
+
+/**
+ * Le rappel de sauvegarde est-il dû ? Seulement si des réglages ont changé depuis la référence
+ * (dernier export/import, ou l'installation), qu'il y a quelque chose à sauvegarder et que le
+ * dernier rappel date de plus d'un mois. Une application fraîchement installée n'est donc pas
+ * rappelée : `settingsChanged` vaut faux tant que rien n'a bougé.
+ */
+fun backupReminderDue(now: Long, nudgeAt: Long, settingsChanged: Boolean, hasData: Boolean): Boolean =
+    hasData && settingsChanged && (nudgeAt <= 0L || now - nudgeAt >= BACKUP_REMIND_MS)
+
 /**
  * Préférences tenant un secret (mots de passe d'API) : jamais exportées / restaurées
  * automatiquement, seulement si l'utilisateur coche explicitement les jetons.
@@ -68,11 +96,14 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
  * les totaux de non-lus, empreintes Read later et icônes résolues sont des caches dérivés qu'une
  * restauration recalcule ou re-résout, et [Prefs.LAST_SYNC_AT] est le garde-fou de fraîcheur
  * **de cet appareil** (restaurer une date ancienne relançait ou sautait une synchro au hasard).
+ * L'état du rappel de sauvegarde y est aussi : l'empreinte des réglages porte sur **cet**
+ * appareil, la faire voyager la rendrait fausse ailleurs.
  */
 val NON_EXPORTED_PREFS = setOf(
     Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name,
     Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name,
-    Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name
+    Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name,
+    Prefs.BACKUP_CHECKPOINT.name, Prefs.BACKUP_CHECKPOINT_HASH.name, Prefs.BACKUP_NUDGE_AT.name
 )
 
 /** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
@@ -379,6 +410,20 @@ suspend fun PressRepository.restaurationJson(
         }
     }
     report
+}
+
+/** Empreinte des réglages courants (voir [backupFingerprint]). */
+suspend fun PressRepository.prefsFingerprint(): String =
+    backupFingerprint(prefs.data.first().asMap().entries.associate { it.key.name to it.value })
+
+/**
+ * Pose le point de sauvegarde : appelé après un export **ou** un import réussi. C'est la
+ * référence du rappel mensuel ; `LAST_BACKUP_AT`, lui, ne date que les exports (c'est la date
+ * affichée sur l'écran Sauvegarde, qui ne doit pas annoncer une restauration).
+ */
+suspend fun PressRepository.markBackupPoint(at: Long = System.currentTimeMillis()) {
+    prefs.set(Prefs.BACKUP_CHECKPOINT, at)
+    prefs.set(Prefs.BACKUP_CHECKPOINT_HASH, prefsFingerprint())
 }
 
 // ----- Filtrage sauvegarde (pur, testé) -----

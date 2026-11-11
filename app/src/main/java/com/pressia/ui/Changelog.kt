@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.7",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Rappel de sauvegarde quand des réglages ont changé",
+                "- Une modale « Pense à sauvegarder » paraît au lancement quand des réglages ont " +
+                    "changé depuis le dernier export ou import (à défaut depuis l'installation), au " +
+                    "plus une fois par mois. Une installation neuve n'affiche rien : l'état du " +
+                    "premier lancement sert de référence, et le rappel attend une vraie " +
+                    "modification. L'empreinte des réglages est propre à l'appareil (options " +
+                    "sauvegardées, sans les jetons ni l'état de session) ; exporter ou importer " +
+                    "repose la référence, donc sauvegarder fait taire le rappel.",
+                time = "23:36"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.6",
         listOf(
             ChangelogItem(

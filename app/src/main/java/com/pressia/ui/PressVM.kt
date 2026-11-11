@@ -18,6 +18,8 @@ import com.pressia.data.rateLimitMessage
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
 import com.pressia.data.isLocalProvider
+import com.pressia.data.backupReminderDue
+import com.pressia.data.prefsFingerprint
 import com.pressia.data.restoreAutoBackupIfEmpty
 import com.pressia.data.writeAutoBackup
 import com.pressia.data.local.*
@@ -203,6 +205,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var dups by mutableStateOf<List<List<ArticleEntity>>>(emptyList())
     /** Dernier résultat de synchronisation (affiché en snackbar, puis effacé). */
     var syncMsg by mutableStateOf<String?>(null)
+    /**
+     * Rappel de sauvegarde à afficher (modale de `MainActivity`), null sinon. Posé au plus une
+     * fois par mois par [maybeRemindBackup].
+     */
+    var backupReminder by mutableStateOf<String?>(null)
+        private set
     /**
      * Avancement d'un marquage groupé poussé article par article (annulation d'un « tout marquer
      * lu », repli sans marquage de masse, menu « plus récents/anciens ») : la barre du bas le
@@ -610,7 +618,37 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      */
     fun autoBackup() = viewModelScope.launch { repo.writeAutoBackup() }
 
+    /**
+     * Rappel de sauvegarde, au plus une fois par mois : rien depuis un mois (ou jamais), ou des
+     * réglages changés depuis le dernier export/import. La date du rappel est posée **à
+     * l'affichage** : fermer la fenêtre ne le fait pas revenir le lendemain.
+     */
+    fun maybeRemindBackup() = viewModelScope.launch {
+        if (backupReminder != null) return@launch
+        val values = repo.prefs.data.first()
+        val now = System.currentTimeMillis()
+        val print = repo.prefsFingerprint()
+        // Première ouverture (installation, ou version d'avant le rappel) : l'état présent est
+        // la référence et rien n'est rappelé — des réglages « modifiés depuis » n'existent pas
+        // encore. Le rappel attendra une modification réelle.
+        val reference = values[Prefs.BACKUP_CHECKPOINT_HASH].orEmpty()
+        if (reference.isEmpty()) {
+            repo.prefs.set(Prefs.BACKUP_CHECKPOINT_HASH, print)
+            return@launch
+        }
+        val nudgeAt = values[Prefs.BACKUP_NUDGE_AT] ?: 0L
+        if (!backupReminderDue(now, nudgeAt, reference != print, repo.hasSources())) return@launch
+        repo.prefs.set(Prefs.BACKUP_NUDGE_AT, now)
+        val saved = values[Prefs.BACKUP_CHECKPOINT] ?: 0L
+        backupReminder = if (saved <= 0L) {
+            "Des réglages ont changé depuis l'installation, et rien n'a encore été sauvegardé."
+        } else {
+            "Des réglages ont changé depuis la dernière sauvegarde du " + fmtDateTimeFr(saved) + "."
+        }
+    }
 
+    /** Ferme la modale de rappel (après un export ou « Plus tard »). */
+    fun dismissBackupReminder() { backupReminder = null }
 
     /** Remplit l'état local depuis la base (version suspendable de [refresh]). */
     private suspend fun refreshNow() {

@@ -1002,8 +1002,56 @@ class PressLogicTest {
         // rentrer (la restauration sautait ou relançait une synchro sans rapport).
         assertTrue("last_sync_at ne doit pas sortir", "last_sync_at" in com.pressia.data.NON_EXPORTED_PREFS)
         assertFalse("last_sync_at ne doit pas être réimportable", "last_sync_at" in entryNames())
+        // État du rappel de sauvegarde : l'empreinte porte sur les réglages de **cet** appareil,
+        // la faire voyager la rendrait fausse ailleurs.
+        listOf("backup_checkpoint", "backup_checkpoint_hash", "backup_nudge_at").forEach {
+            assertTrue("$it ne doit pas sortir", it in com.pressia.data.NON_EXPORTED_PREFS)
+            assertFalse("$it ne doit pas être réimportable", it in entryNames())
+        }
         // Aucun secret ne doit être doublement classé, sinon les deux filtres se contredisent.
         assertTrue(com.pressia.data.SECRET_PREFS.intersect(com.pressia.data.NON_EXPORTED_PREFS).isEmpty())
+    }
+
+    @Test fun `rappel de sauvegarde seulement apres un changement de reglages`() {
+        val jour = 24 * 60 * 60 * 1000L
+        val now = 1_800_000_000_000L
+        // Rien à sauvegarder : jamais de rappel.
+        assertFalse(com.pressia.data.backupReminderDue(now, 0, settingsChanged = true, hasData = false))
+        // Application fraîchement installée, réglages inchangés : rien, même sans sauvegarde.
+        assertFalse(com.pressia.data.backupReminderDue(now, 0, false, true))
+        // Réglages changés depuis la référence (installation ou dernier export/import) : rappel.
+        assertTrue(com.pressia.data.backupReminderDue(now, 0, true, true))
+        // Déjà rappelé il y a moins d'un mois : silence, même si les réglages ont encore changé.
+        assertFalse(com.pressia.data.backupReminderDue(now, now - 10 * jour, true, true))
+        // Un mois après le dernier rappel, il revient tant que rien n'est sauvegardé.
+        assertTrue(com.pressia.data.backupReminderDue(now, now - 31 * jour, true, true))
+        // L'âge de la sauvegarde n'y suffit plus : sans changement de réglages, pas de rappel.
+        assertFalse(com.pressia.data.backupReminderDue(now, now - 40 * jour, false, true))
+    }
+
+    @Test fun `empreinte des reglages`() {
+        val base = mapOf("theme" to "dark", "view_mode" to "card")
+        // Stable : l'empreinte ne dépend pas de l'ordre de lecture des préférences.
+        assertEquals(
+            com.pressia.data.backupFingerprint(base),
+            com.pressia.data.backupFingerprint(base.toList().reversed().toMap())
+        )
+        // Une option de ENTRIES qui change : empreinte différente.
+        assertNotEquals(
+            com.pressia.data.backupFingerprint(base),
+            com.pressia.data.backupFingerprint(base + ("theme" to "light"))
+        )
+        // Ni les secrets ni l'état transitoire ne comptent (une session expirée déclencherait
+        // sinon le rappel pour rien).
+        assertEquals(
+            com.pressia.data.backupFingerprint(base),
+            com.pressia.data.backupFingerprint(base + ("token" to "x") + ("expired_accounts" to "[]"))
+        )
+        // Une clé hors ENTRIES (cache de synchro, état du rappel) ne compte pas non plus.
+        assertEquals(
+            com.pressia.data.backupFingerprint(base),
+            com.pressia.data.backupFingerprint(base + ("last_sync_at" to 1L))
+        )
     }
 
     @Test fun `sauvegarde d'un format plus recent refusee`() {
