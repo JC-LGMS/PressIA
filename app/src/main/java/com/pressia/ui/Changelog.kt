@@ -47,20 +47,6 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
-        "1.7",
-        listOf(
-            ChangelogItem(
-                "2026-11-11",
-                "Journal des modifications : date et heure affichées une seule fois",
-                "- Dans une même version, la date et l'heure d'un changement ne se répètent plus " +
-                    "ligne après ligne : elles s'affichent sur la première ligne du groupe, la " +
-                    "colonne restant vide et alignée en dessous. Une heure différente (un " +
-                    "changement livré plus tôt) réapparaît pour elle-même.",
-                time = "23:10"
-            )
-        )
-    ),
-    ChangelogEntry(
         "1.6",
         listOf(
             ChangelogItem(
@@ -171,7 +157,7 @@ fun changelog(): List<ChangelogEntry> = listOf(
                     "d'intégration ne sont créées — qu'une fois le bloc touché. Une vidéo " +
                     "personne ne regarde ne charge plus rien. Le titre sous la vidéo reste " +
                     "affiché avant l'appui (il ouvre YouTube), et sa requête est la même qu'avant.",
-                time = "02:01"
+                time = "23:05"
             )
         )
     ),
