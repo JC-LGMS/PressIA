@@ -48,6 +48,24 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.6",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Vidéo : le lecteur ne se compose qu'à l'appui",
+                "Le bloc vidéo suivait deux logiques : l'iframe YouTube composait d'emblée " +
+                    "`YoutubePlayer` (avec son propre état « lecture lancée » et sa propre " +
+                    "affiche), là où un fichier média attendait l'appui dans `VideoPlayer`. " +
+                    "`VideoPlayer` porte maintenant l'affiche et le seul état de lecture pour les " +
+                    "deux cas, et `YoutubePlayer` n'est composé — donc la WebView et la page " +
+                    "d'intégration ne sont créées — qu'une fois le bloc touché. Une vidéo " +
+                    "personne ne regarde ne charge plus rien. Le titre sous la vidéo reste " +
+                    "affiché avant l'appui (il ouvre YouTube), et sa requête est la même qu'avant.",
+                time = "02:01"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.5",
         listOf(
             ChangelogItem(

@@ -1880,9 +1880,14 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
  *    (économie de données, respect du lecteur) ;
  *  - **page d'intégration** (balise <iframe>) : ce n'est pas un média, le lecteur intégré ne
  *    pourrait pas la lire. Pour **YouTube**, la vidéo est rejouée **dans l'application**, via une
- *    petite WebView qui charge la page d'intégration (`youtube-nocookie.com`) ; pour les autres
+ *    petite WebView qui charge la page d'intégration ([youtubeEmbedUrl]) ; pour les autres
  *    services (Vimeo, Dailymotion…), la miniature s'affiche et le tap ouvre la vidéo dans le
  *    navigateur externe.
+ *
+ * **Un seul pattern pour les deux** : l'affiche occupe le bloc, et c'est son tap qui crée le
+ * lecteur ([android.widget.VideoView], ou [YoutubePlayer] — donc la WebView). Une vidéo jamais
+ * lancée ne compose rien et ne charge rien ; `playing` est le seul état, il n'y en a pas un par
+ * lecteur.
  */
 @Composable
 fun VideoPlayer(
@@ -1894,27 +1899,41 @@ fun VideoPlayer(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var videoView by remember { mutableStateOf<android.widget.VideoView?>(null) }
+    // **Rien ne se lit ni ne se charge avant un appui** : l'affiche occupe le bloc, et c'est elle
+    // qui crée le lecteur — `VideoView` pour un fichier média, `YoutubePlayer` (donc la WebView et
+    // la page d'intégration) pour une vidéo YouTube. Un seul état pour les deux cas.
     val playing = remember { mutableStateOf(false) }
 
     // Intégration YouTube : lue dans l'application, via la WebView d'intégration.
     val youtubeId = remember(url) { if (embed) youtubeVideoId(url) else null }
+    val watchUrl = remember(youtubeId) { youtubeId?.let { "https://www.youtube.com/watch?v=$it" } }
 
-    // Intégration (iframe) : la vignette ouvre la vidéo dans le navigateur, pas le lecteur.
-    val onTap: () -> Unit = if (embed) {
+    // Titre de la vidéo, sous le bloc : demandé à l'ouverture de l'article (oEmbed, mis en
+    // cache), pas à la lecture — il sert d'indication avant tout appui et l'ouvre dans YouTube.
+    var title by remember(youtubeId) { mutableStateOf(youtubeId?.let { youtubeTitles[it] }) }
+    LaunchedEffect(youtubeId) {
+        if (youtubeId != null && title == null) title = youtubeTitle(youtubeId)
+    }
+
+    // Affiche : le tap lance la lecture dans l'application (YouTube, fichier média) ou ouvre la
+    // vidéo dans le navigateur (autre service d'intégration, qui n'a pas de lecteur ici).
+    val onTap: () -> Unit = if (youtubeId == null && embed) {
         { openUrl(context, url) }
     } else {
         { playing.value = true }
     }
 
     Column(modifier = modifier) {
-        if (youtubeId != null) {
-            // Lecteur YouTube intégré : la WebView charge le lecteur officiel.
-            YoutubePlayer(videoId = youtubeId, poster = poster)
+        if (youtubeId != null && playing.value) {
+            // Lecteur YouTube : composé **seulement** à l'appui — une intégration que personne ne
+            // regarde n'est ni composée ni chargée.
+            YoutubePlayer(videoId = youtubeId, title = title, poster = poster)
         } else if (!playing.value) {
             // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
             VideoPoster(
                 poster = poster,
-                label = if (embed) "Ouvrir la vidéo" else "Lancer la vidéo",
+                label = if (youtubeId != null) "Lire la vidéo"
+                else if (embed) "Ouvrir la vidéo" else "Lancer la vidéo",
                 onTap = onTap,
                 modifier = Modifier
                     .fillMaxSize()
@@ -1955,6 +1974,13 @@ fun VideoPlayer(
                     videoView?.stopPlayback()
                     videoView = null
                 }
+            }
+        }
+        // Le titre ouvre la vidéo dans YouTube ; sous le lecteur une fois lancé (il y partage la
+        // ligne avec le bouton plein écran, voir [YoutubePlayer]).
+        if (watchUrl != null && !playing.value) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                YoutubeTitleRow(title, watchUrl, modifier = Modifier.weight(1f))
             }
         }
     }
@@ -2430,8 +2456,9 @@ private fun FullscreenToggle(on: Boolean, onClick: () -> Unit) {
  * document** — il n'y a donc rien à poser à la place.
  *
  * Points d'attention :
- *  - **rien n'est chargé avant un appui** : l'affiche occupe le bloc, et la page n'est demandée
- *    qu'au tap ; [youtubeSiteScript] démarre alors la lecture (la page, elle, n'a pas d'autoplay) ;
+ *  - **le lecteur n'existe qu'à l'appui** : [VideoPlayer] montre l'affiche et ne compose ce
+ *    composable (donc la WebView et la page) qu'une fois le bloc touché ; [youtubeSiteScript]
+ *    démarre alors la lecture (la page, elle, n'a pas d'autoplay) ;
  *  - JavaScript et le stockage local sont nécessaires au lecteur YouTube ;
  *  - `mediaPlaybackRequiresUserGesture = false` : sans cela, Chromium refuse de démarrer la
  *    lecture d'une vidéo déclenchée par la page ;
@@ -2447,13 +2474,14 @@ private fun FullscreenToggle(on: Boolean, onClick: () -> Unit) {
  *  - la WebView est une [PlayerWebView], qui **rend la touche Retour à l'application** : Chromium
  *    la consomme dès qu'un média joue, et l'écran ne se quittait alors plus.
  *
- * Le titre de la vidéo est affiché sous le lecteur et l'ouvre dans YouTube, et le plein écran place
- * réellement le lecteur sur tout l'écran ([PlayerFullscreen]) — l'API Fullscreen de la page, elle,
- * est refusée par la WebView.
+ * Le titre ([title], venu de [VideoPlayer] : même ligne qu'avant la lecture) est affiché sous le
+ * lecteur et l'ouvre dans YouTube, et le plein écran place réellement le lecteur sur tout l'écran
+ * ([PlayerFullscreen]) — l'API Fullscreen de la page, elle, est refusée par la WebView.
  */
 @Composable
 fun YoutubePlayer(
     videoId: String,
+    title: String?,
     poster: String?,
     modifier: Modifier = Modifier
 ) {
@@ -2467,9 +2495,8 @@ fun YoutubePlayer(
     // Racine de la fenêtre : c'est là que se pose la vue plein écran.
     val rootView = androidx.compose.ui.platform.LocalView.current.rootView
         as? android.view.ViewGroup
-    // Rien ne se lit avant un appui : la page de lecture démarre d'elle-même dès qu'elle est
-    // chargée (son et image), et un article qui s'ouvre ne doit pas se mettre à jouer.
-    var started by remember(videoId) { mutableStateOf(false) }
+    // Le lecteur n'est composé qu'une fois l'affiche touchée (voir [VideoPlayer]) : la page se
+    // charge donc à ce moment-là, et pas à l'ouverture de l'article.
     var failed by remember(videoId) { mutableStateOf(false) }
     var loaded by remember(videoId) { mutableStateOf(false) }
     var fullscreen by remember(videoId) { mutableStateOf(false) }
@@ -2477,18 +2504,10 @@ fun YoutubePlayer(
     val playerUrl = remember(videoId) { youtubeEmbedUrl(videoId) }
     val watchUrl = remember(videoId) { "https://www.youtube.com/watch?v=$videoId" }
     val screen = remember { PlayerFullscreen() }
-    var title by remember(videoId) { mutableStateOf(youtubeTitles[videoId]) }
 
-    // Le titre est demandé à l'ouverture du bloc, pas à la lecture : il sert aussi d'indication
-    // avant tout appui.
-    LaunchedEffect(videoId) {
-        if (title == null) title = youtubeTitle(videoId)
-    }
     // Filet de sécurité : si la page n'a pas fini de charger (réseau coupé, WebView muette), on
-    // propose l'ouverture dans le navigateur au lieu d'un écran noir. Le délai ne court qu'à
-    // partir du tap — avant, il n'y a rien à charger.
-    LaunchedEffect(videoId, started) {
-        if (!started) return@LaunchedEffect
+    // propose l'ouverture dans le navigateur au lieu d'un écran noir.
+    LaunchedEffect(videoId) {
         kotlinx.coroutines.delay(20_000)
         if (!loaded) failed = true
     }
@@ -2557,8 +2576,8 @@ fun YoutubePlayer(
     // Retour : quitter le plein écran d'abord, quitter l'article ensuite. La touche est confiée à
     // l'activité tant que le lecteur est à l'écran (voir [PlayerBack]) : la hiérarchie de vues la
     // consomme quand la vidéo joue, et aucun de nos gestionnaires ne la recevrait.
-    DisposableEffect(started, failed) {
-        PlayerBack.handler = if (started && !failed) {
+    DisposableEffect(failed) {
+        PlayerBack.handler = if (!failed) {
             {
                 if (fullscreen) fullscreen = false
                 else backDispatcher?.onBackPressed()
@@ -2594,13 +2613,6 @@ fun YoutubePlayer(
                 .clipToBounds()
         ) {
             when {
-                // Affiche seule tant que l'utilisateur n'a pas appuyé : aucune WebView, aucun réseau.
-                !started -> VideoPoster(
-                    poster = poster,
-                    label = "Lire la vidéo",
-                    onTap = { started = true },
-                    modifier = Modifier.fillMaxSize()
-                )
                 // Repli : l'affiche de la vidéo, un tap l'ouvre dans YouTube (navigateur externe).
                 failed -> VideoPoster(
                     poster = poster,
@@ -2680,7 +2692,7 @@ fun YoutubePlayer(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             YoutubeTitleRow(title, watchUrl, modifier = Modifier.weight(1f))
-            if (started && !failed) FullscreenToggle(fullscreen) {
+            if (!failed) FullscreenToggle(fullscreen) {
                 val wv = webView
                 if (wv == null) {
                     fullscreen = !fullscreen

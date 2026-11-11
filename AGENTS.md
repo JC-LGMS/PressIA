@@ -391,11 +391,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     et le tap ouvrait l'application YouTube installée. Les autres services d'intégration (Vimeo,
     Dailymotion…) restent ouverts dans le navigateur. L'affiche est l'image YouTube déduite de
     l'identifiant (`img.youtube.com/vi/<id>/hqdefault.jpg`).
-    **Rien ne se charge avant un appui** : l'affiche occupe le bloc (`VideoPoster`), et le tap
-    seul crée la WebView. La page d'intégration n'a pas d'autoplay : c'est `youtubeSiteScript`
-    qui démarre la lecture (geste de l'utilisateur, `mediaPlaybackRequiresUserGesture = false`
-    aidant) et rétablit le son (`unMute`), YouTube démarrant muet sans geste. Le délai de secours
-    de 20 s ne court qu'à partir du tap.
+    **Un seul pattern pour le fichier média et l'iframe** : `VideoPlayer` porte l'affiche
+    (`VideoPoster`) et le **seul** état de lecture (`playing`) ; c'est l'appui sur l'affiche qui
+    compose le lecteur — `VideoView` d'un côté, `YoutubePlayer` (donc la WebView et sa page) de
+    l'autre. Un lecteur YouTube non lancé n'est **ni composé ni chargé** : ne pas revenir à un
+    `YoutubePlayer` composé d'emblée avec son propre état « lancé » (double affiche, double
+    logique, et un composable vivant pour rien). La page d'intégration n'a pas d'autoplay : c'est
+    `youtubeSiteScript` qui démarre la lecture (geste de l'utilisateur,
+    `mediaPlaybackRequiresUserGesture = false` aidant) et rétablit le son (`unMute`), YouTube
+    démarrant muet sans geste. Le délai de secours de 20 s ne court qu'à partir du tap.
     Deux mesures : `touch-action:none` (`youtubeSiteCss`) évite que Chromium prenne un glissement
     horizontal pour un défilement et l'annule (`pointercancel` au bout de ~15 px) ; et un doigt
     posé sur le lecteur sort du balayage d'article (`detectArticleSwipe`, repère `playerGesture`)
