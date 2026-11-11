@@ -55,10 +55,20 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.lifecycle.LifecycleEventObserver
 import com.pressia.data.PressRepository
+import com.pressia.data.readCapped
 import com.pressia.data.local.ArticleEntity
+import com.pressia.data.local.ThumbStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /** Contenu RSS d'origine d'un article (jamais le HTML extrait par Readability, pour éviter
@@ -502,13 +512,8 @@ fun ArticleScreen(
             val heroUrl = article?.imageUrl?.takeIf { it.startsWith("http") }
             val heroDuplicate = heroUrl != null && blocks.any { it is ABlock.I && isSameImage(it.url, heroUrl) }
             if (heroUrl != null && !fullMode && !heroDuplicate) {
-                coil.compose.AsyncImage(thumbModel(ctx, heroUrl), null,
-                    Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        .combinedClickable(
-                            onClick = { viewerUrl = heroUrl },
-                            onDoubleClick = { fireArticleAction(doubleTap) }
-                        ),
-                    contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
+                ArticleImage(heroUrl, onOpen = { viewerUrl = heroUrl },
+                    onDoubleTap = { fireArticleAction(doubleTap) })
             }
             blocks.forEach { b ->
                 when (b) {
@@ -516,13 +521,8 @@ fun ArticleScreen(
                     // reste d'un seul tenant, le lien ne passe plus à la ligne.
                     is ABlock.T -> ArticleTextBlock(b, MaterialTheme.colorScheme.primary, fontSize)
                     is ABlock.Table -> ArticleTable(b, fontSize)
-                    is ABlock.I -> coil.compose.AsyncImage(thumbModel(ctx, b.url), null,
-                        Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                            .combinedClickable(
-                                onClick = { viewerUrl = b.url },
-                                onDoubleClick = { fireArticleAction(doubleTap) }
-                            ),
-                        contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
+                    is ABlock.I -> ArticleImage(b.url, onOpen = { viewerUrl = b.url },
+                        onDoubleTap = { fireArticleAction(doubleTap) })
                     is ABlock.L -> Text(
                         text = b.text,
                         fontSize = fontSize.sp,
@@ -887,23 +887,196 @@ private fun ArticleScrollBar(state: ScrollState, viewportPx: Int, modifier: Modi
     }
 }
 
-/** Visionneuse plein écran : tap pour fermer, pincement pour zoomer. */
+/**
+ * Une image de l'article : appui pour l'ouvrir en plein écran, appui long pour son menu (copier
+ * son adresse, la partager, la chercher sur Internet).
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ArticleImage(url: String, onOpen: () -> Unit, onDoubleTap: () -> Unit) {
+    val ctx = LocalContext.current
+    // Une URL différente (balayage d'article) referme un menu resté ouvert.
+    var menu by remember(url) { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        coil.compose.AsyncImage(thumbModel(ctx, url), null,
+            Modifier.fillMaxWidth().combinedClickable(
+                onClick = onOpen,
+                onLongClick = { menu = true },
+                onDoubleClick = onDoubleTap
+            ),
+            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
+        ImageActionsMenu(url, menu) { menu = false }
+    }
+}
+
+/**
+ * Menu d'appui long d'une image, dans l'article comme en plein écran. Il porte sur l'image
+ * elle-même : la copier, la partager, la chercher sur Internet (Google Lens, qui part de son
+ * adresse — la recherche, elle, n'a pas d'autre entrée).
+ */
+@Composable
+private fun ImageActionsMenu(url: String, expanded: Boolean, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text("Copier l'image") },
+            leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
+            onClick = {
+                onDismiss()
+                scope.launch {
+                    toast(ctx, if (copyImage(ctx, url)) "Image copiée" else "Image non récupérée")
+                }
+            }
+        )
+        DropdownMenuItem(
+            text = { Text("Partager") },
+            leadingIcon = { Icon(Icons.Filled.Share, null) },
+            onClick = {
+                onDismiss()
+                scope.launch {
+                    if (!shareImage(ctx, url)) toast(ctx, "Image non récupérée")
+                }
+            }
+        )
+        DropdownMenuItem(
+            text = { Text("Rechercher sur Internet") },
+            leadingIcon = { Icon(Icons.Filled.Search, null) },
+            onClick = {
+                openUrl(ctx, "https://lens.google.com/uploadbyurl?url=" + android.net.Uri.encode(url))
+                onDismiss()
+            }
+        )
+    }
+}
+
+/** Copie l'image elle-même dans le presse-papiers (voir [shareUri]). */
+private suspend fun copyImage(ctx: android.content.Context, url: String): Boolean {
+    val uri = shareUri(ctx, url) ?: return false
+    val clip = android.content.ClipData(
+        android.content.ClipDescription("Image", arrayOf("image/*")),
+        android.content.ClipData.Item(uri)
+    )
+    return ctx.getSystemService(android.content.ClipboardManager::class.java)
+        ?.setPrimaryClip(clip) != null
+}
+
+/** Partage l'image elle-même : le fichier part en `EXTRA_STREAM`, lisible par l'application
+ *  choisie (d'où l'autorisation de lecture jointe à l'intent). */
+private suspend fun shareImage(ctx: android.content.Context, url: String): Boolean {
+    val uri = shareUri(ctx, url) ?: return false
+    val i = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "image/*"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    ctx.startActivity(android.content.Intent.createChooser(i, "Partager l'image"))
+    return true
+}
+
+/**
+ * L'image dans le cache de partage, rendue sous forme d'URI `FileProvider` : la copie locale quand
+ * elle existe (miniature du flux, ou image du corps déjà chargée), sinon les octets téléchargés
+ * sous plafond. Depuis Android 10 un `file://` est refusé au presse-papiers comme au partage.
+ */
+private suspend fun shareUri(ctx: android.content.Context, url: String): android.net.Uri? =
+    withContext(Dispatchers.IO) {
+        val local = ThumbStore.cachedFile(ctx, url)
+        val bytes = if (local != null) runCatching { local.readBytes() }.getOrNull()
+        else runCatching {
+            com.pressia.data.readability.Readability.http
+                .newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
+                    if (!r.isSuccessful) null else r.body?.byteStream()
+                        ?.let { readCapped(it, ThumbStore.MAX_SOURCE_BYTES) }
+                }
+        }.getOrNull()
+        if (bytes == null || bytes.isEmpty()) return@withContext null
+        val file = java.io.File(java.io.File(ctx.cacheDir, "partage").apply { mkdirs() },
+            "image." + imageExtension(bytes))
+        if (runCatching { file.writeBytes(bytes) }.isFailure) return@withContext null
+        runCatching {
+            androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+        }.getOrNull()
+    }
+
+/** Extension du fichier copié, d'après les premiers octets (la description posée sur le
+ *  presse-papiers annonce, elle, le type `image` en général). */
+private fun imageExtension(b: ByteArray): String = when {
+    b.size > 8 && b[0] == 0x89.toByte() -> "png"
+    b.size > 8 && b[0] == 'G'.code.toByte() -> "gif"
+    b.size > 12 && b[0] == 'R'.code.toByte() && b[8] == 'W'.code.toByte() -> "webp"
+    else -> "jpg"
+}
+
+/**
+ * Gestes de la visionneuse, en un seul détecteur : un appui simple (`onTap`), un appui maintenu
+ * (`onLongPress`), un double appui (`onDoubleTap`) et un double appui **glissé**, qui pilote le
+ * zoom tant que le doigt n'est pas relevé (`onDragStart` puis `onDrag` avec l'écart vertical en px).
+ *
+ * Un seul détecteur, et non `detectTapGestures` à côté : les deux guettaient le second appui
+ * chacun de leur côté, et celui de la fermeture expirait parfois le premier — le double appui
+ * glissé fermait la visionneuse au lieu de zoomer.
+ */
+private suspend fun PointerInputScope.detectImageGestures(
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onDoubleTap: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        // Doigt posé sans glisser jusqu'au délai d'appui long.
+        if (awaitLongPressOrCancellation(down.id) != null) {
+            if (currentEvent.changes.count { it.pressed } == 1) {
+                onLongPress()
+                waitForUpOrCancellation()
+                return@awaitEachGesture
+            }
+        }
+        // Relevé sans glissement : un appui simple, sauf si un second appui le suit.
+        if (currentEvent.changes.none { it.pressed }) {
+            val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
+                awaitFirstDown(requireUnconsumed = false)
+            }
+            if (second == null) {
+                onTap()
+                return@awaitEachGesture
+            }
+            var moved = false
+            onDragStart()
+            while (true) {
+                val change = awaitPointerEvent().changes.firstOrNull { it.id == second.id } ?: break
+                if (!change.pressed) break
+                val dy = change.position.y - second.position.y
+                if (!moved && kotlin.math.abs(dy) > viewConfiguration.touchSlop) moved = true
+                if (moved) {
+                    onDrag(dy)
+                    change.consume()
+                }
+            }
+            if (!moved) onDoubleTap()
+        }
+    }
+}
+
+/** Visionneuse plein écran : tap pour fermer, pincement pour zoomer, double appui pour zoomer puis
+ *  dézoomer (et, double appui maintenu, zoom au glissement), appui long pour le menu. */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ImageViewer(url: String, onClose: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var menu by remember { mutableStateOf(false) }
+    // Zoom de départ du double appui glissé, posé au premier mouvement.
+    var dragFrom by remember { mutableStateOf<Float?>(null) }
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onClose,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Box(
-            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onClose() })
-                }
-        ) {
+        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
             coil.compose.AsyncImage(
                 // [thumbModel] plutôt que l'URL brute : une image déjà téléchargée (miniature
                 // locale à la synchronisation, ou simple présence dans le cache disque Coil pour
@@ -918,11 +1091,38 @@ private fun ImageViewer(url: String, onClose: () -> Unit) {
                     .transformable(
                         rememberTransformableState { zoom, pan, _ ->
                             scale = (scale * zoom).coerceIn(1f, 5f)
-                            if (scale > 1f) offset += pan else offset = androidx.compose.ui.geometry.Offset.Zero
+                            // Cette couche grossit son contenu : les coordonnées du geste y sont
+                            // divisées par le zoom, d'où le `* scale` (sinon le déplacement est
+                            // lent dès qu'on a zoomé).
+                            if (scale > 1f) offset += pan * scale
+                            else offset = androidx.compose.ui.geometry.Offset.Zero
                         }
-                    ),
+                    )
+                    // Après [transformable] : dans le passage montant, il reçoit le geste en
+                    // premier et peut le consommer avant que le pincement n'en fasse un déplacement.
+                    .pointerInput(Unit) {
+                        detectImageGestures(
+                            onTap = onClose,
+                            onLongPress = { menu = true },
+                            onDoubleTap = {
+                                val target = if (scale > 1.05f) 1f else 2.5f
+                                scope.launch {
+                                    animate(scale, target, animationSpec = tween(200)) { v, _ -> scale = v }
+                                    if (target == 1f) offset = androidx.compose.ui.geometry.Offset.Zero
+                                }
+                            },
+                            onDragStart = { dragFrom = null },
+                            onDrag = { dy ->
+                                val base = dragFrom ?: scale.also { dragFrom = it }
+                                // Glisser vers le haut agrandit, vers le bas réduit.
+                                scale = (base * (1f - dy / 500f)).coerceIn(1f, 5f)
+                                if (scale <= 1f) offset = androidx.compose.ui.geometry.Offset.Zero
+                            }
+                        )
+                    },
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit
             )
+            ImageActionsMenu(url, menu) { menu = false }
         }
     }
 }

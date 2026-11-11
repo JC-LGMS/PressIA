@@ -48,6 +48,28 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.4",
+        listOf(
+            ChangelogItem(
+                "2026-11-11",
+                "Images : menu d'appui long (copier l'image), zoom au double appui dans la visionneuse",
+                "- Dans un article comme dans l'image ouverte en plein écran, un appui long sur une " +
+                    "image ouvre un menu : « Copier l'image », « Partager » et « Rechercher sur " +
+                    "Internet » (Google Lens, qui cherche à partir de l'image). « Copier l'image » " +
+                    "pose l'image elle-même sur le presse-papiers, et « Partager » envoie le fichier " +
+                    "de l'image : elle se colle ou s'envoie comme une photo, sans passer par son " +
+                    "adresse. L'appui simple continue d'ouvrir l'image en plein écran, et le double " +
+                    "appui garde son action.\n" +
+                    "- Visionneuse : le double appui zoome (2,5×), un second double appui dézoome, et " +
+                    "un double appui maintenu puis glissé règle le zoom au doigt tant qu'il n'est " +
+                    "pas relevé. Le déplacement d'une image zoomée suit désormais le doigt : il " +
+                    "fallait tirer cinq fois plus loin à 5× (mesuré : 300 px de doigt = 300 px " +
+                    "d'image).",
+                time = "01:11"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.3",
         listOf(
             ChangelogItem(

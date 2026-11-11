@@ -341,6 +341,27 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   **Les pages de texte ont le même menu** : `SelectableArea` (À propos, Journal des modifications)
   pose le même `SelectionContainer` + barre, avec Coller/Couper en plus quand la zone contient un
   champ éditable.
+- **Appui long sur une image** (dans l'article comme dans la visionneuse plein écran) :
+  `ImageActionsMenu` (même fichier) propose « Copier l'image », « Partager » et « Rechercher sur
+  Internet ». **Copier pose l'image elle-même** sur le presse-papiers : le fichier (copie locale de
+  `ThumbStore` quand elle existe, sinon les octets téléchargés sous plafond) est écrit dans
+  `cacheDir/partage` et exposé par le `FileProvider` du manifeste (`res/xml/file_paths.xml`) —
+  depuis Android 10 un `file://` y est refusé, et la description du clip annonce `image`. Partager
+  envoie ce même fichier (`EXTRA_STREAM` + autorisation de lecture sur l'URI, type `image`) ;
+  seule la recherche part de l'**URL**, Google Lens n'ayant pas d'autre entrée
+  (`lens.google.com/uploadbyurl?url=…`). L'appui
+  simple ouvre toujours la visionneuse, le double appui garde l'action configurée. Les deux images
+  (bannière du flux et blocs du corps) passent par le même composable `ArticleImage` : ne pas leur
+  redonner un `AsyncImage` nu, l'appui long y serait perdu.
+- **Visionneuse plein écran** (`ImageViewer`) : un seul détecteur (`detectImageGestures`) porte
+  l'appui simple (fermer), l'appui long (menu), le double appui (zoom 2,5× animé, puis retour à 1×)
+  et le **double appui glissé** (le zoom suit le doigt tant qu'il n'est pas relevé). Ne pas le
+  remplacer par un `detectTapGestures` à côté pour le double appui : les deux guettaient le second
+  appui chacun de leur côté et celui de la fermeture expirait parfois le premier — le double appui
+  glissé fermait la visionneuse au lieu de zoomer (constaté sur l'émulateur). Le pincement et le
+  déplacement restent à `transformable`, avec `offset += pan * scale` : la couche grossit son
+  contenu, les coordonnées du geste y sont divisées par le zoom (sans le `* scale`, le déplacement
+  est lent dès qu'on a zoomé ; mesuré à l'écran, 300 px de doigt = 300 px d'image à 2,5×).
 - **Vidéos** : deux cas distincts, à ne pas confondre :
   - `<video src="…mp4">` = **fichier média** → `ABlock.V(embed = false)` : affiche (attribut
     `poster`) cliquable, puis `VideoView` (`AndroidView`) en 16/9, pause sur

@@ -42,5 +42,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Copie d'une image dans le presse-papiers : Android n'y accepte qu'un URI de contenu
+             (un `file://` est refusé depuis Android 10). Le fichier vit dans `cacheDir/partage`. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 </manifest>
