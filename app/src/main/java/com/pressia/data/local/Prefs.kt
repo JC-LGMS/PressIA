@@ -75,8 +75,10 @@ class Prefs(private val ctx: Context) {
         val WIFI_ONLY = booleanPreferencesKey("wifi_only")
         val MAX_ITEMS = intPreferencesKey("max_items") // taille max cache par flux
         /**
-         * Mois calendaires d'historique remontés à la connexion d'un compte (0 = sans limite
-         * de temps). Le quota par flux ([MAX_ITEMS]) reste un garde-fou dans tous les cas.
+         * Mois calendaires d'historique (0 = sans limite de temps) : fenêtre remontée à la
+         * connexion d'un compte **et** rétention des articles déjà en base — les plus vieux
+         * que la fenêtre sont supprimés à chaque synchronisation, favoris et « Read later »
+         * exceptés. Le quota par flux ([MAX_ITEMS]) reste un second garde-fou.
          */
         val HISTORY_MONTHS = intPreferencesKey("history_months")
         val IMAGES_OFFLINE = booleanPreferencesKey("images_offline")

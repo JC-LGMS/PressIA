@@ -454,6 +454,13 @@ interface PressDao {
      */
     @Query("SELECT id FROM articles WHERE feedId = :feed AND starred = 0 AND laterSaved = 0 ORDER BY published DESC, id DESC LIMIT -1 OFFSET :keep")
     suspend fun overflowArticleIds(feed: String, keep: Int): List<String>
+    /**
+     * Articles sortis de la fenêtre d'historique : plus vieux que [cutoff], ni étoilés ni
+     * « Read later », et de date connue (0 = âge inconnu, donc jamais expiré). Reprend les
+     * conditions de [com.pressia.data.beyondHistory], qui les documente et se teste en JVM.
+     */
+    @Query("SELECT id FROM articles WHERE published > 0 AND published < :cutoff AND starred = 0 AND laterSaved = 0")
+    suspend fun expiredArticleIds(cutoff: Long): List<String>
     /** Nombre d'articles comptés dans le quota par flux (hors favoris et « Read later »). */
     @Query("SELECT feedId AS feedId, COUNT(*) AS c FROM articles WHERE starred = 0 AND laterSaved = 0 GROUP BY feedId")
     suspend fun quotaCounts(): List<FeedCount>

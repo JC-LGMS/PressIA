@@ -1272,13 +1272,16 @@ fun SettingsScreen(vm: PressVM) {
                 if (historyMonths <= 0) "Durée d'historique hors favoris : sans limite de temps"
                 else "Durée d'historique hors favoris : $historyMonths mois"
             )
-            // 0 = illimité, 1..36 mois calendaires (défaut 1, fenêtre Feedly ~31 j) : ne joue
-            // qu'à la connexion d'un compte, favoris toujours gardés — le quota par flux reste
-            // le garde-fou dans tous les cas.
+            // 0 = illimité, 1..36 mois calendaires (défaut 1, fenêtre Feedly ~31 j) : la
+            // fenêtre borne la synchronisation (pages remontées) **et** la rétention — les
+            // articles plus vieux partent, favoris toujours gardés. Le quota par flux reste
+            // le second garde-fou.
             Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
             Text(
                 "1 mois (défaut) : synchronisation rapide, la fenêtre part directement à Feedly. " +
-                    "Au-delà, la première synchronisation et les rattrapages paginent plus loin et sont plus lents.",
+                    "Les articles plus vieux sont retirés de l'application à chaque synchronisation " +
+                    "(favoris et « à lire plus tard » conservés). Au-delà d'un mois, la première " +
+                    "synchronisation et les rattrapages paginent plus loin et sont plus lents.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

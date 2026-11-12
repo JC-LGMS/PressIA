@@ -531,10 +531,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     étant « déjà téléchargé ».
   - `gcThumbs()` supprime les fichiers dont plus aucun article ne porte l'URL : une `imageUrl`
     perdue rendait donc la vignette orpheline — c'est pour cela que la perte de l'`imageUrl` était
-    si grave. Il tourne **à la fin de chaque synchro** (`syncDown`, juste après `trimToMax`) — un
+    si grave. Il tourne **à la fin de chaque synchro** (`syncDown`, juste après `pruneArticles`) — un
     fichier orphelin naît d'une URL remplacée, d'une passe interrompue ou d'une suppression hors
     des chemins qui purgent eux-mêmes, et sans cette passe il attendait le prochain dépassement de
-    quota — plus aux endroits qui suppriment des articles (`trimToMax` quand il coupe, désabonnement
+    quota — plus aux endroits qui suppriment des articles (`pruneArticles` quand il coupe, désabonnement
     d'un compte, `deleteLocalFeed`, `clearCache`). Coût : un listing de dossier et une requête.
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 : la
   prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits via
@@ -899,6 +899,13 @@ articles et favoris du compte compris).
   illisible — constaté en release sur la liste des articles, « Couldn't read row 54, col 0 from
   CursorWindow », l'application se fermait. `MIGRATION_7_8` coupe une fois les corps déjà en base
   (et remet `fullFetched = 0`, l'article sera ré-extrait à l'ouverture).
+- **« Durée d'historique hors favoris » est une borne de rétention**, pas seulement la fenêtre
+  remontée à la synchronisation : `pruneArticles()` (fin de `syncDown`, ancien `trimToMax`)
+  supprime à chaque passe les articles plus vieux que la fenêtre, selon la règle pure
+  `beyondHistory` (favoris, « Read later » et dates inconnues exceptés), que
+  `dao.expiredArticleIds` reprend en SQL. Avant, `withinHistory` exemptait les articles déjà
+  connus : un article en base survivait indéfiniment à la fenêtre et ne partait qu'au quota par
+  flux. Le quota (`MAX_ITEMS`) reste le second garde-fou.
 - **L'écran article ne lit plus d'articles pour son balayage** : `PressVM.scanIds`
   (`dao.streamIds` → `SELECT id …`) donne les voisins. `SELECT *` chargeait 2000 articles complets,
   HTML compris, à chaque rafraîchissement, pour n'en garder que les identifiants. **Chaque écran à

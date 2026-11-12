@@ -47,6 +47,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.11",
+        listOf(
+            ChangelogItem(
+                "2026-11-12",
+                "Durée d'historique : les articles plus vieux partent vraiment",
+                "- « Durée d'historique hors favoris » ne bornait que ce que la synchronisation " +
+                    "remontait : un article déjà enregistré y restait indéfiniment, seul le quota " +
+                    "par flux le faisait partir. Le réglage est désormais une borne de rétention : " +
+                    "à chaque synchronisation, les articles plus vieux que la fenêtre sont " +
+                    "supprimés de l'application (favoris et « à lire plus tard » conservés, comme " +
+                    "les articles sans date). Le texte d'aide du réglage le dit.",
+                time = "23:21"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.10",
         listOf(
             ChangelogItem(

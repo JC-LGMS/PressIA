@@ -1730,6 +1730,12 @@ class PressLogicTest {
             articles.map { it.id },
             com.pressia.data.withinHistory(articles, 0L, emptySet()).map { it.id }
         )
+        // La retention (suppression en base) suit la meme regle, sans l'exemption des articles
+        // deja connus : c'est elle qui fait partir un vieil article deja enregistre.
+        val expired = articles.filter { com.pressia.data.beyondHistory(it, cutoff) }.map { it.id }
+        assertEquals(listOf("vieux", "vieux-connu"), expired)
+        // Sans limite, rien n'expire.
+        assertTrue(articles.none { com.pressia.data.beyondHistory(it, 0L) })
     }
 
     private fun cal(y: Int, m: Int, d: Int): Long {

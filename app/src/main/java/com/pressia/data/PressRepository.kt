@@ -147,6 +147,17 @@ fun historyCutoffMs(nowMs: Long, months: Int): Long {
 fun historyNewerThan(months: Int, cutoffMs: Long): Long? = if (months == 1) cutoffMs else null
 
 /**
+ * Article sorti de la fenêtre d'historique : plus vieux que [cutoffMs], et ni étoilé ni
+ * « Read later » — la durée est « hors favoris ». Une date inconnue (0) n'expire jamais.
+ *
+ * C'est la règle de la **rétention** (voir `PressRepository.pruneArticles`, qui la reprend en
+ * SQL sur toute la base) autant que du filtrage à l'entrée : `dao.expiredArticleIds` doit
+ * rester d'accord avec ces conditions.
+ */
+fun beyondHistory(a: ArticleEntity, cutoffMs: Long): Boolean =
+    cutoffMs > 0L && publishedMs(a.published) in 1 until cutoffMs && !a.starred && !a.laterSaved
+
+/**
  * Ne garde que les articles dans la fenêtre d'historique — sauf déjà connus (contenu à
  * rafraîchir) ou marqués (favoris, « Read later » : la durée est « hors favoris », et la
  * taille les exempte de toute façon). Sans date (0), on garde : l'âge est inconnu, pas
@@ -158,9 +169,7 @@ fun withinHistory(
     known: Set<String>
 ): List<ArticleEntity> {
     if (cutoffMs <= 0L) return articles
-    return articles.filter { a ->
-        publishedMs(a.published) !in 1 until cutoffMs || a.starred || a.laterSaved || a.id in known
-    }
+    return articles.filter { a -> a.id in known || !beyondHistory(a, cutoffMs) }
 }
 
 /**
@@ -1471,7 +1480,7 @@ class PressRepository(
         }
         replayRestoredStarred()
         replayRestoredRead()
-        trimToMax()
+        pruneArticles()
         // Fichiers de miniatures qu'aucun article ne réclame (URL d'image remplacée, passe
         // interrompue, suppression faite hors des chemins qui purgent eux-mêmes) : la fin de
         // synchro est le moment où la table des articles est fraîche, et une fois par synchro
@@ -1719,8 +1728,8 @@ class PressRepository(
             replayRestoredRead()
             // Même ordre que la synchro normale : la taille avant les miniatures (ni images
             // pour des lignes aussitôt supprimées), listes à jour avant la longue passe.
-            syncStep.value = "Application du quota…"
-            trimToMax()
+            syncStep.value = "Application de la rétention…"
+            pruneArticles()
             pokeLists()
             val withThumbs = imagesAllowed()
             if (withThumbs) syncStep.value = "Téléchargement des images…"
@@ -2532,20 +2541,34 @@ class PressRepository(
         added
     }
 
-    private suspend fun trimToMax() {
-        // Rétention au seul réglage « Articles conservés par flux » : au-delà du quota,
-        // les plus anciens de chaque flux partent — favoris et « Read later » conservés.
-        // Seuls les flux en dépassement sont balayés (détectés en une requête) : les autres
-        // ne peuvent pas avoir gonflé, inutile de les vérifier à chaque synchronisation.
+    private suspend fun pruneArticles() {
+        // Rétention, deux bornes : le réglage « Articles conservés par flux » (au-delà du
+        // quota, les plus anciens de chaque flux partent — favoris et « Read later »
+        // conservés), et la « Durée d'historique hors favoris » (plus vieux que la fenêtre,
+        // même exclusion). Seuls les flux en dépassement de quota sont balayés (détectés en
+        // une requête) : les autres ne peuvent pas avoir gonflé, inutile de les vérifier à
+        // chaque synchronisation.
         val keep = maxItems().coerceAtLeast(1)
         var deleted = 0
         dao.overQuotaFeedIds(keep).forEach { feed ->
             dao.overflowArticleIds(feed, keep).chunked(500).forEach { deleted += dao.deleteArticlesByIds(it) }
         }
         if (deleted > 0) {
-            android.util.Log.i("PressIA", "trimToMax: $deleted articles au-delà du quota ($keep/flux)")
-            gcThumbs()
+            android.util.Log.i("PressIA", "pruneArticles: $deleted articles au-delà du quota ($keep/flux)")
         }
+        // L'historique est une borne de **rétention** et pas seulement de synchronisation :
+        // sans cette passe, les articles déjà en base survivaient à la fenêtre (le filtrage
+        // d'entrée les exempte dès qu'ils sont connus) et ne partaient qu'au quota.
+        val months = prefs.data.first()[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT
+        val cutoff = historyCutoffMs(System.currentTimeMillis(), months)
+        var expired = 0
+        if (cutoff > 0L) {
+            dao.expiredArticleIds(cutoff).chunked(500).forEach { expired += dao.deleteArticlesByIds(it) }
+            if (expired > 0) {
+                android.util.Log.i("PressIA", "pruneArticles: $expired articles hors historique ($months mois)")
+            }
+        }
+        if (deleted + expired > 0) gcThumbs()
     }
 
     /** Supprime les miniatures dont plus aucun article n'a besoin (purge, compte supprimé). */
