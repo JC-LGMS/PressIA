@@ -69,7 +69,9 @@ import com.pressia.data.local.ThumbStore
 import com.pressia.data.remote.cleanTitle
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Clic court uniquement : l'appui long est consommé sans rien déclencher.
@@ -754,6 +756,43 @@ suspend fun LazyGridState.animateToTop() {
     scrollToItem(0)
 }
 
+/** Attente d'une page de plus quand on descend au bas de la liste (voir [LazyListState.scrollToEnd]). */
+private const val SCROLL_END_PAGE_WAIT_MS = 3000L
+
+/**
+ * Descente jusqu'au dernier article du périmètre, et pas seulement de la page chargée.
+ *
+ * La liste est paginée : se poser sur le dernier élément fait demander la page suivante
+ * (`EndReachedEffect` → `loadMoreStream`). On attend donc que la liste grandisse et on
+ * recommence ; sans croissance dans le délai, c'est la fin du périmètre (ou aucune page à
+ * demander, `onEndReached` absent) et l'arrêt est bon.
+ */
+suspend fun LazyListState.scrollToEnd() {
+    while (true) {
+        val n = layoutInfo.totalItemsCount
+        if (n <= 0) return
+        scrollToItem(n - 1)
+        // La page suivante arrive par Room, à la composition suivante.
+        val grew = withTimeoutOrNull(SCROLL_END_PAGE_WAIT_MS) {
+            snapshotFlow { layoutInfo.totalItemsCount }.first { it > n }
+        }
+        if (grew == null) return
+    }
+}
+
+/** Même descente pour la vue magazine (grille d'articles). */
+suspend fun LazyGridState.scrollToEnd() {
+    while (true) {
+        val n = layoutInfo.totalItemsCount
+        if (n <= 0) return
+        scrollToItem(n - 1)
+        val grew = withTimeoutOrNull(SCROLL_END_PAGE_WAIT_MS) {
+            snapshotFlow { layoutInfo.totalItemsCount }.first { it > n }
+        }
+        if (grew == null) return
+    }
+}
+
 /** Nom d'origine lisible : « https://www.lemonde.fr/rss/une.xml » → « lemonde.fr ». */
 fun prettyFeedTitle(title: String?): String {
     if (title.isNullOrBlank()) return ""
@@ -1008,12 +1047,16 @@ fun ArticleList(
                         scope.launch {
                             val info = gridState.layoutInfo
                             val last = (info.totalItemsCount - 1).coerceAtLeast(0)
-                            gridState.animateScrollToItem(
-                                downTarget(
-                                    gridState.firstVisibleItemIndex, unreadStopPos, last,
-                                    info.visibleItemsInfo.size, stopAtUnread
-                                )
+                            val target = downTarget(
+                                gridState.firstVisibleItemIndex, unreadStopPos, last,
+                                info.visibleItemsInfo.size, stopAtUnread
                             )
+                            // L'arrêt sur le dernier non-lu est la fin du flux quand rien de lu ne
+                            // suit : on va alors jusqu'au dernier article du périmètre, en
+                            // chargeant les pages (voir scrollToEnd), pas jusqu'à celle chargée.
+                            val toEnd = target >= last || unreadStopPos < 0 || unreadStopPos >= last
+                            if (toEnd && onEndReached != null) gridState.scrollToEnd()
+                            else gridState.animateScrollToItem(target)
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)
@@ -1079,12 +1122,16 @@ fun ArticleList(
                         scope.launch {
                             val info = listState.layoutInfo
                             val last = (info.totalItemsCount - 1).coerceAtLeast(0)
-                            listState.animateScrollToItem(
-                                downTarget(
-                                    listState.firstVisibleItemIndex, unreadStopPos, last,
-                                    info.visibleItemsInfo.size, stopAtUnread
-                                )
+                            val target = downTarget(
+                                listState.firstVisibleItemIndex, unreadStopPos, last,
+                                info.visibleItemsInfo.size, stopAtUnread
                             )
+                            // L'arrêt sur le dernier non-lu est la fin du flux quand rien de lu ne
+                            // suit : on va alors jusqu'au dernier article du périmètre, en
+                            // chargeant les pages (voir scrollToEnd), pas jusqu'à celle chargée.
+                            val toEnd = target >= last || unreadStopPos < 0 || unreadStopPos >= last
+                            if (toEnd && onEndReached != null) listState.scrollToEnd()
+                            else listState.animateScrollToItem(target)
                         }
                     },
                     modifier = Modifier.align(Alignment.BottomCenter)

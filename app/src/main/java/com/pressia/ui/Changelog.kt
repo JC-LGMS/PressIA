@@ -47,6 +47,23 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.12",
+        listOf(
+            ChangelogItem(
+                "2026-11-12",
+                "Flèche « descendre » : jusqu'au dernier article du flux",
+                "- La liste des articles est paginée : la flèche du bas s'arrêtait au dernier " +
+                    "article chargé (200), et il fallait la represser pour chaque page suivante. " +
+                    "Elle demande maintenant les pages en descendant et se pose sur le dernier " +
+                    "article du périmètre affiché (dossier, flux, Favoris, résultats de " +
+                    "recherche). L'arrêt sur le dernier non-lu reste le premier appui, sauf " +
+                    "quand plus aucun article lu ne suit. Vers le haut, rien ne change : les " +
+                    "pages s'ajoutent en dessous, le haut de la liste est déjà le plus récent.",
+                time = "23:54"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.11",
         listOf(
             ChangelogItem(

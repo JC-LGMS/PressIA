@@ -1138,8 +1138,16 @@ articles et favoris du compte compris).
   continu (`scrollBy(-hauteur d'écran)` + `withFrameNanos`), borné à `TOP_REWIND_MS` (600 ms),
   puis `scrollToItem(0)` pour se poser exactement en haut. Mesures : LazyList plafonne `scrollBy`
   à ~1,2 écran par image et l'émulateur ne rend que ~7 images/s pendant le défilement, d'où la
-  borne de temps. Les trois listes s'en servent (articles, magazine, abonnements) ; le bouton
-  « descendre », lui, garde `animateScrollToItem` (il vise la fin des non-lus).
+  borne de temps. Les trois listes s'en servent (articles, magazine, abonnements).
+- **Bouton « descendre » : le bas de la page n'est pas le bas du flux.** La liste est paginée
+  (200 articles) : `LazyListState.scrollToEnd` / `LazyGridState.scrollToEnd` se posent sur le
+  dernier élément, laissent `EndReachedEffect` demander la page suivante, et recommencent tant
+  que la liste grandit (`SCROLL_END_PAGE_WAIT_MS`, 3 s sans croissance = fin du périmètre —
+  le délai couvre la requête Room d'une page). Le premier appui garde l'arrêt sur le dernier
+  non-lu (`downTarget`) **sauf quand rien de lu ne suit** : là, l'arrêt serait la fin de la
+  page chargée, et le bouton va jusqu'au dernier article du flux. Vers le haut, rien à faire :
+  les pages s'ajoutent **en dessous** (`ORDER BY published DESC`), l'élément 0 est donc déjà
+  le plus récent.
 - Balayage de retour : `rememberBackSwipeState()` + `Modifier.backSwipe(state, onSwipe)` et le
   repère `SwipeBackHint` (`StreamScreen.kt`) sont partagés par `StreamScaffold` et
   `SubscriptionsScreen`. Le détecteur est posé sur la boîte qui **enveloppe** la liste : les lignes
