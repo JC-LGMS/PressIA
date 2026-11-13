@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,9 @@ fun SubscriptionsScreen(
     var moving by remember { mutableStateOf<SubscriptionEntity?>(null) }       // déplacement d'un flux
     var toDelete by remember { mutableStateOf<PressRepository.Folder?>(null) }
     var addingTo by remember { mutableStateOf<PressRepository.Folder?>(null) } // ajout d'un flux local
+    // Précision du compte : inutile quand il n'y a qu'un compte, ou que des flux locaux
+    // (voir `showFeedAccount`) — on ne l'affiche alors nulle part.
+    val showAccount = com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds)
 
     Scaffold(
         topBar = {
@@ -108,9 +113,6 @@ fun SubscriptionsScreen(
             }
         }
     ) { pad ->
-        // Précision du compte : inutile quand il n'y a qu'un compte, ou que des flux locaux
-        // (voir `showFeedAccount`) — on ne l'affiche alors nulle part.
-        val showAccount = com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds)
         val uncategorized = vm.subs.filter { it.categoryId == null }
         val visibleUncategorized = if (hiddenEmpty) uncategorized.filter { (vm.unreads[it.id] ?: 0) > 0 } else uncategorized
         // Tout est lu avec le filtre « sans non-lus » : aucun flux à montrer — le dire
@@ -277,14 +279,32 @@ fun SubscriptionsScreen(
     }
 
     if (creating) {
+        // Le compte qui recevra le dossier : le seul connecté quand il n'y a que lui, sinon
+        // « Local » puis chaque compte (voir `folderOwners`).
+        val owners = com.pressia.data.folderOwners(vm.accounts, vm.localFeeds)
+            .map { it to com.pressia.data.feedAccountLabel(it, vm.accounts) }
         FolderNameDialog(
             title = "Nouveau dossier",
             initial = "",
+            choices = owners,
             onDismiss = { creating = false },
-            onConfirm = { name ->
+            onConfirm = { name, provider ->
                 creating = false
-                vm.createFolder(name) {
-                    toast(ctx, if (it == null) "Dossier non créé" else "Dossier « ${it.label} » créé")
+                vm.createFolder(name, provider) { created ->
+                    toast(
+                        ctx,
+                        when {
+                            created == null -> "Dossier non créé"
+                            com.pressia.data.isLocalProvider(provider) ||
+                                !com.pressia.data.isLocalProvider(created.providers.first()) ->
+                                "Dossier « ${created.label} » créé"
+                            // Inoreader supprime une étiquette vide ; Feedly ne peut rien créer
+                            // sans flux. Le dossier reste local jusqu'au premier flux rangé dedans.
+                            else -> "Dossier « ${created.label} » local : il rejoindra " +
+                                com.pressia.data.serviceLabel(com.pressia.data.providerBase(provider)) +
+                                " au premier flux qui y sera rangé"
+                        }
+                    )
                 }
             }
         )
@@ -294,10 +314,11 @@ fun SubscriptionsScreen(
             title = "Renommer le dossier",
             initial = f.label,
             onDismiss = { editing = null },
-            onConfirm = { name ->
+            onConfirm = { name, _ ->
                 editing = null
-                vm.renameFolder(f, name)
-                toast(ctx, "Dossier renommé")
+                vm.renameFolder(f, name) { ok ->
+                    toast(ctx, if (ok) "Dossier renommé" else "Renommage refusé par le compte")
+                }
             }
         )
     }
@@ -343,31 +364,33 @@ fun SubscriptionsScreen(
             title = { Text("Déplacer « ${prettyFeedTitle(s.title)} »") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    ListItem(
-                        headlineContent = {
-                            Text(
-                                "Sans dossier",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        modifier = Modifier.clickable(enabled = s.categoryId != null) {
-                            moving = null
-                            vm.moveFeed(s.id, null)
-                            toast(ctx, "Déplacé hors de tout dossier")
-                        }
-                    )
+                    // Lignes compactes plutôt que des ListItem : à deux lignes (libellé + compte),
+                    // les ListItem laissaient beaucoup de vide entre les dossiers.
+                    MoveTargetRow(
+                        label = "Sans dossier",
+                        icon = false,
+                        enabled = s.categoryId != null
+                    ) {
+                        moving = null
+                        vm.moveFeed(s.id, null)
+                        toast(ctx, "Déplacé hors de tout dossier")
+                    }
                     vm.folders.forEach { f ->
                         val current = s.categoryId != null && s.categoryId in f.ids
-                        ListItem(
-                            modifier = Modifier.clickable(enabled = !current) {
-                                moving = null
-                                vm.moveFeed(s.id, f)
-                                toast(ctx, "Déplacé dans « ${f.label} »")
-                            },
-                            headlineContent = { Text(f.label + if (current) " (déjà ici)" else "") },
-                            leadingContent = { Icon(Icons.Filled.Folder, null) }
-                        )
+                        MoveTargetRow(
+                            label = f.label,
+                            // Le compte du dossier, sous son nom : deux « News » de comptes
+                            // différents ne se distinguent pas autrement.
+                            account = if (showAccount) f.providers
+                                .map { com.pressia.data.feedAccountLabel(it, vm.accounts) }
+                                .distinct().joinToString(" · ") else null,
+                            hint = if (current) "déjà ici" else null,
+                            enabled = !current
+                        ) {
+                            moving = null
+                            vm.moveFeed(s.id, f)
+                            toast(ctx, "Déplacé dans « ${f.label} »")
+                        }
                     }
                 }
             },
@@ -501,22 +524,91 @@ private fun FolderRow(
     }
 }
 
-/** Saisie du nom d'un dossier (création ou renommage). */
+/**
+ * Saisie du nom d'un dossier (création ou renommage).
+ *
+ * [choices] = comptes entre lesquels choisir le propriétaire du dossier (`id` du compte, libellé) ;
+ * le premier est coché. Rien à choisir quand il n'y en a qu'un : le dossier part chez lui.
+ */
 @Composable
-private fun FolderNameDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun FolderNameDialog(
+    title: String,
+    initial: String,
+    choices: List<Pair<String, String>> = emptyList(),
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
     var name by remember { mutableStateOf(initial) }
+    var owner by remember { mutableStateOf(choices.firstOrNull()?.first ?: com.pressia.data.LOCAL_PROVIDER) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                name, { name = it }, label = { Text("Nom du dossier") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
-            )
+            Column {
+                OutlinedTextField(
+                    name, { name = it }, label = { Text("Nom du dossier") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                if (choices.size > 1) {
+                    Text(
+                        "Créer dans",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+                    choices.forEach { (id, label) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = owner == id, role = Role.RadioButton) { owner = id },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = owner == id, onClick = null)
+                            Text(label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
         },
-        confirmButton = { TextButton({ onConfirm(name) }, enabled = name.isNotBlank()) { Text("Enregistrer") } },
+        confirmButton = { TextButton({ onConfirm(name, owner) }, enabled = name.isNotBlank()) { Text("Enregistrer") } },
         dismissButton = { TextButton(onDismiss) { Text("Annuler") } }
     )
+}
+
+/**
+ * Ligne de la modale de déplacement : libellé, compte du dossier en dessous (petit), icône.
+ *
+ * Compacte exprès : deux lignes de ListItem laissaient un grand vide entre chaque dossier.
+ */
+@Composable
+private fun MoveTargetRow(
+    label: String,
+    account: String? = null,
+    hint: String? = null,
+    icon: Boolean = true,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon) Icon(Icons.Filled.Folder, null, Modifier.size(20.dp)) else Spacer(Modifier.width(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(label + if (hint != null) " ($hint)" else "")
+            if (account != null) {
+                Text(
+                    account,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
 }
 
 /** Saisie de l'URL d'un flux RSS local. */

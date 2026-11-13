@@ -753,18 +753,23 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     // ----- Dossiers -----
-    /** Crée un dossier pour les flux RSS locaux et rouvre l'écran sur la liste à jour. */
-    fun createFolder(label: String, onCreated: (PressRepository.Folder?) -> Unit = {}) = viewModelScope.launch {
-        val id = repo.createFolder(label)
+    /** Crée un dossier (chez le compte choisi quand il le peut) et rouvre l'écran sur la liste à jour. */
+    fun createFolder(
+        label: String,
+        provider: String = com.pressia.data.LOCAL_PROVIDER,
+        onCreated: (PressRepository.Folder?) -> Unit = {}
+    ) = viewModelScope.launch {
+        val id = repo.createFolder(label, provider)
         refreshNow()
         onCreated(folders.firstOrNull { it.id == id })
     }
 
-    fun renameFolder(folder: PressRepository.Folder, label: String) = viewModelScope.launch {
+    fun renameFolder(folder: PressRepository.Folder, label: String, onDone: (Boolean) -> Unit = {}) = viewModelScope.launch {
         // `folder.id` porte le préfixe `merged:` pour un dossier fusionné : c'est ce qui permet
         // au dépôt de renommer tous ses dossiers locaux d'un coup.
-        repo.renameFolder(folder.id, label)
+        val ok = repo.renameFolder(folder.id, label)
         refreshNow()
+        onDone(ok)
     }
 
     fun deleteFolder(folder: PressRepository.Folder) = viewModelScope.launch {
@@ -776,9 +781,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         refreshNow()
     }
 
-    /** Déplace un flux dans un dossier (ou hors de tout dossier avec [folder] à null). */
+    /**
+     * Déplace un flux dans un dossier (ou hors de tout dossier avec [folder] à null).
+     *
+     * Le déplacement part chez le compte : s'il est refusé, le flux reste en place et le
+     * bandeau le dit (un déplacement local seul serait défait à la synchronisation suivante).
+     */
     fun moveFeed(feedId: String, folder: PressRepository.Folder?) = viewModelScope.launch {
-        repo.moveFeedsToFolder(listOf(feedId), folder?.id)
+        if (!repo.moveFeedsToFolder(listOf(feedId), folder?.id)) {
+            syncMsg = "Déplacement refusé par le compte : le flux n'a pas changé de dossier."
+        }
         refreshNow()
     }
 

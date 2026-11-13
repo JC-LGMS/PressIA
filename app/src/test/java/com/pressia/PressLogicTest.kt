@@ -36,6 +36,8 @@ import com.pressia.data.remote.inoreaderAuthHeader
 import com.pressia.data.remote.inoreaderCookieCandidates
 import com.pressia.data.remote.inoreaderCookieHasSession
 import com.pressia.data.remote.providerUsesSaved
+import com.pressia.data.remote.newFolderId
+import com.pressia.data.remote.renamedFolderId
 import com.pressia.data.readability.Readability
 import com.pressia.ui.theme.toHex
 import androidx.compose.ui.graphics.luminance
@@ -158,6 +160,24 @@ class PressLogicTest {
                 "feedly#a",
                 listOf(acc("feedly#a", "moi@exemple.fr"), acc("feedly#b", "autre@exemple.fr"))
             )
+        )
+        // Création d'un dossier : le seul compte en hérite quand il n'y a que lui ; sinon
+        // « Local » d'abord (défaut), puis chaque compte.
+        assertEquals(
+            listOf("feedly#a"),
+            com.pressia.data.folderOwners(listOf(acc("feedly#a")), emptyList())
+        )
+        assertEquals(
+            listOf("local", "feedly#a"),
+            com.pressia.data.folderOwners(listOf(acc("feedly#a")), listOf(local("l1")))
+        )
+        assertEquals(
+            listOf("local", "feedly#a", "inoreader#b"),
+            com.pressia.data.folderOwners(listOf(acc("feedly#a"), acc("inoreader#b")), emptyList())
+        )
+        assertEquals(
+            listOf("local"),
+            com.pressia.data.folderOwners(emptyList(), listOf(local("l1")))
         )
     }
 
@@ -1938,6 +1958,32 @@ class PressLogicTest {
         assertFalse(providerUsesSaved("local"))
         assertFalse(providerUsesSaved(""))
         assertFalse(providerUsesSaved(null))
+    }
+
+    @Test fun `identifiant de dossier apres renommage`() {
+        // Feedly garde l'identifiant (POST sur le meme dossier, verifie en direct).
+        assertEquals("user/u/category/abc", renamedFolderId("feedly", "user/u/category/abc", "Nouveau"))
+        assertEquals("user/u/category/abc", renamedFolderId("feedly#ab12", "user/u/category/abc", "Nouveau"))
+        // Google Reader nomme ses etiquettes : l'identifiant suit le nouveau nom.
+        assertEquals("user/1/label/Nouveau", renamedFolderId("inoreader", "user/1/label/Ancien", "Nouveau"))
+        assertEquals("user/-/label/Favoris", renamedFolderId("freshrss", "user/-/label/Read later", "Favoris"))
+    }
+
+    @Test fun `identifiant de dossier a creer selon le service`() {
+        // Aucun agregateur n'a d'appel « creer un dossier » : il nait en y rangeant un flux.
+        // Feedly garde l'identifiant fourni, d'ou l'UUID tire ici et reutilise tel quel en base.
+        val fy = newFolderId("feedly", "44d0f79f", "Bon plan")!!
+        assertTrue(fy.startsWith("user/44d0f79f/category/"))
+        java.util.UUID.fromString(fy.substringAfterLast('/'))   // leve si ce n'est pas un UUID
+        assertNotEquals(fy, newFolderId("feedly", "44d0f79f", "Bon plan"))
+        // Google Reader (Inoreader, FreshRSS) : le dossier est une etiquette du compte.
+        assertEquals("user/1003656126/label/Informatique", newFolderId("inoreader", "1003656126", " Informatique "))
+        assertEquals("user/-/label/Actualites", newFolderId("freshrss#abc", "-", "Actualites"))
+        // Sans compte, ou sans identifiant distant : rien a creer chez le service.
+        assertNull(newFolderId("local", "-", "X"))
+        assertNull(newFolderId("feedly", "", "X"))
+        assertNull(newFolderId("feedly", null, "X"))
+        assertNull(newFolderId("feedly", "uid", "   "))
     }
 
     @Test fun `opml aller-retour avec dossiers et caracteres speciaux`() {

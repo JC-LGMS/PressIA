@@ -85,6 +85,21 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
                 iconUrl = it.iconUrl, provider = id, url = it.id)
         }
 
+    /**
+     * `POST /v3/subscriptions` sur un flux déjà abonné réécrit son abonnement : la liste des
+     * dossiers envoyée **remplace** celle du serveur (vide = sans dossier). Le titre est
+     * renvoyé tel quel, sinon Feedly le réinitialise au titre du flux.
+     */
+    override suspend fun moveSubscription(token: String?, feedId: String, title: String?, fromCategoryId: String?, to: CategoryEntity?) {
+        val cats = to?.let { listOf(FeedlyCategory(id = it.id, label = it.label)) }.orEmpty()
+        api.updateSubscription(auth(token), FeedlySubscriptionUpdate(id = feedId, title = title, categories = cats))
+    }
+
+    /** `POST /v3/categories/<id>` avec le nouveau libellé : un appel, l'identifiant ne bouge pas. */
+    override suspend fun renameCategory(token: String?, feeds: List<String>, from: CategoryEntity, to: String) {
+        api.updateCategory(auth(token), from.id, FeedlyCategory(id = from.id, label = to))
+    }
+
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
             ?: return StreamPage(emptyList(), null)
@@ -389,6 +404,34 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         return l.subscriptions.map {
             SubscriptionEntity(id = it.id, title = it.title, url = it.url.orEmpty(), siteUrl = it.htmlUrl.orEmpty(),
                 categoryId = it.categories.firstOrNull()?.id, iconUrl = it.iconUrl, provider = id)
+        }
+    }
+    /**
+     * `subscription/edit` avec `ac=edit` : `a` ajoute le dossier, `r` retire l'ancien. Les
+     * paramètres sont ceux de l'API Google Reader — `ac` est l'**action**, pas le dossier
+     * (inversés, le serveur répond « OK » en créant un dossier nommé « edit »). FreshRSS
+     * hérite de ce chemin (même API).
+     */
+    override suspend fun moveSubscription(token: String?, feedId: String, title: String?, fromCategoryId: String?, to: CategoryEntity?) {
+        val add = to?.id
+        val remove = fromCategoryId?.takeIf { it != add }
+        if (add == null && remove == null) return
+        call(token) { h ->
+            apiFor(token).editSubscription(h, feedId, csrf(token, h), add = add, remove = remove)
+        }
+    }
+    /**
+     * L'API Google Reader n'a pas de renommage d'étiquette : chaque flux du dossier est ajouté à
+     * l'étiquette au nouveau nom puis retiré de l'ancienne, que le service supprime une fois
+     * vide (même chemin que le déplacement). FreshRSS hérite de ce comportement.
+     */
+    override suspend fun renameCategory(token: String?, feeds: List<String>, from: CategoryEntity, to: String) {
+        if (feeds.isEmpty()) return
+        val newId = renamedFolderId(id, from.id, to)
+        if (newId == from.id) return
+        call(token) { h ->
+            val t = csrf(token, h)
+            feeds.distinct().forEach { apiFor(token).editSubscription(h, it, t, add = newId, remove = from.id) }
         }
     }
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {

@@ -47,6 +47,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.13",
+        listOf(
+            ChangelogItem(
+                "2026-11-13",
+                "Dossiers : créés chez le compte, déplacements qui tiennent",
+                "- Déplacer un flux dans un dossier ne tenait que jusqu'à la synchronisation " +
+                    "suivante, qui réécrivait son dossier avec ce que disait le compte : le " +
+                    "déplacement part désormais chez le service (Feedly réécrit l'abonnement, " +
+                    "Inoreader et FreshRSS changent l'étiquette), et un refus du compte laisse le " +
+                    "flux en place avec un message. Un dossier qui n'existe que dans l'application " +
+                    "est créé chez le compte du premier flux qu'on y range.\n\n" +
+                    "- Créer un dossier demande **dans quel compte** il doit vivre dès qu'il y a un " +
+                    "choix, et il y est créé vide (Feedly le garde ; Inoreader ne garde pas de " +
+                    "dossier vide, il le reçoit au premier flux rangé dedans) ; le renommer part " +
+                    "aussi chez le compte. Dans « Déplacer vers un dossier », le compte s'affiche " +
+                    "en petit sous chaque dossier, en lignes plus serrées.",
+                time = "00:38"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.12",
         listOf(
             ChangelogItem(

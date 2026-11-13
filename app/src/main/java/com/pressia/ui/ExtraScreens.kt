@@ -1980,8 +1980,8 @@ fun AboutScreen(onChangelog: () -> Unit = {}) {
             Spacer(Modifier.height(16.dp))
             Text(
                 "Lecteur RSS Android développé grâce à OpenCode, Muse Spark 1.3 free et " +
-                    "DeepSeek 4.1 Flash par Jean-Cyril Poiraud (inspiré par Press) : Feedly, Inoreader " +
-                    "ou flux locaux, 100 % Jetpack Compose, lecture hors-ligne et article complet " +
+                    "DeepSeek 4.1 Flash par Jean-Cyril Poiraud (inspiré par Press) : Feedly, Inoreader, " +
+                    "FreshRSS ou flux locaux, 100 % Jetpack Compose, lecture hors-ligne et article complet " +
                     "via Readability.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2239,7 +2239,15 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Dossiers fusionnés ou séparés",
         "« Fusionner » regroupe les dossiers de même nom de tous les comptes comme dans Feedly ; « Séparer » " +
-            "garde un dossier par compte pour ne jamais confondre deux comptes."
+            "garde un dossier par compte pour ne jamais confondre deux comptes. Un dossier appartient à un " +
+            "compte : déplacer un flux (menu de la ligne → « Déplacer vers un dossier ») part chez son " +
+            "agrégateur, et un refus du compte est annoncé au lieu d'être défait à la synchronisation " +
+            "suivante. Dans cette modale, le compte s'affiche en petit sous le nom de chaque dossier. " +
+            "Créer un dossier demande où il doit vivre dès qu'il y a un choix (flux locaux et/ou plusieurs " +
+            "comptes) : il naît vide chez le compte — Feedly le garde ; Inoreader ne garde pas de dossier " +
+            "vide, il le reçoit au premier flux qu'on y range. Le renommer part chez le compte de la même " +
+            "façon, qui réécrirait sinon son nom à la synchronisation suivante. Un dossier qui n'existe que " +
+            "dans l'application est de même créé chez le compte du premier flux qu'on y range."
     ),
     AboutTopic(
         "Limites réseau et session expirée",

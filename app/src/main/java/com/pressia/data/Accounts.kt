@@ -61,6 +61,15 @@ fun showFeedAccount(accounts: List<CloudAccount>, localFeeds: List<SubscriptionE
     accounts.size > 1 || (accounts.isNotEmpty() && localFeeds.isNotEmpty())
 
 /**
+ * Comptes entre lesquels choisir à la création d'un dossier, le premier servant de défaut :
+ * « Local » puis les comptes dès qu'il y a un choix, le seul compte quand il n'y a rien d'autre
+ * à ranger (pas de flux local), et « Local » seul quand aucun compte n'est connecté. Pure, testée.
+ */
+fun folderOwners(accounts: List<CloudAccount>, localFeeds: List<SubscriptionEntity>): List<String> =
+    if (accounts.size == 1 && localFeeds.isEmpty()) listOf(accounts[0].id)
+    else listOf(LOCAL_PROVIDER) + accounts.map { it.id }
+
+/**
  * Compte d'un flux : « Local » pour un flux RSS saisi à la main, sinon le libellé de
  * l'agrégateur (Feedly, Inoreader…) — complété du nom du compte quand plusieurs comptes du même
  * service coexistent, sans quoi deux « Feedly » seraient indiscernables.

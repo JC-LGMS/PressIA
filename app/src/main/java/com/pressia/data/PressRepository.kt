@@ -822,10 +822,14 @@ class PressRepository(
         return if (ids.isEmpty()) emptyList() else dao.subscriptionsForCategories(ids).map { it.id }
     }
 
-    /** Crée un dossier pour les flux RSS locaux ; renvoie son identifiant. */
-    suspend fun createFolder(label: String): String? = withContext(Dispatchers.IO) {
+    /**
+     * Crée un dossier, chez le compte [provider] quand il en est capable, sinon en local ;
+     * renvoie son identifiant.
+     */
+    suspend fun createFolder(label: String, provider: String = LOCAL_PROVIDER): String? = withContext(Dispatchers.IO) {
         val name = label.trim().replace(Regex("\\s+"), " ")
         if (name.isEmpty()) return@withContext null
+        if (!isLocalProvider(provider)) materializeFolder(provider, name)?.let { return@withContext it }
         val slug = name.lowercase().replace("[^a-z0-9]+".toRegex(), "-").trim('-').ifEmpty { "dossier" }
         var id = ""
         var attempt = 0
@@ -837,6 +841,34 @@ class PressRepository(
         if (id.isEmpty()) return@withContext null
         dao.insertCategory(CategoryEntity(id = id, label = name, provider = LOCAL_PROVIDER))
         id
+    }
+
+    /**
+     * Crée un dossier chez un compte, ou rend null quand ce n'est pas possible (service qui ne
+     * garde pas de dossier vide, compte sans flux, compte disparu).
+     *
+     * Aucun agrégateur n'a d'appel « créer un dossier » : le dossier naît en y rangeant un flux.
+     * Feedly garde un dossier vide, on y range donc un flux du compte puis on le remet à sa place
+     * — deux appels, rien de visible pour l'utilisateur. Inoreader, lui, supprime une étiquette
+     * dès qu'elle est vide (vérifié en direct) : le dossier y naîtra au premier flux rangé dedans
+     * (voir [moveFeedsToFolder]), d'où le repli local.
+     */
+    private suspend fun materializeFolder(provider: String, name: String): String? {
+        val account = cloudAccounts().firstOrNull { it.id == provider } ?: return null
+        if (providerBase(account.provider) != "feedly") return null
+        // Le compte a déjà un dossier de ce nom : le réutiliser, sinon chaque création en
+        // ajouterait un homonyme.
+        dao.categories()
+            .firstOrNull { it.provider == provider && it.label.trim().equals(name, ignoreCase = true) }
+            ?.let { return it.id }
+        val id = newFolderId(account.provider, account.userId, name) ?: return null
+        val feed = dao.subscriptions().firstOrNull { it.provider == provider } ?: return null
+        val target = CategoryEntity(id = id, label = name, provider = provider)
+        if (!pushMove(feed, target)) return null
+        // Retour du flux à sa place ; s'il échoue, la synchronisation suivante le replacera.
+        pushMove(feed, dao.categories().firstOrNull { it.id == feed.categoryId })
+        dao.insertCategory(target)
+        return id
     }
 
     /**
@@ -859,17 +891,52 @@ class PressRepository(
     /**
      * Renomme un dossier. Sur un dossier fusionné, tous ses dossiers locaux sont
      * renommés ensemble : en renommer un seul le séparerait aussitôt du groupe.
+     *
+     * Un dossier de compte est renommé **chez le compte d'abord** : la synchronisation réécrit
+     * les libellés avec ce que dit le service, donc un renommage local seul serait défait. Rend
+     * false quand le compte refuse ; rien n'est alors écrit en local.
      */
-    suspend fun renameFolder(id: String, label: String) {
+    suspend fun renameFolder(id: String, label: String): Boolean = withContext(Dispatchers.IO) {
         val name = label.trim().replace(Regex("\\s+"), " ")
-        if (name.isEmpty()) return
+        if (name.isEmpty()) return@withContext false
         val cats = dao.categories()
         val targets = if (id.startsWith(MERGED_PREFIX)) {
             val key = id.removePrefix(MERGED_PREFIX)
             cats.filter { isLocalProvider(it.provider) && it.label.trim().lowercase() == key }
         } else cats.filter { it.id == id }
-        targets.forEach { dao.renameCategory(it.id, name) }
+        var ok = true
+        targets.forEach { cat ->
+            if (!isLocalProvider(cat.provider)) {
+                val account = cloudAccounts().firstOrNull { it.id == cat.provider }
+                if (account != null) {
+                    val feeds = dao.subscriptionsForCategory(cat.id).map { it.id }
+                    if (!pushRename(account, cat, feeds, name)) { ok = false; return@forEach }
+                    // L'API Google Reader tire l'identifiant du nom : le dossier en change.
+                    val newId = renamedFolderId(account.provider, cat.id, name)
+                    if (newId != cat.id) {
+                        dao.insertCategory(CategoryEntity(id = newId, label = name, provider = cat.provider))
+                        dao.moveFeeds(feeds, newId)
+                        dao.deleteCategory(cat.id)
+                    } else dao.renameCategory(cat.id, name)
+                    return@forEach
+                }
+            }
+            dao.renameCategory(cat.id, name)
+        }
+        ok
     }
+
+    /** Pousse le renommage d'un dossier chez son compte ; false quand le service refuse. */
+    private suspend fun pushRename(account: CloudAccount, cat: CategoryEntity, feeds: List<String>, name: String): Boolean =
+        try {
+            providerFor(account.provider).renameCategory(account.token, feeds, cat, name)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("PressIA", "renommage refusé par ${account.provider} : ${e.message}")
+            false
+        }
 
     /**
      * Supprime un dossier ; les flux qu'il contenait restent abonnés et remontent dans
@@ -885,33 +952,107 @@ class PressRepository(
         dao.deleteCategory(cat.id)
     }
 
-/**
+    /**
      * Déplace des flux dans un dossier (ou les en sort avec [categoryId] à null).
      *
      * Un flux est toujours rangé dans un dossier de son propre compte. Sur un dossier
      * fusionné, chaque flux vise donc le dossier de son compte s'il en existe un, à défaut un
      * dossier homonyme qui lui est propre ; sans cela un flux RSS local rangé chez Feedly
      * verrait son dossier s'effacer à la synchronisation suivante.
+     *
+     * Pour un flux de compte, le déplacement part d'abord chez le service : la synchronisation
+     * réécrit le dossier de chaque flux avec ce que dit le compte, donc un déplacement local
+     * seul serait défait. Rend false si le compte a refusé — le flux reste alors où il est.
      */
-    suspend fun moveFeedsToFolder(feedIds: List<String>, categoryId: String?) = withContext(Dispatchers.IO) {
-        if (feedIds.isEmpty()) return@withContext
-        if (categoryId == null) return@withContext dao.moveFeeds(feedIds, null)
+    suspend fun moveFeedsToFolder(feedIds: List<String>, categoryId: String?): Boolean = withContext(Dispatchers.IO) {
+        if (feedIds.isEmpty()) return@withContext true
+        val subs = dao.subscriptions().filter { it.id in feedIds }.associateBy { it.id }
+        if (categoryId == null) {
+            if (!subs.values.all { pushMove(it, null) }) return@withContext false
+            dao.moveFeeds(feedIds, null)
+            return@withContext true
+        }
         val ids = resolveCategoryIds(categoryId).orEmpty()
-        if (ids.isEmpty()) return@withContext
+        if (ids.isEmpty()) return@withContext true
         val cats = dao.categories().filter { it.id in ids }
         // Un identifiant affiché peut ne plus exister (dossier fusionné recomposé, dossier
         // supprimé depuis un autre écran) : l'écrire tel quel dans `subscriptions.categoryId`
         // violait la clé étrangère et faisait planter l'application.
-        if (cats.isEmpty()) return@withContext
-        val subs = dao.subscriptions().filter { it.id in feedIds }.associateBy { it.id }
+        if (cats.isEmpty()) return@withContext true
+        var ok = true
+        // Dossiers locaux remplacés par un dossier du compte, à retirer s'ils restent vides.
+        val replaced = mutableSetOf<String>()
         feedIds.forEach { feedId ->
-            val owner = subs[feedId]?.provider ?: LOCAL_PROVIDER
+            val sub = subs[feedId]
+            val owner = sub?.provider ?: LOCAL_PROVIDER
             // Même compte d'abord, même service ensuite, sinon le premier dossier du lot.
             val target = cats.firstOrNull { sameAccount(it.provider, owner) }
                 ?: cats.firstOrNull { providerBase(it.provider) == providerBase(owner) }
                 ?: cats.first()
-            val dest = if (sameAccount(target.provider, owner)) target.id else localMirror(target.label)
-            dao.moveFeeds(listOf(feedId), dest)
+            if (sameAccount(target.provider, owner) && sub != null) {
+                if (!pushMove(sub, target)) { ok = false; return@forEach }
+                dao.moveFeeds(listOf(feedId), target.id)
+            } else {
+                // Dossier d'un autre compte, ou dossier local : il n'existe pas chez le compte du
+                // flux, qui réécrit le dossier à la synchronisation suivante — y laisser le flux
+                // ne tenait donc qu'une passe. Le dossier est créé chez ce compte (les services le
+                // créent en y rangeant le flux) ; un service qui ne sait pas le faire garde
+                // l'ancien comportement, un dossier local homonyme.
+                val created = if (sub != null) accountFolder(sub, target.label) else null
+                if (sub != null && created != null && pushMove(sub, created)) {
+                    dao.insertCategory(created)
+                    dao.moveFeeds(listOf(feedId), created.id)
+                    if (isLocalProvider(target.provider)) replaced += target.id
+                } else {
+                    dao.moveFeeds(listOf(feedId), localMirror(target.label))
+                }
+            }
+        }
+        // Un dossier local vidé par ce déplacement n'a plus lieu d'être : son équivalent chez le
+        // compte le remplace. Laissé là, il resterait vide, visible en vue « Séparer » et
+        // insupprimable (fusionné avec le dossier du compte, que `deleteFolder` refuse de toucher).
+        replaced.forEach { if (dao.subscriptionsForCategory(it).isEmpty()) dao.deleteCategory(it) }
+        ok
+    }
+
+    /**
+     * Dossier de [label] chez le compte de [sub], créé s'il n'y existe pas encore.
+     *
+     * Rend null quand le flux n'a pas de compte ou quand le service ne sait pas créer de dossier
+     * ([newFolderId]) : l'appelant range alors le flux dans un dossier local homonyme.
+     */
+    private suspend fun accountFolder(sub: SubscriptionEntity, label: String): CategoryEntity? {
+        if (isLocalProvider(sub.provider)) return null
+        val account = cloudAccounts().firstOrNull { it.id == sub.provider } ?: return null
+        val name = label.trim().replace(Regex("\\s+"), " ")
+        if (name.isEmpty()) return null
+        // Le compte a déjà un dossier de ce nom : le réutiliser, sinon chaque déplacement créerait
+        // un dossier homonyme de plus.
+        dao.categories()
+            .firstOrNull { it.provider == sub.provider && it.label.trim().equals(name, ignoreCase = true) }
+            ?.let { return it }
+        val id = newFolderId(account.provider, account.userId, name) ?: return null
+        return CategoryEntity(id = id, label = name, provider = sub.provider)
+    }
+
+    /**
+     * Pousse le déplacement d'un flux sur son compte (voir [FeedProvider.moveSubscription]).
+     * Rend false quand le service refuse : l'appelant laisse alors le flux en place, sinon la
+     * synchronisation suivante le remettrait sans rien dire.
+     */
+    private suspend fun pushMove(sub: SubscriptionEntity, target: CategoryEntity?): Boolean {
+        if (isLocalProvider(sub.provider)) return true
+        // Flux d'un compte disparu entre-temps : rien à pousser, le déplacement local suffit.
+        val account = cloudAccounts().firstOrNull { it.id == sub.provider } ?: return true
+        return try {
+            providerFor(account.provider)
+                .moveSubscription(account.token, sub.id, sub.title, sub.categoryId, target)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("PressIA", "déplacement refusé par ${account.provider} : ${e.message}")
+            false
         }
     }
 

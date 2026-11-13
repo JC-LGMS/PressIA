@@ -92,6 +92,23 @@ interface FeedProvider {
      */
     suspend fun readLaterIds(token: String?, max: Int = 500): IdSet? = null
     /**
+     * Range un flux dans un dossier du compte, côté serveur : sans cela un déplacement fait
+     * dans l'application est défait à la synchronisation suivante, qui réécrit le dossier de
+     * chaque flux avec ce que dit le compte.
+     *
+     * [fromCategoryId] est le dossier actuel du flux **sur le compte**, [to] le dossier visé
+     * (null = sans dossier). Défaut : rien (RSS local, et services sans dossiers).
+     */
+    suspend fun moveSubscription(token: String?, feedId: String, title: String?, fromCategoryId: String?, to: CategoryEntity?) {}
+    /**
+     * Renomme un dossier côté serveur, sans quoi la synchronisation suivante rend son ancien nom.
+     *
+     * [feeds] sont les abonnements rangés dans le dossier : Google Reader n'a pas de renommage
+     * d'étiquette, il faut y déplacer chaque flux ([from] → [to]) puis laisser l'ancienne
+     * disparaître. Défaut : rien (RSS local).
+     */
+    suspend fun renameCategory(token: String?, feeds: List<String>, from: CategoryEntity, to: String) {}
+    /**
      * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
      *
      * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. Le
@@ -189,8 +206,38 @@ fun autoReadAgeMs(providerId: String): Long? =
 fun providerUsesSaved(provider: String?): Boolean =
     providerBase(provider) in setOf("feedly", "inoreader", "freshrss")
 
-/** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */
-fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =
+/**
+ * Identifiant d'un dossier **à créer** chez le service, ou null quand il ne sait pas le faire.
+ *
+ * Aucun agrégateur n'a d'appel « créer un dossier » : le dossier naît en y rangeant un flux.
+ * Chez Feedly, `POST /v3/subscriptions` avec un `category` inconnu crée le dossier **avec
+ * l'identifiant fourni** (vérifié en direct) — d'où l'UUID tiré ici, qui sert ensuite tel quel
+ * en base. Un dossier vide s'obtient en y rangeant un flux puis en le retirant (voir
+ * `PressRepository.materializeFolder`) : `POST /v3/categories` n'accepte aucune création. Inoreader
+ * et FreshRSS créent l'étiquette au premier `subscription/edit` qui l'ajoute
+ * (`a=user/<uid>/label/<nom>`).
+ */
+fun newFolderId(service: String, userId: String?, label: String): String? {
+    val uid = userId?.trim().orEmpty()
+    val name = label.trim()
+    if (uid.isEmpty() || name.isEmpty()) return null
+    return when (providerBase(service)) {
+        "feedly" -> "user/$uid/category/${java.util.UUID.randomUUID()}"
+        "inoreader", "freshrss" -> "user/$uid/label/$name"
+        else -> null
+    }
+}
+
+/**
+ * Identifiant d'un dossier après renommage. Feedly garde le sien (`POST /v3/categories/<id>`,
+ * vérifié en direct) ; l'API Google Reader, elle, nomme ses étiquettes
+ * (`user/<uid>/label/<nom>`) : l'identifiant suit donc le nouveau nom, d'où le recalcul. Pure,
+ * testée.
+ */
+fun renamedFolderId(service: String, id: String, label: String): String =
+    if (providerBase(service) == "feedly") id else id.substringBeforeLast('/') + "/" + label
+
+/** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =
     autoReadAgeMs(providerId)?.let { now - it }
 
 /**

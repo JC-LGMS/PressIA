@@ -15,6 +15,15 @@ import okhttp3.MediaType.Companion.toMediaType
 // ---------- Feedly Cloud API (v3, niveau gratuit suffisant : categories/subscriptions/streams/markers) ----------
 @Serializable data class FeedlyCategory(val id: String, val label: String)
 @Serializable data class FeedlySubscription(val id: String, val title: String? = null, val website: String? = null, val categories: List<FeedlyCategory> = emptyList(), val iconUrl: String? = null)
+/**
+ * Abonnement envoyé au serveur (`POST /v3/subscriptions` sert à la fois à s'abonner et à
+ * modifier) : `categories` **remplace** l'ensemble des dossiers du flux, vide = sans dossier.
+ */
+@Serializable data class FeedlySubscriptionUpdate(
+    val id: String,
+    val title: String? = null,
+    val categories: List<FeedlyCategory> = emptyList()
+)
 @Serializable data class FeedlyEntryOrigin(val streamId: String? = null, val title: String? = null, val htmlUrl: String? = null)
 @Serializable data class FeedlyContent(val content: String? = null, val direction: String? = null)
 @Serializable data class FeedlyEntry(
@@ -53,6 +62,16 @@ interface FeedlyService {
     suspend fun categories(@Header("Authorization") h: String): List<FeedlyCategory>
     @GET("subscriptions")
     suspend fun subscriptions(@Header("Authorization") h: String): List<FeedlySubscription>
+    /** Abonnement ou modification : c'est le chemin d'un déplacement de dossier (voir [FeedlySubscriptionUpdate]). */
+    @POST("subscriptions")
+    suspend fun updateSubscription(@Header("Authorization") h: String, @Body b: FeedlySubscriptionUpdate)
+    /**
+     * Renomme un dossier. C'est la seule écriture de dossier que Feedly accepte :
+     * `POST /v3/categories/<id>` répond 200 et **garde l'identifiant** (vérifié en direct).
+     * Le chemin porte des barres, encodées par Retrofit.
+     */
+    @POST("categories/{id}")
+    suspend fun updateCategory(@Header("Authorization") h: String, @Path("id") id: String, @Body b: FeedlyCategory)
     /** Profil du compte connecté (nom / e-mail affichés dans l'écran Comptes). */
     @GET("profile")
     suspend fun profile(@Header("Authorization") h: String): FeedlyProfile
@@ -151,6 +170,20 @@ interface InoreaderService {
     /** Jeton CSRF : texte nu, d'où `ResponseBody` (le convertisseur JSON le refuserait). */
     @GET("reader/api/0/token")
     suspend fun token(@HeaderMap h: Map<String, String>): ResponseBody
+    /**
+     * Édition d'un abonnement : `ac` est l'action (« edit » ne touche ni au titre ni aux
+     * articles), `a` ajoute le flux à un dossier et `r` l'en retire — identifiants de dossier du
+     * compte. Réponse texte (« OK »), donc `Unit` comme [editTag].
+     */
+    @FormUrlEncoded @POST("reader/api/0/subscription/edit")
+    suspend fun editSubscription(
+        @HeaderMap h: Map<String, String>,
+        @Field("s") stream: String,
+        @Field("T") token: String,
+        @Field("ac") action: String = "edit",
+        @Field("a") add: String? = null,
+        @Field("r") remove: String? = null
+    )
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
     suspend fun userInfo(@HeaderMap h: Map<String, String>): InoreaderUserInfo

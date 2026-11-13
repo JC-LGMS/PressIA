@@ -1204,6 +1204,54 @@ articles et favoris du compte compris).
   **fusionné** s'appelle `merged:…` et n'existe pas dans `categories`, l'écrire tel quel violait
   la clé étrangère et fermait l'application. `moveFeedsToFolder` ne déplace plus vers un
   identifiant inconnu (dossier supprimé ailleurs) : il ne fait rien.
+- **Déplacer un flux part chez le compte** (`FeedProvider.moveSubscription`, appelé par
+  `moveFeedsToFolder`) : la synchronisation réécrit `subscriptions.categoryId` avec ce que dit le
+  service, donc un déplacement local seul revenait en arrière à la passe suivante. Feedly réécrit
+  l'abonnement (`POST /v3/subscriptions` : `categories` **remplace** l'ensemble, vide = sans
+  dossier ; le titre part avec, sinon Feedly le réinitialise au titre du flux) ; Inoreader et
+  FreshRSS passent par `subscription/edit`, où `ac` est l'**action** (`edit`), `a` ajoute le
+  dossier et `r` le retire, avec les identifiants du compte (honorés tels quels, l'alias
+  `user/-/label/…` marche aussi). Inverser `ac` et `a` répond « OK » en créant un dossier nommé
+  « edit » (constaté en direct) : ce sont les paramètres de l'API Google Reader. Un dossier d'un
+  autre compte, ou local, n'a pas d'équivalent chez le service : le flux reçoit alors un dossier
+  local homonyme, comme avant. Si le service refuse, le déplacement local n'est pas écrit et le
+  bandeau le dit (« Déplacement refusé par le compte »), au lieu de repartir en silence à la
+  synchronisation suivante.
+- **Un dossier qui n'existe que localement (ou chez un autre compte) est créé chez le compte du
+  flux** (`accountFolder` → `newFolderId`, `data/remote/FeedProvider.kt`, testé). Aucun agrégateur
+  n'a d'appel « créer un dossier » : il naît en y rangeant un flux, et le déplacement emprunte
+  donc le même chemin que `moveSubscription` — Feedly `POST /v3/subscriptions` avec un
+  `category` inconnu, Inoreader/FreshRSS `subscription/edit` `a=user/<uid>/label/<nom>`.
+  Deux particularités vérifiées en direct : **Feedly garde l'identifiant fourni** (d'où l'UUID
+  tiré par `newFolderId`, réutilisé tel quel en base — le dossier revient identique à la
+  synchronisation suivante) et **n'accepte aucun appel de création** (`POST /v3/categories/<id>`
+  répond `400 unknown category`, `POST /v3/categories` `400 missing id key`) : c'est le
+  déplacement qui le crée (voir la puce suivante pour un dossier vide). Un dossier du compte
+  portant déjà ce nom est réutilisé, sinon
+  chaque déplacement créerait un homonyme de plus. `DELETE /v3/categories/<id encodé>` supprime
+  un dossier chez Feedly (les barres doivent être en `%2F`), mais l'application n'a pas d'action
+  pour le faire : la gestion des dossiers du compte reste celle du service.
+- **Créer un dossier vide** (icône « nouveau dossier » de l'Accueil) demande **dans quel compte**
+  dès qu'il y a un choix (`folderOwners`, pur, testé : le seul compte connecté quand il n'y a pas
+  de flux local, sinon « Local » puis chaque compte, le premier coché). Le dossier est alors créé
+  chez le compte : `materializeFolder` y range **un flux du compte puis le remet à sa place** —
+  c'est le seul moyen, aucun agrégateur n'ayant d'appel « créer un dossier » (Feedly `POST
+  /v3/categories` répond `400 missing id key`, avec ou sans identifiant dans le corps). Feedly
+  garde le dossier vide ; **Inoreader supprime une étiquette dès qu'elle est vide** (vérifié en
+  direct), FreshRSS n'a pas été vérifié : pour eux le dossier est créé **localement** et rejoint
+  le compte au premier flux qu'on y range (`moveFeedsToFolder`), ce que le message final dit.
+- **Renommer un dossier** part chez le compte (`FeedProvider.renameCategory`) : Feedly
+  `POST /v3/categories/<id>` avec le nouveau libellé (200, **l'identifiant est conservé** —
+  vérifié en direct), Inoreader/FreshRSS par un `subscription/edit` **par flux** (`a` nouvelle
+  étiquette, `r` ancienne), faute de renommage d'étiquette dans l'API Google Reader. L'identifiant
+  d'un dossier Google Reader porte le nom (`user/<uid>/label/<nom>`) : `renamedFolderId` (pur,
+  testé) le recalcule et le dossier local est recréé avec ses flux. Un refus du compte laisse le
+  nom en place et le dit (« Renommage refusé par le compte »). Un dossier fusionné n'est renommé
+  que dans ses parties locales : les comptes gardent leur nom.
+- **La modale « Déplacer vers un dossier » affiche le compte sous chaque dossier** (petit, grisé)
+  dès que la précision distingue (`showFeedAccount`) : un dossier fusionné en montre plusieurs
+  (« Inoreader · Feedly »). Les lignes sont compactes (`MoveTargetRow`, pas des `ListItem` : à
+  deux lignes, ils laissaient un grand vide entre les dossiers).
 - **Synchro des flux locaux** : `LocalProvider.onFeed` est appelé à chaque flux reçu (8 en
   parallèle, compteur des flux terminés) et `syncDown` en fait « Réception des articles… (flux
   locaux 2/3 : MiniMachines.net) ». Les miniatures de `syncDown(withThumbs = true)` (ajout d'un
