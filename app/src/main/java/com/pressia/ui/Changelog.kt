@@ -47,6 +47,50 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.15",
+        listOf(
+            ChangelogItem(
+                "2026-11-14",
+                "Synchronisation : file débloquée, comptes en échec nommés",
+                "- Hors ligne, marquer des articles lus ne tente plus le réseau article par article " +
+                    "(un envoi groupé, puis la file.) Une erreur réseau ne fait plus retomber l'envoi " +
+                    "à l'unité : seul un refus du service le justifie.\n\n" +
+                    "- Un compte dont la session est morte ne bloque plus les autres : ses actions " +
+                    "restent en file pour la reconnexion, la passe continue avec les comptes " +
+                    "suivants, et le bandeau propose « Reconnecter ».\n\n" +
+                    "- Un compte en échec (délai dépassé, DNS, HTTP 500) est nommé dans le message " +
+                    "final au lieu d'annoncer « Synchronisation terminée ».\n\n" +
+                    "- Une synchro remplacée (tirage répété vers le bas, déconnexion) n'affiche plus " +
+                    "« Échec de synchronisation : vérifiez la connexion ».\n\n" +
+                    "- Le registre des comptes est écrit sous verrou : une reconnexion et un " +
+                    "renouvellement de jeton simultanés ne perdent plus l'un des deux.",
+                time = "16:20"
+            ),
+            ChangelogItem(
+                "2026-11-14",
+                "Données : transactions, index, mémoire",
+                "- Dossiers et abonnements d'un compte sont remplacés en une seule transaction : " +
+                    "un processus tué entre l'effacement et la réinsertion ne laisse plus un compte " +
+                    "sans abonnements ni des flux détachés de leurs dossiers.\n\n" +
+                    "- Désabonnement d'un flux et déconnexion : l'ordre des suppressions ne laisse " +
+                    "plus d'articles orphelins, et les articles sans flux sont retirés en fin de " +
+                    "synchronisation.\n\n" +
+                    "- Index manquants ajoutés (file de synchronisation, `imageUrl`) : migration " +
+                    "9 → 10. La file n'est plus balayée en entier à chaque lecture, et le nettoyage " +
+                    "des miniatures ne relit plus le HTML des articles.\n\n" +
+                    "- Passe images, écran Doublons et restauration : les colonnes lourdes sont " +
+                    "lues par paquets, et les listes d'identifiants découpées (limite SQLite des " +
+                    "anciens Android).\n\n" +
+                    "- La page d'un article est analysée une fois au lieu de trois, et le choix du " +
+                    "corps se calcule en un parcours : plus de O(n²) sur les longues pages.\n\n" +
+                    "- L'article complet extrait et la date de passage en lu survivent à la " +
+                    "resynchronisation : « passés en lu sans ouvrir » ne retombe plus à zéro et " +
+                    "l'extraction n'est plus à refaire.",
+                time = "16:20"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.14",
         listOf(
             ChangelogItem(

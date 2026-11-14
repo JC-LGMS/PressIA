@@ -183,7 +183,9 @@ object OAuth {
                 val txt = resp.body?.string().orEmpty()
                 val token = Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
                 if (token.isNullOrBlank()) {
-                    android.util.Log.w("PressIA", "Feedly échange PKCE sans jeton : HTTP ${resp.code} ${txt.take(200)}")
+                    // Jamais le corps : si c'est un jeton mais que la forme n'est pas reconnue,
+                    // il partait tel quel dans logcat (`txt.take(200)`).
+                    android.util.Log.w("PressIA", "Feedly échange PKCE sans jeton : HTTP ${resp.code}")
                 }
                 token?.takeIf { it.isNotBlank() }
             } catch (e: Exception) {

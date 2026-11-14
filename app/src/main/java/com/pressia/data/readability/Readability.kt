@@ -80,8 +80,11 @@ object Readability {
                 val bytes = readCapped(body.byteStream(), MAX_PAGE_BYTES)
                     ?: return@withContext FullResult.Failed
                 val html = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
-                if (isBlockedPage(html)) return@withContext FullResult.Blocked
-                val extracted = extract(html, url)
+                // Un seul analyseur pour les trois lectures (blocage, extraction, texte) : la page
+                // était reparsée à chaque étape, sur des pages de plusieurs Mo.
+                val doc = Jsoup.parse(html, url)
+                if (isBlockedPage(doc)) return@withContext FullResult.Blocked
+                val extracted = extract(doc)
                 val text = Jsoup.parse(extracted).text()
                 if (isPaywalledText(text)) return@withContext FullResult.Blocked
                 if (isConsentWallText(text)) return@withContext FullResult.Blocked
@@ -95,9 +98,12 @@ object Readability {
     }
 
     /** Vrai si le HTML ressemble à une page de blocage plutôt qu'à un article. */
-    fun isBlockedPage(html: String): Boolean {
+    fun isBlockedPage(html: String): Boolean = isBlockedPage(Jsoup.parse(html))
+
+    /** Variante qui réutilise un document déjà analysé (voir [extract]). */
+    fun isBlockedPage(doc: org.jsoup.nodes.Document): Boolean {
         return try {
-            val text = norm(Jsoup.parse(html).text())
+            val text = norm(doc.text())
             if (text.length > 3000) return false // un vrai article long n'est pas une page de blocage
             BLOCKED_MARKERS.any { text.contains(it) }
         } catch (_: Exception) { false }
@@ -141,8 +147,10 @@ object Readability {
     /** Un bloc « contenu » ne doit jamais être écarté comme bruit (ex. `article-content--has-sidebar`). */
     private val CONTENT_HINT = Regex("(?i)article|content|post-body|entry")
 
-    fun extract(html: String, baseUri: String): String {
-        val doc = Jsoup.parse(html, baseUri)
+    fun extract(html: String, baseUri: String): String = extract(Jsoup.parse(html, baseUri))
+
+    /** Variante qui réutilise un document déjà analysé (voir [fetchFullResult]). */
+    fun extract(doc: org.jsoup.nodes.Document): String {
         doc.select("script, style, noscript, iframe[src*=ads], form, aside, nav, header, footer").remove()
         // 1) conteneur de contenu explicite (WordPress & co) : évite qu'une newsletter ou un
         // formulaire (texte « consentement ») gagne le score générique, comme sur Frandroid.
@@ -151,17 +159,42 @@ object Readability {
             .filter { it.select("p").size >= 2 || it.text().length >= 300 }
             .maxByOrNull { it.select("p").size * 20 + it.text().length / 100 }
         if (explicit != null) return cleaned(explicit)
-        // 2) repli générique : bloc avec le plus de <p> significatifs
+        // 2) repli générique : bloc avec le plus de <p> significatifs. Le comptage se fait en
+        // **un seul parcours** de <p> et de <a>, accumulé sur leurs ancêtres : réinterroger le
+        // sous-arbre de chaque `div` coûtait O(n²) sur une page longue.
+        val candidates = doc.select("article, main, div, section")
+        val candidateSet = candidates.toHashSet()
+        val pCount = HashMap<org.jsoup.nodes.Element, Int>()
+        val pLen = HashMap<org.jsoup.nodes.Element, Int>()
+        val aCount = HashMap<org.jsoup.nodes.Element, Int>()
+        doc.select("p").forEach { p ->
+            val len = p.text().length
+            var e = p.parent()
+            while (e != null) {
+                if (e in candidateSet) {
+                    pCount[e] = (pCount[e] ?: 0) + 1
+                    pLen[e] = (pLen[e] ?: 0) + len
+                }
+                e = e.parent()
+            }
+        }
+        doc.select("a").forEach { a ->
+            var e = a.parent()
+            while (e != null) {
+                if (e in candidateSet) aCount[e] = (aCount[e] ?: 0) + 1
+                e = e.parent()
+            }
+        }
         var best: org.jsoup.nodes.Element? = null; var bestScore = 0
-        for (el in doc.select("article, main, div, section")) {
+        for (el in candidates) {
             val cls = el.className() + " " + el.id()
             if (NOISE.containsMatchIn(cls) && !CONTENT_HINT.containsMatchIn(cls)) continue
-            val ps = el.select("p")
-            val textLen = ps.sumOf { it.text().length }
-            val score = ps.size * 20 + textLen / 100 - el.select("a").size * 10
-            if (ps.size >= 2 && score > bestScore) { bestScore = score; best = el }
+            val ps = pCount[el] ?: 0
+            if (ps < 2) continue
+            val score = ps * 20 + (pLen[el] ?: 0) / 100 - (aCount[el] ?: 0) * 10
+            if (score > bestScore) { bestScore = score; best = el }
         }
-        val target = best ?: doc.body() ?: return html
+        val target = best ?: doc.body() ?: return doc.outerHtml()
         return cleaned(target)
     }
 

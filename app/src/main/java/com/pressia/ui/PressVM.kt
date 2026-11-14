@@ -205,6 +205,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Années avec des données de lecture (sélecteur « par année »). */
     var statsYears by mutableStateOf<List<Int>>(emptyList())
     var dups by mutableStateOf<List<List<ArticleEntity>>>(emptyList())
+    /** Cache feedId → provider des abonnements, pour `isSavedInAccount` (voir `providersFor`). */
+    private var feedProviders: Map<String, String> = emptyMap()
+    private var providersFor: List<SubscriptionEntity>? = null
     /** Dernier résultat de synchronisation (affiché en snackbar, puis effacé). */
     var syncMsg by mutableStateOf<String?>(null)
     /**
@@ -734,7 +737,10 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                     lockSync()
                     try {
                         syncMsg = "Réception des articles du nouveau flux…"
-                        repo.syncDown(link)
+                        // Sous le verrou de synchro, comme le pipeline : le provider local porte
+                        // ses flux et son rappel d'avancement dans des champs partagés, une passe
+                        // qui se chevauche les écraserait (flux ajouté pendant une synchro).
+                        repo.withSyncLock { repo.syncDown(link) }
                         val n = repo.countArticlesOfFeed(link)
                         result = if (n > 0) LocalFeedResult(true, "Flux ajouté et synchronisé ($n articles).")
                         else LocalFeedResult(true, "Flux ajouté, mais aucun article reçu : l'URL est-elle exacte ?")
@@ -845,6 +851,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         lockSync()
         try {
             return finishSync(repo.syncPipeline())
+        } catch (e: CancellationException) {
+            // Une synchro remplacée (tirage répété, déconnexion) n'est pas un échec : elle est
+            // annulée, et la suivante parlera. Sans ce relais, l'annulation s'affichait comme
+            // « Échec de synchronisation : vérifiez la connexion ».
+            throw e
         } catch (e: Exception) {
             return failSync()
         } finally {
@@ -877,9 +888,20 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         val base = when {
             n > 0 -> "$n nouvel${if (n > 1) "aux" else ""} article${if (n > 1) "s" else ""}"
             rlMsg != null -> rlMsg
+            // Un compte en échec (délai, DNS, HTTP 500) n'apporte aucun article : annoncer
+            // « Synchronisation terminée » faisait passer une passe vide pour une réussite.
+            repo.accountFailures.isNotEmpty() ->
+                "Synchronisation incomplète : " + repo.accountFailures.entries.joinToString(", ") {
+                    "${it.key} (${it.value})"
+                }
             else -> "Synchronisation terminée"
         }
         var msg = if (rlMsg != null && n > 0) "$base. $rlMsg" else base
+        if (n > 0 && repo.accountFailures.isNotEmpty()) {
+            msg += " · " + repo.accountFailures.entries.joinToString(", ") {
+                "${it.key} en échec (${it.value})"
+            }
+        }
         // Détail des échecs (comptes) : la modale « Voir le détail » les nomme un par un.
         syncFailures = fails.map { (label, rl) ->
             label to rateLimitMessage(rl.service, rl.retryAfterSec, rl.header)
@@ -1016,6 +1038,8 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                             syncMsg = try {
                                 if (!repo.isOnline()) "Pas de réseau : synchronisation impossible"
                                 else finishSync(repo.syncPipeline())
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 failSync()
                             }
@@ -1043,8 +1067,17 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         repo.setStarred(id, star)
     }
     /** Article d'un compte dont l'étoile est le « Read later » (Feedly, Inoreader). */
-    fun isSavedInAccount(a: ArticleEntity): Boolean =
-        subs.firstOrNull { it.id == a.feedId }?.provider?.let { providerUsesSaved(it) } == true
+    fun isSavedInAccount(a: ArticleEntity): Boolean {
+        // Recherche linéaire évitée : `starState` est appelé pour chaque ligne de chaque liste,
+        // et reparcourait toute la liste des abonnements à chaque article. La table est
+        // reconstruite quand `subs` change d'identité (chaque rafraîchissement).
+        val list = subs
+        if (providersFor !== list) {
+            feedProviders = list.associate { it.id to it.provider }
+            providersFor = list
+        }
+        return feedProviders[a.feedId]?.let { providerUsesSaved(it) } == true
+    }
     /** Étoile affichée : étoile locale, ou « Read later » du compte. */
     fun starState(a: ArticleEntity): Boolean = a.starred || (isSavedInAccount(a) && a.laterSaved)
     /** Journalise une lecture (viewModelScope : survit à la fermeture de l'écran article). */

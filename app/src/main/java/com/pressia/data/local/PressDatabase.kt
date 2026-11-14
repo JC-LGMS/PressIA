@@ -49,7 +49,10 @@ data class SubscriptionEntity(
         // Requête des images en attente : filtre sur imageCached + tri par published, servis
         // par l'index — les colonnes lourdes (summary/content) sont ensuite lues dans la table,
         // pour les seuls articles en attente (images du corps).
-        Index(value = ["imageCached", "published", "imageUrl"])]
+        Index(value = ["imageCached", "published", "imageUrl"]),
+        // Nettoyage des miniatures (`allThumbUrls`, DISTINCT imageUrl) et cache Coil : sans cet
+        // index, SQLite relisait toute la table, colonne content comprise.
+        Index("imageUrl")]
 )
 data class ArticleEntity(
     @PrimaryKey val id: String, // entryId cloud ou hash lien
@@ -85,7 +88,13 @@ data class ArticleEntity(
 )
 
 /** File de synchronisation bidirectionnelle : actions offline à pousser. */
-@Entity(tableName = "sync_queue")
+@Entity(
+    tableName = "sync_queue",
+    // Toutes les lectures de la file filtrent sur `kind` (lus/non-lus en attente, favoris,
+    // marquage de masse) ou trient sur `createdAt` (page de tête) : sans index, chaque appel
+    // balayait la table entière.
+    indices = [Index("createdAt"), Index("kind")]
+)
 data class SyncActionEntity(
     @PrimaryKey(autoGenerate = true) val rowId: Long = 0L,
     val articleId: String,
@@ -214,6 +223,13 @@ interface PressDao {
      */
     @Query("DELETE FROM articles WHERE feedId NOT IN (SELECT id FROM subscriptions)")
     suspend fun deleteOrphanArticles(): Int
+    /**
+     * Variante sûre en fin de synchronisation : les favoris (étoile PressIA ou « Read later »)
+     * d'un flux non abonné sont **conservés** — le tableau « Read later » d'un compte contient
+     * des articles de flux qu'on ne suit pas, et [deleteOrphanArticles] les emporterait.
+     */
+    @Query("DELETE FROM articles WHERE feedId NOT IN (SELECT id FROM subscriptions) AND starred = 0 AND laterSaved = 0")
+    suspend fun deleteUnsavedOrphanArticles(): Int
 
     // --- Articles ---
     @Query("SELECT * FROM articles WHERE id = :id")
@@ -279,7 +295,7 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, laterProvider, imageCached, unread, readAt, imageUrl, feedTitle FROM articles WHERE id IN (:ids)")
+    @Query("SELECT id, starred, laterSaved, laterProvider, imageCached, unread, readAt, imageUrl, feedTitle, fullFetched, content FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
@@ -380,8 +396,14 @@ interface PressDao {
      * lourdes (`summary`, `content`) sont lues ici exprès : c'est de là que sortent les images
      * du corps, que l'index couvrant ne contient pas.
      */
-    @Query("SELECT id, feedId, feedTitle, title, imageUrl, url, summary, content FROM articles WHERE imageCached = 0 ORDER BY published DESC")
+    @Query("SELECT id, feedId, feedTitle, title, imageUrl, url FROM articles WHERE imageCached = 0 ORDER BY published DESC")
     suspend fun articlesPendingImages(): List<PendingArticleImages>
+    /**
+     * HTML des articles d'un paquet (voir [articlesPendingImages]) : la passe miniatures les lit
+     * par paquets de 200 au lieu de charger **tous** les corps en mémoire d'un coup.
+     */
+    @Query("SELECT id, imageUrl, url, summary, content FROM articles WHERE id IN (:ids)")
+    suspend fun mediaOfIds(ids: List<String>): List<ArticleMediaById>
     /** Toutes les miniatures déclarées : sert au nettoyage des fichiers locaux orphelins. */
     @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageUrl IS NOT NULL AND imageUrl != ''")
     suspend fun allThumbUrls(): List<String>
@@ -471,13 +493,18 @@ interface PressDao {
      * Tous les articles non lus dont le titre normalisé apparaît plusieurs fois, du plus récent
      * au plus ancien. **Sans plafond** : un `LIMIT` sur les groupes les plus récents rendait
      * invisibles les doublons plus anciens (l'écran annonçait alors « aucun doublon »).
+     *
+     * Seules les colonnes affichées sont demandées : `content` et `summary` (des dizaines de
+     * kilo-octets par ligne) n'ont aucune part dans cet écran, et `SELECT *` les chargeait tous
+     * en mémoire.
      */
     @Query(
-        "SELECT * FROM articles WHERE unread = 1 AND titleHash != '' AND titleHash IN (" +
+        "SELECT id, title, feedId, feedTitle, published, unread, titleHash FROM articles " +
+            "WHERE unread = 1 AND titleHash != '' AND titleHash IN (" +
             "SELECT titleHash FROM articles WHERE unread = 1 AND titleHash != '' " +
             "GROUP BY titleHash HAVING COUNT(*) > 1) ORDER BY published DESC, id DESC"
     )
-    suspend fun unreadDuplicates(): List<ArticleEntity>
+    suspend fun unreadDuplicates(): List<DuplicateRow>
 
     // --- Recherche périmètre (FTS simplifié via LIKE, suffisant offline) ---
     /**
@@ -503,6 +530,14 @@ interface PressDao {
     @Query("SELECT * FROM sync_queue ORDER BY createdAt LIMIT 100")
     suspend fun pendingSync(): List<SyncActionEntity>
     /**
+     * Page de tête en **ignorant** les flux d'un compte hors jeu (session morte) : leurs lignes
+     * restent dans la file pour la reconnexion, mais 100 lignes mortes en tête ne doivent pas
+     * empêcher les autres comptes d'être poussés. [skipEmpty] = 1 quand [skipFeeds] est vide
+     * (`NOT IN ()` est invalide en SQLite).
+     */
+    @Query("SELECT * FROM sync_queue WHERE (:skipEmpty = 1 OR COALESCE(feedId, '') NOT IN (:skipFeeds)) ORDER BY createdAt LIMIT 100")
+    suspend fun pendingSyncExcept(skipFeeds: List<String>, skipEmpty: Int): List<SyncActionEntity>
+    /**
      * Articles avec une action lu/non-lu en attente, **toute la file** : la réconciliation
      * doit les protéger en entier. Avec la page de [pendingSync] (100 lignes), un marquage
      * groupé de plusieurs centaines d'articles n'était protégé qu'en partie, et la
@@ -523,6 +558,9 @@ interface PressDao {
     suspend fun pendingUnsavedIds(): List<String>
     @Query("DELETE FROM sync_queue WHERE rowId = :rowId")
     suspend fun dequeue(rowId: Long)
+    /** Retire plusieurs lignes d'un coup (une requête par paquet au lieu d'une par ligne). */
+    @Query("DELETE FROM sync_queue WHERE rowId IN (:rowIds)")
+    suspend fun dequeueAll(rowIds: List<Long>)
     /** Oublie les actions d'un compte supprimé : sans flux, elles partiraient chez un
      * compte survivant (voir `accountFor`), en pure perte. Ne jamais appeler avec une
      * liste vide (`IN ()` invalide) — l'appelant garde le cas courant. */
@@ -622,8 +660,17 @@ data class FeedCount(val feedId: String, val c: Int)
 data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
 /** Images d'un article d'un flux supprimé (voir [PressDao.articleMediaOfFeed]). */
 data class ArticleMedia(val imageUrl: String?, val url: String, val summary: String?, val content: String?)
-/** Article dont les images restent à récupérer (voir [PressDao.articlesPendingImages]). */
-data class PendingArticleImages(
+/** Ligne de l'écran Doublons : seules les colonnes affichées (voir [PressDao.unreadDuplicates]). */
+data class DuplicateRow(
+    val id: String,
+    val title: String,
+    val feedId: String,
+    val feedTitle: String,
+    val published: Long,
+    val unread: Boolean,
+    val titleHash: String
+)
+/** Article dont les images restent à récupérer (voir [PressDao.articlesPendingImages]). */data class PendingArticleImages(
     val id: String,
     val feedId: String = "",
     /** Titre du flux figé à l'enregistrement : sert à nommer le flux d'une image en échec. */
@@ -631,10 +678,10 @@ data class PendingArticleImages(
     /** Titre de l'article : nomme l'image en échec dans le détail du bandeau de synchro. */
     val title: String = "",
     val imageUrl: String?,
-    val url: String,
-    val summary: String?,
-    val content: String?
+    val url: String
 )
+/** Médias d'un article relus par paquet pour la passe miniatures (voir [PressDao.mediaOfIds]). */
+data class ArticleMediaById(val id: String, val imageUrl: String?, val url: String, val summary: String?, val content: String?)
 /** Clé naturelle d'un évènement de lecture (voir [PressDao.readingKeys]). */
 data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
@@ -658,7 +705,10 @@ data class ArticleFlags(
      */
     val imageUrl: String? = null,
     /** Titre du flux enregistré avec l'article : conservé si la nouvelle version n'en porte pas. */
-    val feedTitle: String = ""
+    val feedTitle: String = "",
+    /** Article complet déjà extrait (Readability) : son HTML est repris tel quel. */
+    val fullFetched: Boolean = false,
+    val content: String? = null
 )
 
 /**
@@ -688,7 +738,7 @@ fun capArticleHtml(html: String?): String? =
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],
-    version = 9, exportSchema = false
+    version = 10, exportSchema = false
 )
 abstract class PressDatabase : RoomDatabase() {
     abstract fun dao(): PressDao
@@ -801,6 +851,19 @@ abstract class PressDatabase : RoomDatabase() {
         val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `articles` ADD COLUMN `laterProvider` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+        /**
+         * v9 → v10 : index manquants. La file de synchronisation était balayée en entier à chaque
+         * lecture (filtre `kind`, tri `createdAt`) et le nettoyage des miniatures
+         * (`DISTINCT imageUrl`) relisait toute la table, colonne `content` comprise, faute d'un
+         * index sur `imageUrl` que l'index composite ne remplace pas.
+         */
+        val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_articles_imageUrl` ON `articles` (`imageUrl`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_queue_createdAt` ON `sync_queue` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sync_queue_kind` ON `sync_queue` (`kind`)")
             }
         }
     }

@@ -1,67 +1,83 @@
-# PressIA — successeur moderne de Press (lecteur Feedly/offline)
+# PressIA — lecteur RSS Android, successeur moderne de Press
 
-UI et fonctions inspirés de **Press 1.5.4** :
-- Drawer catégories / abonnements, flux stream, lu/non-lu, favoris, thèmes clair/sombre (+AMOLED), partage système, hors-ligne complet, sync planifiée, Wi-Fi only, taille max du cache, images offline, taille police, vues liste/carte/magazine, article complet via double-tap (Readability maison).
-- Non dépendant de Feedly Pro : fonctionne avec le niveau gratuit Feedly Cloud v3, **Inoreader** (`https://www.inoreader.com/`), ou **100 % local RSS/Atom** sans compte.
+Lecteur RSS/Atom 100 % Jetpack Compose, hors-ligne d'abord : Feedly, Inoreader,
+FreshRSS ou flux locaux, avec dossiers, lu/non-lu, favoris, article complet et
+images conservés sur l'appareil.
 
-Ajouts demandés :
-- **Recherche avec périmètre** : racine = tous les flux ; dossier/flux = périmètre courant (serveur si dispo, sinon LIKE offline).
-- **Déduplication** : hash titre+lien (`dedupHash`), écran Doublons, marquage lu manuel / « tout sauf le + récent ».
-- **Stats de lecture** : total 30 j, top flux, activité/jour (tables `reading_events` + `extract_events`).
-- **Multi-comptes** : plusieurs comptes Feedly/Inoreader coexistent, chacun identifié par `service#empreinte-du-jeton` (`Accounts.kt`), sans jamais se confondre.
-- **Sauvegarde/restauration** : export JSON sectionné — préférences, stats, comptes/flux, favoris ; les jetons ne sont jamais exportés par défaut (`Backup.kt`).
+## Ce que fait l'application
 
-## Vidéo YouTube (intégrée)
-
-- Le lecteur est désormais une **WebView** qui charge la page de lecture (`m.youtube.com/watch`) au lieu de l'intégration (`youtube.com/embed/…`) : l'application peut contrôler la lecture et la visibilité de manière fiable.
-- **Contrôles** injectés dans la page :
-  - Surface transparente (`#pressia-shade`) sur toute la vidéo : simple appui → lecture/pause ; double appui à gauche/droite = ±10 s.
-  - Barre en bas (`#pressia-bar`, 50 px) : lecture/pause, temps écoulé / durée, barre de progression (appui/glissement), son, réglages.
-  - Menu (`#pressia-menu`) : vitesse de lecture (0,5× à 2×) et « Lecture en boucle ».
-- Le **son est géré par l'application** : l'utilisateur peut couper/restaurer le son ; l'icône suit cet état, pas celui du lecteur YouTube lui-même.
-- **Plus d'écran noir** : la page de lecture ne se lance plus vide ; l'affiche et le bouton d'ouverture restent visibles jusqu'à la première interaction.
+- **Comptes** : Feedly et Inoreader par leur page officielle intégrée (jeton de
+  session ou cookie repris automatiquement), FreshRSS par l'adresse du serveur
+  avec identifiant et mot de passe, et des flux RSS/Atom saisis à la main, sans
+  compte. Plusieurs comptes coexistent sans se confondre.
+- **Dossiers** : fusionnés (même nom chez tous les comptes) ou séparés (un
+  dossier par compte). Créer, renommer ou supprimer un dossier part chez le
+  compte qui le porte ; l'application le crée chez lui au premier flux rangé
+  dedans, et affiche le compte sous chaque dossier au déplacement.
+- **Lecture** : quatre vues (liste, carte, magazine, compacte), quatre tailles de
+  police, thème clair/sombre/AMOLED et apparence automatique selon la lumière
+  ambiante. Un article ouvert est conservé hors-ligne (extrait du flux, images).
+- **Article complet** : extraction Readability maison (Jsoup) au double-tap,
+  conservée en base et préservée par les resynchronisations.
+- **Vidéos** : YouTube lu dans l'article (lecteur intégré, plein écran de
+  l'application, titre sous le lecteur) ; un fichier vidéo d'un flux se lit dans
+  la page.
+- **Recherche locale** (titre, auteur, ou texte), **doublons** (titre normalisé,
+  groupés, « tout sauf le plus récent »), **statistiques de lecture**
+  (ouvertures, temps par flux, activité par jour, passés en lu sans ouvrir).
+- **Hors-ligne** : file montante des lus/étoiles poussée au retour du réseau,
+  images et miniatures téléchargées sous plafond, réglages « Wi-Fi uniquement »,
+  quota par flux et durée d'historique.
+- **Sauvegarde** : export/import JSON par sections (réglages, stats, comptes,
+  favoris et lus, jetons seulement si demandés), OPML pour les flux locaux, et
+  copie automatique silencieuse pour la sauvegarde Google du téléphone.
 
 ## Structure
-- `data/local` : Room (`categories`, `subscriptions`, `articles`, `sync_queue`, `reading_events`, `extract_events`) + DataStore `Prefs`.
-- `data/remote` : interface `FeedProvider` (`FeedProvider.kt`) et `Providers.kt` (`FeedlyProvider` OAuth2 + `cloud.feedly.com/v3`, `InoreaderProvider` (`inoreader.com/reader/api/0`), `LocalProvider`), `CloudApis.kt` (modèles + services Retrofit/kotlinx-serialization), `LocalRssFetcher.kt` (parsing RSS/Atom), `OAuth` (URLs d'autorisation, échange code→jeton, deep link `pressia://oauth`).
-- `data` : `PressRepository` offline-first (lecture Room, `syncDown`, `pushQueue` bidirectionnelle, `ensureFull`, `syncReadLater`), `Accounts.kt` (registre de comptes), `Backup.kt` (export/import JSON).
-- `data/sync` : `SyncWorker` (WorkManager périodique, contraintes Wi-Fi, synchro « Read later ») ; miniatures via `ThumbStore` (`SHA-1(url).jpg`, taille de la plus grande miniature affichée) et `syncThumbs()` (appelé en fin de `syncDown`, `syncReadLater` et `backfill`).
-- `data/readability` : extraction article complet Jsoup (double-tap).
-- `di` : `Locator` (instanciation manuelle du repository, partagée UI et WorkManager).
-- `ui` : Compose Material3 (drawer, stream, abonnements, article, recherche, doublons, stats, réglages, comptes) autour du `PressVM` ; `Components.kt` et `ExtraScreens.kt` regroupent les écrans secondaires.
-- Vues articles : liste / carte / magazine / **compacte** (favicon ou initiale, petits titres/dates).
-- Accueil au choix : **Abonnements** (dossiers + compteurs non-lus) ou **Tous les flux**.
-- Bouton de raccourci par ligne au choix : favori / lu-non-lu / partage.
-- Article : bouton marquer non-lu, site d'origine, drawer accessible, pas de titre redondant.
-- Réglages : tailles de police titres/dates/textes, thème aussi dans le drawer, cache jusqu'à 10 000 articles/flux, fréquence de sync séparée.
-- Article : titre redimensionnable et cliquable (navigateur), site + date sur une ligne, image principale + images inline, notice FR si extraction bloquée.
-- Couleur dominante configurable (rouge/bleu/vert/violet/orange), pastilles lu/non-lu grises, favicon dans le drawer et le top-bar, toggle rapide lus/non-lus (œil), snackbar de résultat de sync, surbrillance drawer pilotée par la navigation (retour arrière correct).
-- Favicons réels (service `s2/favicons` via host, cache Coil offline, initiale en repli), nom de site `prettyFeedTitle`, palettes couleur dominante + fond, titre d'article redimensionnable/cliquable avec images inline, pastilles grises réduites, thème dans l'en-tête du drawer.
 
-## Comptes (100 % in-app, sans navigateur externe)
-**Feedly : aucun identifiant à renseigner.** Écran **Comptes → « Se connecter avec Feedly »**
-(`FeedlySignInScreen`) : la page de connexion officielle s'ouvre dans une WebView intégrée,
-l'utilisateur y saisit ses identifiants habituels (e-mail/mot de passe, Google, Apple),
-puis PressIA récupère automatiquement le jeton de session (stockage web, cookies en filet),
-le vérifie, enregistre le compte et revient. Pas de `FEEDLY_CLIENT_ID` à créer : ce flux
-utilise le `client_id=feedly` public (+ PKCE).
-**Inoreader et variante OAuth générique** : la WebView charge la page d'autorisation, intercepte le retour
-`pressia://oauth/…`, échange le code contre un jeton (`OAuth.feedlyToken` / `inoreaderToken`)
-et enregistre le compte.
-Redirect URIs (à déclarer telles quelles dans votre app Feedly/Inoreader) :
-`pressia://oauth/feedly`, `pressia://oauth/inoreader` (aussi déclarées en deep link manifest en secours).
+- `data/local` : Room (`categories`, `subscriptions`, `articles`, `sync_queue`,
+  `reading_events`, `extract_events`) + DataStore `Prefs`.
+- `data/remote` : contrat `FeedProvider` et ses implémentations
+  (`FeedlyProvider`, `InoreaderProvider` — FreshRSS en hérite —, `LocalProvider`),
+  services Retrofit (`CloudApis.kt`), analyseur RSS/Atom (`LocalRssFetcher.kt`),
+  OAuth (`OAuth.kt`).
+- `data` : `PressRepository` (synchro descendante et montante, images, rétention),
+  registre des comptes (`Accounts.kt`), sauvegarde (`Backup.kt`, `AutoBackup.kt`,
+  `Opml.kt`), lectures plafonnées (`Bytes.kt`).
+- `data/readability` : extraction du corps d'article (Jsoup).
+- `di/Locator.kt` : instanciation partagée du dépôt.
+- `ui` : Compose Material3 autour de `PressVM` (liste, article, abonnements,
+  recherche, doublons, favoris, stats, réglages, comptes, journal).
 
-## À propos / Journal des modifications
+Aucune vue XML : les quatre présentations d'article sont des branches d'un même
+composable (`ArticleRow`).
 
-Le journal des modifications (changements consignés par version, avec date et heure de chaque commit) est visible dans l'application : toucher le **numéro de version** (bas du tiroir ou écran À propos) ouvre la page `ChangelogScreen`. Cette page lit `CHANGELOG` (`data/ui/Changelog.kt`) : chaque version et chaque item y sont saisis à chaque commit significatif, avec le titre et le détail du message de commit, ainsi que l'heure (`HH:mm`).
+## Comptes
 
-Le historique initial (208 commits, jusqu'au 2026-10-25) est conservé dans `CHANGELOG_HISTORY` et ne change plus.
+**Feedly** : « Se connecter avec Feedly » ouvre la page officielle dans une
+WebView ; le jeton de session est repris et vérifié, sans identifiant
+d'application à créer.
+
+**Inoreader** : même principe (page du site, cookie `al`), ou la connexion OAuth
+si vous déclarez votre propre application (`pressia://oauth/inoreader`).
+L'API exige aussi l'« authentification applicative » (`AppId`/`AppKey`), fournie
+par défaut avec celles de l'extension officielle et remplaçables dans Comptes.
+
+**FreshRSS** : adresse du serveur (API Google Reader active), identifiant et mot
+de passe. Un serveur en HTTP simple se saisit avec `http://`.
 
 ## Build
+
 ```powershell
-$env:FEEDLY_CLIENT_ID="..."
-./gradlew :app:assembleDebug
-./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug          # APK debug
+./gradlew :app:testDebugUnitTest      # tests unitaires (JVM)
 ```
 
-Min SDK 26, target/compile 34, Kotlin 2.0, Compose 1.7.8 (BOM 2025.03.01), Material3 1.3.2, Room 2.6.1, DataStore 1.1, WorkManager 2.9 (annulation des synchros planifiées d'anciennes versions), Coil 2.6, Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.
+Min SDK 26, target/compile 34. Kotlin 2.0, Compose 1.7.8 (BOM 2025.03.01),
+Material3 1.3.2, Room 2.6.1, DataStore 1.1, Coil 2.6 (SVG compris),
+Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.
+
+## Version et journal
+
+Le numéro de version avance à chaque modification livrée. Toucher le numéro de
+version (bas du tiroir ou écran À propos) ouvre le journal des modifications,
+qui liste chaque changement avec sa date, son heure et son détail.

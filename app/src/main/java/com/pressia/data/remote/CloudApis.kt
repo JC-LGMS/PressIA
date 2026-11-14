@@ -121,9 +121,14 @@ interface FeedlyService {
     companion object {
         fun create(): FeedlyService {
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
-            val client = OkHttpClient.Builder()
-                .addInterceptor(HttpLoggingInterceptor().setLevel(HttpLoggingInterceptor.Level.BASIC))
-                .build()
+            val builder = OkHttpClient.Builder()
+            // Journal d'URL **en debug seulement** : en release, chaque appel écrivait dans
+            // logcat l'URL complète (identifiants de flux, streamId=user/<uid>/…), lisible par
+            // toute application ayant READ_LOGS sur les anciens Android.
+            if (BuildConfig.DEBUG) {
+                builder.addInterceptor(HttpLoggingInterceptor().setLevel(HttpLoggingInterceptor.Level.BASIC))
+            }
+            val client = builder.build()
             return Retrofit.Builder().baseUrl("https://cloud.feedly.com/v3/")
                 .client(client)
                 .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))

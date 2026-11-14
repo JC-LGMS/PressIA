@@ -363,6 +363,10 @@ suspend fun PressRepository.restaurationJson(
             // que l'étoile, l'état lu/non-lu des comptes cloud étant géré par le service lui-même.
             val starred = mutableSetOf<String>()
             val read = mutableListOf<RestoredRead>()
+            // (flux, article, date) des lus à appliquer : l'existence et le flux de chaque
+            // article sont vérifiés **par paquets** après la boucle, au lieu de deux requêtes
+            // par ligne.
+            val pendingRead = mutableListOf<Triple<String, String, Long?>>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val id = o.optString("id").takeIf { it.isNotBlank() } ?: continue
@@ -375,14 +379,23 @@ suspend fun PressRepository.restaurationJson(
                     val readAt = if (o.has("readAt") && !o.isNull("readAt")) {
                         o.optLong("readAt").takeIf { it > 0 }
                     } else null
-                    val a = dao.article(id)
-                    if (a != null) {
+                    pendingRead += Triple(feedId, id, readAt)
+                }
+            }
+            if (pendingRead.isNotEmpty()) {
+                val existing = pendingRead.map { it.second }.chunked(500)
+                    .flatMap { dao.existingIds(it) }.toSet()
+                val feedOf = existing.toList().chunked(500)
+                    .flatMap { dao.feedOfIds(it) }
+                    .associate { it.id to it.feedId }
+                val localFeeds = dao.subscriptions().filter { isLocalProvider(it.provider) }
+                    .mapTo(HashSet()) { it.id }
+                pendingRead.forEach { (feedId, id, readAt) ->
+                    if (id in existing) {
                         // Article déjà là : marquage immédiat si son flux est local, sinon oubli
                         // (un lu cloud serait rouvert par la prochaine réconciliation de toute façon).
                         // Passage direct par le DAO : `setRead` du dépôt enfilerait une poussée cloud.
-                        if (dao.subscription(a.feedId)?.provider?.let { isLocalProvider(it) } == true) {
-                            dao.setRead(id, false, readAt)
-                        }
+                        if (feedOf[id] in localFeeds) dao.setRead(id, false, readAt)
                     } else {
                         read += RestoredRead(feedId, id, readAt)
                     }

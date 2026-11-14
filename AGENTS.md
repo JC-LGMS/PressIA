@@ -519,6 +519,8 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - **Ne jamais** relancer une passe depuis `syncReadLater` : le pipeline en lance déjà une en
   parallèle (`supervisorScope`), et deux passes simultanées lisaient la même liste d'articles et
   téléchargeaient deux fois les mêmes images (constaté : 26 images sur 32 demandées deux fois).
+- La première synchronisation (`initialSync`) passe par `syncImagesSafely`, comme le pipeline : une
+  erreur inattendue de la passe images ne doit pas faire échouer la connexion du compte.
 - **La vignette ne se perd pas au retour du serveur.** `upsertArticles` remplace la ligne entière :
   l'`imageUrl` de l'article entrant **écrase** celui qui était en base. Or Feedly ne renvoie son
   champ « visual » que sur les entrées **récentes** : une entrée rejouée sans image effaçait celle
@@ -669,6 +671,23 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
   article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et poussaient
   deux fois les mêmes lignes.
+- **La file ne se bloque plus sur un compte expiré ni sur le réseau** : `pushQueue` sort tôt si
+  `!isOnline()` (sinon dix articles lus tentaient dix envois), et quand une page ne retire aucune
+  ligne, les flux des comptes dont la session vient d'être déclarée morte sont **écartés**
+  (`pendingSyncExcept`, liste `skipped` reconstruite depuis `expiredAccounts`) : leurs lignes
+  restent pour la reconnexion, les comptes suivants passent, et `finishSync` annonce
+  « Reconnecter ». Un échec **réseau** (`IOException`) reporte le lot au lieu de retomber article
+  par article (`flushRows`) : le repli à l'unité est réservé aux refus HTTP, qui seuls peuvent
+  désigner un identifiant fautif. `dequeueAll` vide une page en une requête.
+- **Un compte en échec est nommé** : `failuresByAccount` (libellé → cause : « délai dépassé »,
+  « réseau indisponible », « HTTP 500 ») alimente `finishSync` (« Synchronisation incomplète :
+  Inoreader (délai dépassé) »). Sans cela, un compte en échec annonçait « Synchronisation
+  terminée » comme une réussite.
+- **Le registre des comptes est sous `accountMutex`** : `addAccount`, `renewInoreaderToken`,
+  `replaceAccountToken`, `deleteAccount` et `migrateLegacyAccount` font tous
+  `cloudAccounts()` → mutation → `prefs.set(ACCOUNTS)` ; deux séquences simultanées perdaient la
+  première (compte ajouté pendant un renouvellement). `deleteAccount` efface `PROVIDER`/`TOKEN`
+  **avant** `ACCOUNTS` (le repli de `cloudAccounts` les relit quand le registre est vide).
 - **Marquage groupé article par article : barre de progression en bas** (`BulkProgress`,
   `PressRepository.bulkProgress`). À partir de `PUSH_BAR_MIN` = 10 lignes,
   `markArticlesRead` / `markArticlesUnread` passent par `pushWithProgress`, qui publie
@@ -895,13 +914,35 @@ articles et favoris du compte compris).
 ## Pièges connus — données, cache et stockage
 
 - Pas de migration Room à écrire pour une simple requête DAO ou colonne déjà existante ;
-  `exportSchema = false`, version DB actuelle : 9 (provenance du « Read later », `MIGRATION_8_9`).
+  `exportSchema = false`, version DB actuelle : 10 (provenance du « Read later », `MIGRATION_8_9` ;
+  index de la file et d'`imageUrl`, `MIGRATION_9_10`).
 - **Un ajout d'`Index` sur une entité exige une migration** (Room compare le schéma et son
   empreinte à l'ouverture : sans `MIGRATION_6_7`, l'app plantait sur une base v6 existante) :
   `CREATE INDEX IF NOT EXISTS` sur les trois index des stats (`articles.readAt`,
   `reading_events.articleId`, `reading_events.openedAt`). « Passés en lu sans ouvrir » cherche un
   évènement par article lu : sans l'index sur `articleId`, la sous-requête balayait toute la table
-  d'évènements une fois par article.
+  d'évènements une fois par article. `MIGRATION_9_10` ajoute de même l'index `sync_queue`
+  (`createdAt`, `kind` : toutes les lectures de la file filtrent ou trient dessus) et
+  `articles.imageUrl` (le `DISTINCT imageUrl` du nettoyage des miniatures relisait sinon toute la
+  table, colonne `content` comprise).
+- **Les remplacements d'un compte sont atomiques** : `replaceCategories` (effacement, réinsertion,
+  restauration des affectations de dossiers et des rangs) et le couple
+  `clearSubscriptionsOf` + `upsertSubscriptions` passent par `db.withTransaction`. Hors
+  transaction, un processus tué entre les deux laissait les flux détachés de leurs dossiers
+  (ON DELETE SET NULL) ou le compte sans abonnements. En fin de `syncDown`, à côté de
+  `pruneArticles()`, `deleteUnsavedOrphanArticles()` retire les articles sans flux — **sans**
+  les favoris ni le « Read later » (le tableau d'un compte contient des articles de flux qu'on
+  ne suit pas ; `deleteOrphanArticles`, lui, les emporte et ne sert qu'à la déconnexion).
+- **Les colonnes lourdes se lisent par paquets** : la passe images ne charge plus le HTML de toute
+  la file (`articlesPendingImages` = colonnes légères, puis `mediaOfIds` par 200) ; l'écran
+  Doublons demande une projection (`DuplicateRow`) sans `content`/`summary` ; les listes
+  d'identifiants envoyées en `IN` sont découpées par 500 (`existingIds`, `setLaterProvider`,
+  `markLaterSaved`/`unmarkLaterSaved`, `dequeueAll`, restauration des favoris/lus) — au-delà,
+  SQLite refuse la requête sur les anciens Android.
+- **Journalisation** : l'intercepteur OkHttp de Feedly n'existe qu'en `BuildConfig.DEBUG` (en
+  release il écrivait les URLs complètes, `streamId=user/<uid>/…`), et l'échange PKCE de Feedly
+  ne journalise plus le corps d'une réponse sans jeton reconnu (c'était le jeton lui-même sur
+  200 caractères).
 - **Un HTML d'article est plafonné à l'écriture** (`MAX_ARTICLE_HTML`, 300 000 caractères) :
   corps du flux dans `storeArticles`, extraction dans `ensureFull` (`capArticleHtml`). Android lit
   SQLite par fenêtre de curseur (~2 Mo) : une **seule** ligne plus grosse rend la requête
@@ -943,10 +984,14 @@ articles et favoris du compte compris).
   en base et l'article rouvert reprenait la version extraite. Avant d'écraser `content` par une
   extraction, `saveExtractedContent` recopie le HTML du flux dans `summary` quand il est plus riche
   que l'extrait RSS (flux « complets » : Next) — c'est ce que « Revenir à l'extrait RSS » retrouve,
-  sinon l'article revenait tronqué au petit extrait. La synchro, elle, réécrit
-  `content`/`summary` avec les valeurs du serveur (`upsertArticles` remplace la ligne) :
-  l'extraction ne survit pas à une synchro, et c'est la version du flux qui revient — comportement
-  voulu.
+  sinon l'article revenait tronqué au petit extrait. **La resynchronisation préserve
+  l'extraction** : `mergeIncomingArticle` reporte `fullFetched` et reprend `content` de la base
+  quand l'article était complet (le `summary` du flux suit, lui, ce que dit le serveur). Sans cela
+  chaque passe rendait le petit extrait du flux et l'extraction était à refaire à l'ouverture.
+- **L'extraction analyse la page une fois** : `fetchFullResult` construit un seul `Document`
+  (blocage, corps, texte) au lieu de reparséer trois fois des pages de plusieurs Mo, et le repli
+  générique compte les `<p>`/`<a>` en un parcours (accumulés sur leurs ancêtres) au lieu de
+  réinterroger le sous-arbre de chaque `div` — O(n²) sur une page longue.
 - **Un échec d'extraction ne remplace plus le texte.** `ensureFull` rend un `FullFetch(html,
   outcome)` (`FullOutcome.OK / BLOCKED / FAILED`) : l'écran n'affiche `html` que sur `OK`, sinon
   il revient à `feedHtml(a)` — la version du flux, jamais le petit `summary` seul — et montre une
@@ -968,9 +1013,15 @@ articles et favoris du compte compris).
   repassait tous les articles du flux en non lus. Les comptes cloud gardent l'inverse (l'état
   distant fait foi) — voir `mergeIncomingArticle`, où `unread`/`readAt` ne sont repris que si
   `keepRead`. Toute nouvelle écriture d'articles locaux doit passer par ce chemin.
-- `deleteLocalFeed` = articles + miniatures orphelines (`gcThumbs`) + images pleine taille du cache
+- **`readAt` (date du passage en lu) survit à la resynchronisation** : les services ne le
+  transportent pas, donc `mergeIncomingArticle` reprend celui de la base tant que l'article reste
+  lu (`incoming.readAt ?: prev.readAt`), et le vide si l'article est rouvert. Sans cela chaque
+  synchro effaçait ces dates et « passés en lu sans ouvrir » retombait à zéro.
+- `deleteLocalFeed` = articles **puis** abonnement (dans une transaction : une coupure laissait des
+  articles sans flux), miniatures orphelines (`gcThumbs`) + images pleine taille du cache
   Coil (`articleMediaOfFeed` → `htmlImageUrls` sur `content`/`summary` → `purgeImages`) +
-  `vacuum()`. Les **traces de lecture restent** (voir la note « statistiques » ci-dessous).
+  `vacuum()`, puis réécriture de la copie automatique (un flux supprimé ne doit pas revenir au
+  prochain lancement). Les **traces de lecture restent** (voir la note « statistiques » ci-dessous).
   `gcThumbs` ne couvre que `filesDir/thumbs` ; une image encore réclamée par un autre flux reste en
   cache, et le nettoyage du cache Coil se voit dans le log (`images purgées : n/m`).
 - Statistiques = registre conservé : les traces `reading_events`/`extract_events` **ne partent
@@ -1270,7 +1321,10 @@ articles et favoris du compte compris).
   deux lignes, ils laissaient un grand vide entre les dossiers).
 - **Synchro des flux locaux** : `LocalProvider.onFeed` est appelé à chaque flux reçu (8 en
   parallèle, compteur des flux terminés) et `syncDown` en fait « Réception des articles… (flux
-  locaux 2/3 : MiniMachines.net) ». Les miniatures de `syncDown(withThumbs = true)` (ajout d'un
+  locaux 2/3 : MiniMachines.net) ». `addLocalFeed` passe par `repo.withSyncLock` (le provider local
+  porte ses flux et ce rappel dans des champs partagés) et `syncDown` remet `onFeed` à `null` dans
+  un `finally` — sinon une passe en échec laissait le rappel écrire dans le bandeau suivant. Les
+  miniatures de `syncDown(withThumbs = true)` (ajout d'un
   flux) publient leur compteur dans `syncStep` comme le pipeline — sans cela la première synchro
   restait muette pendant le téléchargement des images.
 - Listes : les boutons haut/bas flottent en bas au centre, les listes qui en ont laissent 72 dp de

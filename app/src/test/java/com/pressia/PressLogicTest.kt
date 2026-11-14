@@ -1883,6 +1883,29 @@ class PressLogicTest {
         assertFalse(kept.unread)
     }
 
+    @Test fun `resync garde la date de passage en lu et l article complet`() {
+        // readAt date la lecture locale (statistique « passés en lu sans ouvrir ») : le serveur
+        // ne le transporte pas, donc l'écraser à chaque synchro remettait ce compteur à zéro.
+        val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T", unread = false)
+        val kept = com.pressia.data.mergeIncomingArticle(incoming, flags(unread = false, readAt = 1234L), keepRead = false)
+        assertEquals(1234L, kept.readAt)
+        // Rouvert ailleurs (ou marqué non lu dans l'app) : ce n'est plus « passé en lu ».
+        val reopened = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T", unread = true)
+        assertNull(
+            com.pressia.data.mergeIncomingArticle(reopened, flags(unread = false, readAt = 1234L), keepRead = false).readAt
+        )
+        // Article complet extrait par Readability : son HTML survit à la resynchronisation,
+        // sans quoi chaque passe rendait le petit extrait du flux.
+        val fromFeed = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T", content = "flux")
+        val full = com.pressia.data.local.ArticleFlags(
+            id = "a", starred = false, laterSaved = false, imageCached = true,
+            fullFetched = true, content = "complet"
+        )
+        val merged = com.pressia.data.mergeIncomingArticle(fromFeed, full, keepRead = false)
+        assertTrue(merged.fullFetched)
+        assertEquals("complet", merged.content)
+    }
+
     @Test fun `resync garde etoiles read later et miniatures`() {
         val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T")
         val kept = com.pressia.data.mergeIncomingArticle(
