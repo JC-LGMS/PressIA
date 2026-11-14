@@ -47,6 +47,35 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.14",
+        listOf(
+            ChangelogItem(
+                "2026-11-14",
+                "Inoreader : les non-lus de plus de 30 jours ne se referment plus",
+                "Inoreader balaie lui aussi les articles non lus : passé 30 jours, il les marque " +
+                    "lus de lui-même, et son aide précise qu'un article plus vieux reste lu quoi " +
+                    "qu'on fasse. PressIA applique donc la même borne que pour Feedly (31 jours) : " +
+                    "au-delà, l'état local des articles déjà connus est conservé et la " +
+                    "réconciliation ne les referme plus. FreshRSS et les flux locaux, qui ne " +
+                    "balayent rien, restent sans borne. Le réglage « Garder non lu au-delà des " +
+                    "31 jours » coupe ce garde-fou pour les deux services ; le service, lui, les " +
+                    "tient de toute façon pour lus — c'est l'application qui les garde non lus.",
+                time = "01:15"
+            ),
+            ChangelogItem(
+                "2026-11-14",
+                "Supprimer un dossier le supprime aussi chez le compte",
+                "La corbeille du dossier ne touchait que les dossiers locaux : un dossier d'un " +
+                    "compte restait sur le serveur et revenait à la synchronisation suivante. Elle " +
+                    "part désormais chez le compte (Feedly supprime le dossier, Inoreader et " +
+                    "FreshRSS en retirent l'étiquette de chaque flux, et le service efface celle " +
+                    "qui reste vide). Les flux restent abonnés et repassent dans « Flux sans " +
+                    "dossier ». Un refus du compte laisse le dossier en place et le dit.",
+                time = "01:15"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.13",
         listOf(
             ChangelogItem(

@@ -772,13 +772,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         onDone(ok)
     }
 
-    fun deleteFolder(folder: PressRepository.Folder) = viewModelScope.launch {
-        repo.deleteFolder(folder.id, folder.providers, folder.merged)
+    fun deleteFolder(folder: PressRepository.Folder, onDone: (Boolean) -> Unit = {}) = viewModelScope.launch {
+        val ok = repo.deleteFolder(folder.id, folder.providers, folder.merged)
         // On sort du dossier supprimé pour ne pas rester sur un écran vide.
-        if (scope.categoryId == folder.id || scope.categoryId in folder.ids) {
+        if (ok && (scope.categoryId == folder.id || scope.categoryId in folder.ids)) {
             switchScope(Scope(label = "Tous les articles"))
         }
         refreshNow()
+        onDone(ok)
     }
 
     /**

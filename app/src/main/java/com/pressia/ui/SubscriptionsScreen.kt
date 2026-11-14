@@ -331,15 +331,15 @@ fun SubscriptionsScreen(
                     if (f.merged)
                         "Ce dossier regroupe les dossiers de plusieurs comptes : il ne peut être supprimé que depuis chaque compte. Les flux restent abonnés."
                     else
-                        "Les flux qu'il contient ne sont pas supprimés : ils repassent dans « Flux sans dossier »."
+                        "Les flux qu'il contient ne sont pas supprimés : ils repassent dans « Flux sans dossier ». S'il appartient à un compte, il y est supprimé aussi."
                 )
             },
             confirmButton = {
                 TextButton({
                     toDelete = null
                     if (f.merged && f.providers.size > 1) toast(ctx, "Dossier partagé : supprimez-le depuis chaque compte")
-                    else {
-                        vm.deleteFolder(f); toast(ctx, "Dossier supprimé")
+                    else vm.deleteFolder(f) { ok ->
+                        toast(ctx, if (ok) "Dossier supprimé" else "Suppression refusée par le compte")
                     }
                 }) { Text("Supprimer") }
             },

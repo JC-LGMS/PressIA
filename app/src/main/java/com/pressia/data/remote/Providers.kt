@@ -100,6 +100,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         api.updateCategory(auth(token), from.id, FeedlyCategory(id = from.id, label = to))
     }
 
+    /** `DELETE /v3/categories/<id>` : Feedly détache lui-même les flux restés dedans. */
+    override suspend fun deleteCategory(token: String?, category: CategoryEntity, feeds: List<String>) {
+        api.deleteCategory(auth(token), category.id)
+    }
+
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
             ?: return StreamPage(emptyList(), null)
@@ -426,14 +431,37 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
      * vide (même chemin que le déplacement). FreshRSS hérite de ce comportement.
      */
     override suspend fun renameCategory(token: String?, feeds: List<String>, from: CategoryEntity, to: String) {
-        if (feeds.isEmpty()) return
         val newId = renamedFolderId(id, from.id, to)
         if (newId == from.id) return
+        val targets = feedsIn(token, from.id, feeds)
+        if (targets.isEmpty()) return
         call(token) { h ->
             val t = csrf(token, h)
-            feeds.distinct().forEach { apiFor(token).editSubscription(h, it, t, add = newId, remove = from.id) }
+            targets.forEach { apiFor(token).editSubscription(h, it, t, add = newId, remove = from.id) }
         }
     }
+    /**
+     * Retire l'étiquette de chaque flux : l'API Google Reader n'a pas de suppression d'étiquette,
+     * et le service efface celle qui reste vide (vérifié en direct chez Inoreader).
+     */
+    override suspend fun deleteCategory(token: String?, category: CategoryEntity, feeds: List<String>) {
+        val targets = feedsIn(token, category.id, feeds)
+        if (targets.isEmpty()) return
+        call(token) { h ->
+            val t = csrf(token, h)
+            targets.forEach { apiFor(token).editSubscription(h, it, t, remove = category.id) }
+        }
+    }
+    /**
+     * Flux que le compte range dans [categoryId]. La liste **vient du serveur** : un flux peut y
+     * porter plusieurs dossiers alors que la base locale n'en garde qu'un (`categories.firstOrNull`),
+     * et retirer l'étiquette du seul dossier connu laissait l'ancienne en place côté service
+     * (constaté : un dossier supprimé dans l'application revenait à la synchronisation suivante).
+     */
+    private suspend fun feedsIn(token: String?, categoryId: String, local: List<String>): List<String> =
+        (local + call(token) { h -> apiFor(token).subs(h) }
+            .subscriptions.filter { s -> s.categories.any { it.id == categoryId } }
+            .map { it.id }).distinct()
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val stream = feedId ?: categoryId ?: "user/-/state/com.google/reading-list"
         // `newerThanMs` ignoré : l'équivalent Reader API (`nt`) n'est pas vérifié en live

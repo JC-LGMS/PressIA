@@ -749,16 +749,25 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   du sélecteur (`favSetAvailable`, faute de compte). Les articles qui n'étaient là que pour ce
   tableau s'en vont ensuite avec `deleteOrphanArticles`. L'étoile PressIA, elle, reste : c'est un
   état local, sans compte.
-- **Feedly marque lu tout seul au-delà de 31 jours** : son état lu/non-lu ne dit plus ce que
-  l'utilisateur a lu passé ce délai. `autoReadAgeMs("feedly")` = `FEEDLY_AUTO_READ_AGE_MS`, et
+- **Feedly (31 jours) et Inoreader (30) marquent lu tout seul au-delà de leur fenêtre** : leur
+  état lu/non-lu ne dit plus ce que
+  l'utilisateur a lu passé ce délai. `autoReadAgeMs` rend `FEEDLY_AUTO_READ_AGE_MS` ou
+  `INOREADER_AUTO_READ_AGE_MS` (l'aide d'Inoreader le dit : « un article de plus de 30 jours reste
+  lu quoi qu'on fasse »), et
   `autoReadCutoff` borne **deux** chemins : `storeArticles(..., keepReadBeforeMs = …)` préserve
   l'état local des articles plus vieux déjà connus (`mergeIncomingArticle` → `beyondAutoRead`), et
   `reconcileReadState` ne ferme que les non-lus de la fenêtre (`closableUnread`). Sans ces bornes,
   chaque synchronisation refermait les vieux non-lus balayés par le service. Un article **inconnu**
   garde l'état annoncé par le serveur : il n'y a rien de local à préserver.
-  La borne se coupe depuis Réglages (« Feedly : garder non lu au-delà de 31 jours », activée par
-  défaut) : `PressRepository.cutoffFor(providerId)` rend alors `null`, et l'état du service fait
-  foi — les six appels à `autoReadCutoff` passent par lui, un nouveau doit le faire aussi.
+  La borne se coupe depuis Réglages (« Garder non lu au-delà des 31 jours », activée par défaut) :
+  `PressRepository.cutoffFor(providerId)` rend alors `null` pour **tous** les services qui balaient,
+  et l'état du service fait foi — les six appels à `autoReadCutoff` passent par lui, un nouveau doit
+  le faire aussi. FreshRSS n'a pas de balayage (`autoReadAgeMs` rend `null`), donc aucune borne. La
+  clé de préférence garde son nom d'origine (`feedly_keep_unread`) : la renommer casserait les
+  sauvegardes existantes. **L'option ne change rien chez le service** : Inoreader (comme Feedly)
+  tient ces articles pour lus, et un « non lu » poussé pour eux est accepté sans effet (côté
+  Google Reader, l'article est plus ancien que `firstitemmsec`). Elle ne décide que de ce que
+  PressIA affiche.
 - Bandeau de synchro : l'avancement par flux d'un compte (découverte, puis rattrapage) vient de
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le
@@ -831,7 +840,7 @@ les autres (chaque point a coûté un bug quand il manquait).
    que de relire DataStore à chaque requête.
 7. **Réglages propres au service** : clé dans `Prefs`, état + `save()` dans l'écran Réglages,
    entrée dans `ENTRIES`, valeur par défaut lue au même endroit partout (`cutoffFor` pour
-   « Feedly : garder non lu au-delà de 31 jours »).
+   « Garder non lu au-delà des 31 jours »).
 8. **Favoris** : si le service a un tableau « à lire plus tard », sa provenance est écrite sur
    l'article (`ArticleEntity.laterProvider`) à l'étoile (`setStarred`) et à l'import
    (`syncReadLater`), avec un jeu `favScopeArg` + un libellé `favSetLabel` + une ligne dans
@@ -1248,6 +1257,13 @@ articles et favoris du compte compris).
   testé) le recalcule et le dossier local est recréé avec ses flux. Un refus du compte laisse le
   nom en place et le dit (« Renommage refusé par le compte »). Un dossier fusionné n'est renommé
   que dans ses parties locales : les comptes gardent leur nom.
+- **Supprimer un dossier** part aussi chez le compte (`deleteFolder` → `FeedProvider.deleteCategory`) :
+  Feedly `DELETE /v3/categories/<id>` (200 même sur un dossier plein, les flux repassent sans
+  dossier — vérifié en direct), Inoreader/FreshRSS en retirant l'étiquette de chaque flux
+  (`subscription/edit` `r=`), le service effaçant celle qui reste vide. Les flux restent abonnés
+  et repassent dans « Flux sans dossier » ; un refus laisse le dossier en place
+  (« Suppression refusée par le compte »). Un dossier fusionné de plusieurs comptes reste refusé
+  (une suppression par compte).
 - **La modale « Déplacer vers un dossier » affiche le compte sous chaque dossier** (petit, grisé)
   dès que la précision distingue (`showFeedAccount`) : un dossier fusionné en montre plusieurs
   (« Inoreader · Feedly »). Les lignes sont compactes (`MoveTargetRow`, pas des `ListItem` : à

@@ -16,10 +16,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Lu/non-lu de Feedly au-delà de 31 jours : le service marque tout seul ces articles en lus.
- * L'état distant ne doit donc plus écraser l'état local ni fermer les non-lus — sinon chaque
- * synchronisation faisait disparaître de « non lus » des articles que l'utilisateur n'avait
- * jamais ouverts.
+ * Lu/non-lu du service au-delà de sa fenêtre d'auto-lecture (31 jours chez Feedly, 30 chez
+ * Inoreader) : il marque tout seul ces articles en lus. L'état distant ne doit donc plus écraser
+ * l'état local ni fermer les non-lus — sinon chaque synchronisation faisait disparaître de
+ * « non lus » des articles que l'utilisateur n'avait jamais ouverts.
  */
 class FeedlyAutoReadTest {
 
@@ -27,13 +27,15 @@ class FeedlyAutoReadTest {
     private val now = 1_800_000_000_000L // date fixe : les tests ne dépendent pas de l'horloge
     private val cutoff = now - 31 * day
 
-    @Test fun `feedly balaie les non lus apres 31 jours, les autres services non`() {
+    @Test fun `feedly balaie les non lus apres 31 jours, inoreader apres 30`() {
         assertEquals(31 * day, autoReadAgeMs("feedly"))
         assertEquals(FEEDLY_AUTO_READ_AGE_MS, autoReadAgeMs("feedly"))
-        assertNull(autoReadAgeMs("inoreader"))
+        assertEquals(30 * day, autoReadAgeMs("inoreader"))
+        assertNull(autoReadAgeMs("freshrss"))
         assertNull(autoReadAgeMs("local"))
         assertEquals(cutoff, autoReadCutoff("feedly", now))
-        assertNull(autoReadCutoff("inoreader", now))
+        assertEquals(now - 30 * day, autoReadCutoff("inoreader", now))
+        assertNull(autoReadCutoff("freshrss", now))
     }
 
     @Test fun `un article au dela de la fenetre est reconnu comme ancien`() {
@@ -43,7 +45,7 @@ class FeedlyAutoReadTest {
         assertFalse(beyondAutoRead(now - 10 * day, cutoff))
         // Juste à la limite : encore dans la fenêtre (l'ancienneté est stricte).
         assertFalse(beyondAutoRead(cutoff, cutoff))
-        // Inoreader (pas de balayage) : jamais ancien.
+        // Sans fenêtre d'auto-lecture (FreshRSS, flux locaux) : jamais ancien.
         assertFalse(beyondAutoRead(now - 400 * day, null))
         // Date inconnue : on ne conclut pas à l'ancienneté.
         assertFalse(beyondAutoRead(0L, cutoff))

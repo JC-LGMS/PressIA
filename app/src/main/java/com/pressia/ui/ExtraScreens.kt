@@ -1242,13 +1242,16 @@ fun SettingsScreen(vm: PressVM) {
         }
         SettingBox {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("Feedly : garder non lu au-delà de 31 jours"); Spacer(Modifier.weight(1f))
+                Text("Garder non lu au-delà des 31 jours"); Spacer(Modifier.weight(1f))
                 Switch(feedlyKeepUnread, { feedlyKeepUnread = it; save() })
             }
             Text(
-                "Feedly marque lu de lui-même tout article non lu depuis plus de 31 jours. Avec cette " +
-                    "option (activée par défaut), PressIA conserve l'état non lu de ces articles lors " +
-                    "des synchronisations ; coupée, l'état du service s'applique et ils passent en lu.",
+                "Feedly marque lu de lui-même tout article non lu depuis plus de 31 jours, Inoreader " +
+                    "au-delà de 30. Avec cette option (activée par défaut), PressIA garde ces articles " +
+                    "non lus chez lui malgré cela ; coupée, l'état du service s'applique et ils passent " +
+                    "en lu. Le service, lui, les tient pour lus dans les deux cas : c'est " +
+                    "l'application qui les garde non lus (marquer un de ces articles non lu sur le " +
+                    "site ne prend d'ailleurs pas). FreshRSS et les flux locaux ne balaient rien.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2204,10 +2207,12 @@ private val ABOUT_TOPICS = listOf(
     AboutTopic(
         "Ce qui reste non lu",
         "Un article ouvert devient lu, et son retour en non lu est possible depuis l'en-tête de l'article. " +
-            "Feedly, lui, marque lu tout seul au-delà de 31 jours : PressIA garde donc l'état local " +
-            "des articles plus vieux déjà connus (désactivable dans Réglages, « Feedly : garder non lu au-delà " +
-            "de 31 jours »). Inoreader n'a pas ce délai : l'état du service fait foi, et un article passé en lu " +
-            "dans PressIA l'est aussi sur le site, y compris par un marquage groupé. " +
+            "Les agrégateurs balaient eux-mêmes les non-lus : Feedly au-delà de 31 jours, Inoreader " +
+            "au-delà de 30. PressIA garde donc l'état local des articles plus vieux déjà connus — le " +
+            "service, lui, les tient déjà pour lus. " +
+            "Ce garde-fou se coupe dans Réglages, « Garder non lu au-delà des 31 jours ». " +
+            "Partout ailleurs, un article passé en lu dans PressIA l'est aussi sur le site, " +
+            "y compris par un marquage groupé. " +
             "Les favoris et le Read later ne sont jamais marqués lus en masse."
     ),
     AboutTopic(
@@ -2246,7 +2251,9 @@ private val ABOUT_TOPICS = listOf(
             "Créer un dossier demande où il doit vivre dès qu'il y a un choix (flux locaux et/ou plusieurs " +
             "comptes) : il naît vide chez le compte — Feedly le garde ; Inoreader ne garde pas de dossier " +
             "vide, il le reçoit au premier flux qu'on y range. Le renommer part chez le compte de la même " +
-            "façon, qui réécrirait sinon son nom à la synchronisation suivante. Un dossier qui n'existe que " +
+            "façon, qui réécrirait sinon son nom à la synchronisation suivante. Le supprimer aussi : le " +
+            "dossier disparaît chez le compte, les flux restent abonnés et repassent dans « Flux sans " +
+            "dossier ». Un dossier qui n'existe que " +
             "dans l'application est de même créé chez le compte du premier flux qu'on y range."
     ),
     AboutTopic(

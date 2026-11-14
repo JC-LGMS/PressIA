@@ -109,6 +109,14 @@ interface FeedProvider {
      */
     suspend fun renameCategory(token: String?, feeds: List<String>, from: CategoryEntity, to: String) {}
     /**
+     * Supprime un dossier côté serveur ; les flux restent abonnés, sans dossier.
+     *
+     * Sans cet appel, la synchronisation suivante recréerait le dossier depuis le compte. Chez
+     * Google Reader, retirer l'étiquette de chaque flux suffit : le service supprime celle qui
+     * reste vide. Défaut : rien (RSS local).
+     */
+    suspend fun deleteCategory(token: String?, category: CategoryEntity, feeds: List<String>) {}
+    /**
      * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
      *
      * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. Le
@@ -187,14 +195,24 @@ const val RECONCILE_WINDOW_MS = 30L * 24 * 3600 * 1000
 const val FEEDLY_AUTO_READ_AGE_MS = 31L * 24 * 3600 * 1000
 
 /**
- * Âge au-delà duquel un service marque de lui-même les articles en lus (31 jours chez Feedly),
- * ou null quand son état lu/non-lu reste fiable sans limite (Inoreader, flux locaux).
+ * Idem chez Inoreader, à 30 jours : son aide le dit noir sur blanc (« un article de plus de
+ * 30 jours reste lu quoi qu'on fasse »), et un article plus vieux ne se rouvre plus.
+ */
+const val INOREADER_AUTO_READ_AGE_MS = 30L * 24 * 3600 * 1000
+
+/**
+ * Âge au-delà duquel un service marque de lui-même les articles en lus (31 jours chez Feedly,
+ * 30 chez Inoreader), ou null quand son état lu/non-lu reste fiable sans limite (flux locaux,
+ * FreshRSS — serveur qu'on administre soi-même).
  *
  * Passé ce délai, « lu » côté service ne dit plus que l'utilisateur a lu l'article : la
  * synchronisation ne doit donc pas en tenir compte (voir [beyondAutoRead]).
  */
-fun autoReadAgeMs(providerId: String): Long? =
-    if (providerId == "feedly") FEEDLY_AUTO_READ_AGE_MS else null
+fun autoReadAgeMs(providerId: String): Long? = when (providerId) {
+    "feedly" -> FEEDLY_AUTO_READ_AGE_MS
+    "inoreader" -> INOREADER_AUTO_READ_AGE_MS
+    else -> null
+}
 
 /**
  * L'étoile de l'application pilote le tableau « à lire plus tard » du **compte** au lieu d'un
@@ -237,7 +255,8 @@ fun newFolderId(service: String, userId: String?, label: String): String? {
 fun renamedFolderId(service: String, id: String, label: String): String =
     if (providerBase(service) == "feedly") id else id.substringBeforeLast('/') + "/" + label
 
-/** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =
+/** Date limite de la fenêtre d'auto-lecture d'un service, ou null s'il n'en a pas. */
+fun autoReadCutoff(providerId: String, now: Long = System.currentTimeMillis()): Long? =
     autoReadAgeMs(providerId)?.let { now - it }
 
 /**

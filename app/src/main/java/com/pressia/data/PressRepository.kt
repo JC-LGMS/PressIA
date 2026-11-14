@@ -941,16 +941,38 @@ class PressRepository(
     /**
      * Supprime un dossier ; les flux qu'il contenait restent abonnés et remontent dans
      * « Flux sans dossier ». Un dossier fusionné n'est supprimé que s'il n'appartient qu'à un compte.
+     *
+     * Un dossier de compte est supprimé **chez le compte d'abord** (la synchronisation le
+     * recréerait sinon) : Feedly par `DELETE /v3/categories/<id>`, Inoreader et FreshRSS en
+     * retirant l'étiquette de chaque flux. Rend false quand le compte refuse ; rien n'est alors
+     * supprimé en local.
      */
-    suspend fun deleteFolder(id: String, providers: List<String>, merged: Boolean) = withContext(Dispatchers.IO) {
-        if (merged && providers.size > 1) return@withContext
-        val cat = dao.categories().firstOrNull { it.id == id } ?: return@withContext
-        if (!isLocalProvider(cat.provider)) return@withContext   // les dossiers du compte restent gérés par le compte
+    suspend fun deleteFolder(id: String, providers: List<String>, merged: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (merged && providers.size > 1) return@withContext false
+        val cat = dao.categories().firstOrNull { it.id == id } ?: return@withContext true
+        val feeds = dao.subscriptionsForCategory(cat.id).map { it.id }
+        if (!isLocalProvider(cat.provider)) {
+            val account = cloudAccounts().firstOrNull { it.id == cat.provider } ?: return@withContext false
+            if (!pushDelete(account, cat, feeds)) return@withContext false
+        }
         // Les flux contenus sont explicitement détachés : la clé étrangère les détachait de la
         // même façon, mais on veut un état net explicite et indépendant du ordre des requêtes.
-        dao.moveFeeds(dao.subscriptionsForCategory(cat.id).map { it.id }, null)
+        dao.moveFeeds(feeds, null)
         dao.deleteCategory(cat.id)
+        true
     }
+
+    /** Pousse la suppression d'un dossier chez son compte ; false quand le service refuse. */
+    private suspend fun pushDelete(account: CloudAccount, cat: CategoryEntity, feeds: List<String>): Boolean =
+        try {
+            providerFor(account.provider).deleteCategory(account.token, cat, feeds)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("PressIA", "suppression de dossier refusée par ${account.provider} : ${e.message}")
+            false
+        }
 
     /**
      * Déplace des flux dans un dossier (ou les en sort avec [categoryId] à null).
@@ -2192,11 +2214,12 @@ class PressRepository(
         com.pressia.data.remote.readLaterHash(ids) + "|" + providerFor(account.provider).id
 
     /**
-     * Fenêtre d'auto-lecture du service, ou null quand le réglage « Feedly : garder non lu au-delà
-     * de 31 jours » est coupé : l'état lu/non-lu du service fait alors foi, même au-delà du délai.
+     * Fenêtre d'auto-lecture du service (31 jours chez Feedly, 30 chez Inoreader), ou null quand
+     * le réglage « Garder non lu au-delà des 31 jours » est coupé : l'état lu/non-lu du service
+     * fait alors foi, même au-delà du délai. Le réglage vaut pour tous les services qui balaient.
      */
     private suspend fun cutoffFor(providerId: String): Long? {
-        if (providerId != "feedly") return autoReadCutoff(providerId)
+        if (autoReadAgeMs(providerId) == null) return null
         val keep = prefs.data.first()[Prefs.FEEDLY_KEEP_UNREAD] ?: true
         return if (keep) autoReadCutoff(providerId) else null
     }
@@ -2208,8 +2231,8 @@ class PressRepository(
      * Les actions locales non poussées gagnent toujours : le serveur est périmé pour elles
      * (file « read » / « unread », ou « markAllRead » en attente qui interdit tout passage en lu).
      *
-     * Au-delà de la fenêtre d'auto-lecture du service (31 jours chez Feedly, voir
-     * [autoReadCutoff]), l'état distant ne dit plus ce que l'utilisateur a lu : les articles
+     * Au-delà de la fenêtre d'auto-lecture du service (31 jours chez Feedly, 30 chez Inoreader,
+     * voir [autoReadCutoff]), l'état distant ne dit plus ce que l'utilisateur a lu : les articles
      * plus vieux ne sont donc **pas** passés en lus — ils gardent leur état local. Sans cette
      * borne, chaque synchronisation refermait les vieux non-lus que Feedly a balayés tout seul.
      * Renvoie (passés en lus, rouverts).

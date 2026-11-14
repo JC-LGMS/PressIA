@@ -72,6 +72,9 @@ interface FeedlyService {
      */
     @POST("categories/{id}")
     suspend fun updateCategory(@Header("Authorization") h: String, @Path("id") id: String, @Body b: FeedlyCategory)
+    /** Supprime un dossier ; les flux qu'il contenait repassent sans dossier (vérifié en direct). */
+    @DELETE("categories/{id}")
+    suspend fun deleteCategory(@Header("Authorization") h: String, @Path("id") id: String)
     /** Profil du compte connecté (nom / e-mail affichés dans l'écran Comptes). */
     @GET("profile")
     suspend fun profile(@Header("Authorization") h: String): FeedlyProfile
