@@ -2094,6 +2094,18 @@ private val ABOUT_TOPICS = listOf(
             "et se remplacent dans Comptes."
     ),
     AboutTopic(
+        "Ajouter ou retirer un flux",
+        "L'icône « + » de la barre de l'Accueil — la même dans le menu d'un dossier et sur l'écran " +
+            "Comptes — ouvre la fenêtre d'ajout : l'URL du flux, puis « Ajouter chez », c'est-à-dire " +
+            "Local ou l'un des comptes connectés. Chez un agrégateur, l'abonnement part au compte " +
+            "avant d'être écrit sur l'appareil : un refus est annoncé (« Ajout refusé par Inoreader : " +
+            "l'URL est-elle celle d'un flux ? ») et ne laisse rien en base. Ajouté depuis un dossier, " +
+            "le flux est rangé des deux côtés. « Se désabonner », dans le menu d'un flux, le retire " +
+            "aussi du compte et supprime ses articles et ses images de l'appareil ; la confirmation " +
+            "dit de quel compte il s'agit, et le bandeau du bas suit l'opération étape par étape " +
+            "jusqu'à son résultat."
+    ),
+    AboutTopic(
         "Synchronisation : bouton, lancement, fréquence",
         "Le bouton d'actualisation, la synchronisation au lancement (désactivable) et le tirer-pour-actualiser " +
             "récupèrent la même chose : nouveaux articles, tableau « Read later » et images des articles " +
@@ -2254,7 +2266,10 @@ private val ABOUT_TOPICS = listOf(
             "façon, qui réécrirait sinon son nom à la synchronisation suivante. Le supprimer aussi : le " +
             "dossier disparaît chez le compte, les flux restent abonnés et repassent dans « Flux sans " +
             "dossier ». Un dossier qui n'existe que " +
-            "dans l'application est de même créé chez le compte du premier flux qu'on y range."
+            "dans l'application est de même créé chez le compte du premier flux qu'on y range. " +
+            "« Monter » et « Descendre » suivent la liste affichée — un dossier fusionné se déplace " +
+            "donc comme un autre — et l'ordre des dossiers part chez Feedly, qui le garde pour son " +
+            "application ; Inoreader n'a pas d'ordre de dossiers."
     ),
     AboutTopic(
         "Limites réseau et session expirée",

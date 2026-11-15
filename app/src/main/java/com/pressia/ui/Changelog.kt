@@ -47,6 +47,30 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.16",
+        listOf(
+            ChangelogItem(
+                "2026-11-15",
+                "Flux et dossiers : ajout, désabonnement, ordre",
+                "- Une icône « ajouter un flux » (logo RSS et « + ») rejoint la barre de l'Accueil, " +
+                    "le menu d'un dossier et l'écran Comptes. La fenêtre demande l'URL puis « Ajouter " +
+                    "chez » : Local, ou le compte voulu. Feedly, Inoreader et FreshRSS sont abonnés " +
+                    "pour de vrai — le flux part chez le compte avant d'être écrit sur l'appareil — et " +
+                    "« Se désabonner », dans le menu d'un flux, le retire aussi du compte, sans quoi " +
+                    "la synchronisation suivante le ramenait. Confirmation et résultat nomment le " +
+                    "compte ; un refus ne laisse rien derrière lui.\n\n" +
+                    "- Le désabonnement s'annonce dans le bandeau du bas, étape par étape (retrait chez " +
+                    "le compte, puis suppression des articles et des images de l'appareil).\n\n" +
+                    "- « Monter » et « Descendre » suivent la liste affichée, flux comme dossiers : un " +
+                    "dossier fusionné (même nom sur deux comptes) ne bougeait pas, ou faisait sauter " +
+                    "plusieurs lignes, et les flux masqués par le filtre « sans non-lus » sont " +
+                    "désormais sautés proprement. L'ordre des dossiers part chez Feedly ; Inoreader " +
+                    "n'en a pas.",
+                time = "22:28"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.15",
         listOf(
             ChangelogItem(

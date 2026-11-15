@@ -62,9 +62,15 @@ interface FeedlyService {
     suspend fun categories(@Header("Authorization") h: String): List<FeedlyCategory>
     @GET("subscriptions")
     suspend fun subscriptions(@Header("Authorization") h: String): List<FeedlySubscription>
-    /** Abonnement ou modification : c'est le chemin d'un déplacement de dossier (voir [FeedlySubscriptionUpdate]). */
+    /** Abonnement ou modification : c'est aussi le chemin d'un déplacement de dossier (voir [FeedlySubscriptionUpdate]). */
     @POST("subscriptions")
     suspend fun updateSubscription(@Header("Authorization") h: String, @Body b: FeedlySubscriptionUpdate)
+    /**
+     * Désabonnement. Le chemin porte l'identifiant du flux (`feed/<url>`), dont les barres
+     * doivent être encodées : `@Path` s'en charge, ne pas le déclarer `encoded`.
+     */
+    @DELETE("subscriptions/{id}")
+    suspend fun deleteSubscription(@Header("Authorization") h: String, @Path("id") id: String)
     /**
      * Renomme un dossier. C'est la seule écriture de dossier que Feedly accepte :
      * `POST /v3/categories/<id>` répond 200 et **garde l'identifiant** (vérifié en direct).
@@ -75,6 +81,19 @@ interface FeedlyService {
     /** Supprime un dossier ; les flux qu'il contenait repassent sans dossier (vérifié en direct). */
     @DELETE("categories/{id}")
     suspend fun deleteCategory(@Header("Authorization") h: String, @Path("id") id: String)
+    /**
+     * Préférences du compte. C'est là que Feedly range l'ordre de ses dossiers
+     * (`categoriesOrderingId`, tableau JSON d'identifiants) : `/v3/categories` n'a pas de rang et
+     * `POST /v3/categories/<id>` ignore les champs d'ordre (vérifié en direct). Le corps est une
+     * **table** `{"clé": valeur}` — la forme `{"name":…,"value":…}` répond 200 sans rien écrire,
+     * elle crée deux préférences nommées « name » et « value » (vérifié). La réponse est un objet
+     * JSON qu'on n'utilise pas : `ResponseBody`, jamais `Unit` (le convertisseur le refuserait).
+     */
+    @POST("preferences")
+    suspend fun preferences(
+        @Header("Authorization") h: String,
+        @Body b: Map<String, String>
+    ): ResponseBody
     /** Profil du compte connecté (nom / e-mail affichés dans l'écran Comptes). */
     @GET("profile")
     suspend fun profile(@Header("Authorization") h: String): FeedlyProfile
@@ -192,6 +211,18 @@ interface InoreaderService {
         @Field("a") add: String? = null,
         @Field("r") remove: String? = null
     )
+    /**
+     * Abonnement rapide (`subscription/quickadd`) : le serveur résout l'adresse et rend le flux
+     * (`streamId`), ou `numResults = 0` quand ce n'est pas un flux. Réponse **JSON**, pas
+     * « OK » : c'est ce qui permet de refuser un ajout sans objet au lieu de laisser en base
+     * un flux fantôme que la synchronisation suivante effacerait.
+     */
+    @FormUrlEncoded @POST("reader/api/0/subscription/quickadd")
+    suspend fun quickAdd(
+        @HeaderMap h: Map<String, String>,
+        @Field("quickadd") feed: String,
+        @Field("T") token: String
+    ): InoreaderQuickAdd
     /** Profil du compte connecté. */
     @GET("reader/api/0/user-info")
     suspend fun userInfo(@HeaderMap h: Map<String, String>): InoreaderUserInfo
@@ -279,6 +310,12 @@ object InoreaderAppAuth {
 @Serializable data class InoreaderSub(val id: String, val title: String, val url: String? = null, val htmlUrl: String? = null, val categories: List<InoreaderCat> = emptyList(), val iconUrl: String? = null)
 @Serializable data class InoreaderCat(val id: String, val label: String)
 @Serializable data class InoreaderSubList(val subscriptions: List<InoreaderSub> = emptyList())
+@Serializable data class InoreaderQuickAdd(
+    val query: String? = null,
+    val numResults: Int = 0,
+    val streamId: String? = null,
+    val error: String? = null
+)
 @Serializable data class InoreaderUserInfo(val userName: String? = null, val userEmail: String? = null, val userId: String? = null)
 @Serializable data class InoreaderTagList(val tags: List<InoreaderTag> = emptyList())
 @Serializable data class InoreaderTag(val id: String, val label: String? = null)

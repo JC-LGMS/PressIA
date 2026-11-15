@@ -39,6 +39,20 @@ le 31/10 : seul le JDK restait). Avant de retélécharger Gradle, regarder ce qu
 dépôt de distributions : `~\.gradle\wrapper\dists\gradle-8.10.2-bin\<haché>\gradle-8.10.2\bin\gradle.bat`
 — une distribution complète y fonctionne avec AGP 8.5.2.
 
+**Le JDK aussi peut être amputé** (constaté le 15/11 : `jlink.exe` puis `jmod.exe` avaient disparu,
+et `:app:compileDebugJavaWithJavac` échouait sur `JdkImageTransform` — « jlink executable … does not
+exist »). Les recopier depuis Android Studio, ils s'annoncent en 17.0.21 et suffisent :
+
+```powershell
+Copy-Item "C:\Program Files\Android\Android Studio\jbr\bin\jlink.exe" `
+          "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.21+9\bin\" -Force
+Copy-Item "C:\Program Files\Android\Android Studio\jbr\bin\jmod.exe" `
+          "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.21+9\bin\" -Force
+```
+
+Le `jbr` d'Android Studio est lui-même un JDK 25 (`java -version`), que Gradle 8.10 ne sait pas
+piloter : ne pas le prendre comme `JAVA_HOME`, seulement ses deux outils.
+
 Préambule PowerShell avant tout appel Gradle :
 
 ```powershell
@@ -827,6 +841,10 @@ les autres (chaque point a coûté un bug quand il manquait).
      l'unité ; un marquage de masse **accepté sans effet** (HTTP 200) rouvre tout à la synchro
      suivante (Feedly `type:"feeds"`, Inoreader `mark-all-as-read` qui avance `firstitemmsec`) ;
    - `markSaved` / `markUnsaved` + `readLater` / `readLaterIds` : sinon l'étoile reste locale ;
+  - `addSubscription` / `removeSubscription` : sinon « Ajouter un flux » et « Se désabonner »
+    restent locaux — le flux revient à la synchro suivante, ou n'existe que sur l'appareil ;
+  - `reorderCategories` : Feedly garde l'ordre des dossiers dans une préférence de compte ; sans
+    cette méthode, l'ordre reste local et son application web garde le sien ;
    - `unreadIds`, `unreadTotal`, `unreadCountsByFeed` : réconciliation distante, rattrapage des
      flux en retard, détection de changement ;
    - `profile` + `userId` : libellé du compte et **anti-doublon** à la reconnexion (sans
@@ -1319,6 +1337,31 @@ articles et favoris du compte compris).
   dès que la précision distingue (`showFeedAccount`) : un dossier fusionné en montre plusieurs
   (« Inoreader · Feedly »). Les lignes sont compactes (`MoveTargetRow`, pas des `ListItem` : à
   deux lignes, ils laissaient un grand vide entre les dossiers).
+- **L'ajout d'un flux part chez le compte** (`FeedProvider.addSubscription` : Feedly
+  `POST /v3/subscriptions` sur `feed/<url>`, Inoreader/FreshRSS `subscription/quickadd` puis
+  `subscription/edit` avec le jeton CSRF). La fenêtre « Ajouter un flux » — barre de l'Accueil,
+  menu d'un dossier, écran Comptes, même icône `RssAddIcon` — demande l'URL puis la cible
+  (`FeedAdd`, `PressVM.addFeed(url, folderId, accountId)`), pousse chez le compte **avant**
+  d'écrire en local et n'écrit rien si le service refuse. Le dossier n'entre pas dans
+  l'abonnement : la ligne est écrite puis rangée par `moveFeedsToFolder`.
+- **Se désabonner retire le flux du compte** (`FeedProvider.removeSubscription`), sans quoi la
+  synchronisation suivante le ramenait. `PressVM.deleteFeed` passe par
+  `repo.deleteFeed(feedId, onStep)`, qui publie ses étapes dans le bandeau (« Retrait du flux chez
+  Feedly… », « Suppression des articles et des images… », puis le résultat) : `feedOp` empêche les
+  compteurs d'une synchro voisine de les écraser, et l'échec nomme le compte (`feedAccountLabel`).
+  La purge efface articles, miniatures et images du cache, jamais les traces de lecture.
+- **L'ordre affiché fait foi** : `movedFeedOrder` / `movedFolderOrder` (purs, testés) déplacent
+  l'élément d'une place dans la liste **de l'écran** — un dossier fusionné y apporte ses plusieurs
+  identifiants, et les flux masqués par « sans non-lus » sont sautés — puis toute la liste est
+  renumérotée. L'ancien échange de rangs sur la liste d'un seul compte laissait le flux bloqué ou
+  le faisait sauter par-dessus plusieurs lignes.
+  - **Chez Feedly, l'ordre des dossiers n'est pas dans `/v3/categories`** (aucun rang, et
+    `POST /v3/categories/<id>` ignore les champs d'ordre) : il vit dans la préférence de compte
+    `categoriesOrderingId`, un tableau JSON d'identifiants que lit son application web.
+    `FeedProvider.reorderCategories` la pousse par `POST /v3/preferences`, dont le corps est une
+    **table** `{"clé": valeur}` : la forme `{"name":…,"value":…}` répond 200 **sans rien écrire**
+    et crée deux préférences nommées « name » et « value » (constaté en direct, puis nettoyées).
+    Inoreader et FreshRSS n'ont pas d'ordre de dossiers : le défaut ne fait rien.
 - **Synchro des flux locaux** : `LocalProvider.onFeed` est appelé à chaque flux reçu (8 en
   parallèle, compteur des flux terminés) et `syncDown` en fait « Réception des articles… (flux
   locaux 2/3 : MiniMachines.net) ». `addLocalFeed` passe par `repo.withSyncLock` (le provider local

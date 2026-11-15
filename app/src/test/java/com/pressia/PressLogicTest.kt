@@ -3,6 +3,8 @@ package com.pressia
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
 import com.pressia.data.readCapped
+import com.pressia.data.movedFeedOrder
+import com.pressia.data.movedFolderOrder
 import com.pressia.ui.parseArticleActions
 import com.pressia.ui.keptIds
 import com.pressia.ui.KEEP_MAX
@@ -2087,5 +2089,34 @@ class PressLogicTest {
         assertTrue(providerUsesSaved("freshrss#1f526b58"))
         // Pas de marquage lu automatique cote serveur : l'etat local reste fiable sans borne.
         assertEquals(null, com.pressia.data.remote.autoReadAgeMs("freshrss"))
+    }
+
+    @Test fun `deplacement d'un flux dans un dossier fusionne`() {
+        // Dossier de deux comptes : l'ordre affiche melange les deux listes (rang puis titre).
+        val all = listOf("a", "b", "x", "c", "d")
+        val visible = all
+        assertEquals(listOf("b", "a", "x", "c", "d"), movedFeedOrder(all, "a", 1, visible))
+        assertEquals(listOf("a", "x", "b", "c", "d"), movedFeedOrder(all, "b", 1, visible))
+        // Le premier ne monte pas, le dernier ne descend pas : rien a ecrire.
+        assertEquals(null, movedFeedOrder(all, "a", -1, visible))
+        assertEquals(null, movedFeedOrder(all, "d", 1, visible))
+    }
+
+    @Test fun `deplacement saute les flux masques sans non-lus`() {
+        // `b` et `c` sont masques par le filtre : descendre `a` le pose apres `x`.
+        val all = listOf("a", "b", "c", "x", "d")
+        val visible = listOf("a", "x", "d")
+        assertEquals(listOf("b", "c", "x", "a", "d"), movedFeedOrder(all, "a", 1, visible))
+        assertEquals(listOf("x", "a", "b", "c", "d"), movedFeedOrder(all, "x", -1, visible))
+    }
+
+    @Test fun `deplacement d'un dossier fusionne`() {
+        // Dossier fusionne = plusieurs identifiants reels derriere un seul affiche.
+        val groups = listOf(listOf("a1", "a2"), listOf("b"), listOf("c1", "c2"))
+        // Descendre le premier dossier amene ses deux identifiants apres « b ».
+        assertEquals(listOf("b", "a1", "a2", "c1", "c2"), movedFolderOrder(groups, 0, 1))
+        // Le dernier ne descend pas, le premier ne monte pas.
+        assertEquals(null, movedFolderOrder(groups, 2, 1))
+        assertEquals(null, movedFolderOrder(groups, 0, -1))
     }
 }

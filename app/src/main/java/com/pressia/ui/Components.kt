@@ -1397,6 +1397,22 @@ fun SyncProgress() {
     }
 }
 
+/**
+ * Icône « ajouter un flux » : le logo RSS et un « + » dans le coin, pour la distinguer d'une
+ * simple actualisation. [description] est nulle quand un libellé l'accompagne déjà (menu).
+ */
+@Composable
+fun RssAddIcon(description: String? = null, modifier: Modifier = Modifier) {
+    Box(modifier.size(24.dp)) {
+        Icon(Icons.Filled.RssFeed, description, Modifier.fillMaxSize())
+        Icon(
+            Icons.Filled.AddCircle, null,
+            Modifier.size(12.dp).align(Alignment.BottomEnd),
+            tint = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
 /** Nom de version affiché (drawer, écran À propos) : suit le `versionName` du build. */
 fun appVersionName(ctx: Context): String? = runCatching {
     val pm = ctx.packageManager

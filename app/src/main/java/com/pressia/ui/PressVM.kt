@@ -6,7 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pressia.data.PressRepository
 import com.pressia.data.BulkProgress
-import com.pressia.data.LocalFeedAdd
+import com.pressia.data.FeedAdd
 import com.pressia.data.FailedImage
 import com.pressia.data.SEARCH_PAGE
 import com.pressia.data.STREAM_PAGE
@@ -14,6 +14,7 @@ import com.pressia.data.imageFailureNote
 import com.pressia.data.providerBase
 import com.pressia.data.remote.providerUsesSaved
 import com.pressia.data.isSyncFresh
+import com.pressia.data.movedFolderOrder
 import com.pressia.data.rateLimitMessage
 import com.pressia.data.ReadingStats
 import com.pressia.data.StatsPeriod
@@ -34,13 +35,14 @@ import kotlinx.coroutines.launch
 data class Scope(val feedId: String? = null, val categoryId: String? = null, val label: String = "Tous les articles")
 
 /**
- * Résultat de l'ajout d'un flux RSS local : ce qui a pu être fait, et le message à afficher.
+ * Résultat de l'ajout d'un flux, local ou chez un compte : ce qui a pu être fait, et le message
+ * à afficher.
  *
- * Le message distingue les trois issues — URL refusée, flux synchronisé, flux ajouté mais vide —
- * là où l'application annonçait toujours « flux ajouté et synchronisé », y compris quand aucun
- * article n'avait été reçu.
+ * Le message distingue les issues — URL refusée, flux refusé par le compte, déjà abonné, flux
+ * synchronisé, flux ajouté mais vide — là où l'application annonçait toujours « flux ajouté et
+ * synchronisé », y compris quand aucun article n'avait été reçu.
  */
-data class LocalFeedResult(val added: Boolean, val message: String)
+data class FeedResult(val added: Boolean, val message: String)
 
 /**
  * Périmètre affiché par l'écran Favoris : le jeu de favoris d'un côté (« mes étoiles », le tableau
@@ -201,6 +203,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     private var syncJobs by mutableStateOf(0)
     /** Une synchronisation est en cours (l'app ne synchronise que lorsqu'elle est ouverte). */
     val syncing: Boolean get() = syncJobs > 0
+    /**
+     * Un désabonnement est en cours : ses étapes gardent le bandeau, sinon les compteurs d'une
+     * synchro voisine les effacent à chaque image téléchargée et l'on ne voit plus où en est
+     * l'opération.
+     */
+    private var feedOp by mutableStateOf(false)
     var stats by mutableStateOf<ReadingStats?>(null)
     /** Années avec des données de lecture (sélecteur « par année »). */
     var statsYears by mutableStateOf<List<Int>>(emptyList())
@@ -427,7 +435,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // les suit quel que soit le déclencheur. Les nulls (fin de passe, voir les
         // `finally` du dépôt) sont ignorés : sans cela l'écran rouvert plus tard dans le
         // même processus rejouait la dernière étape en bandeau.
-        viewModelScope.launch { repo.syncStep.collect { if (it != null) syncMsg = it } }
+        viewModelScope.launch {
+            repo.syncStep.collect { if (it != null && !feedOp) syncMsg = it }
+        }
         // Contenu stocké modifié en cours de route (abonnements approvisionnés, fin de passe
         // articles ou « Read later ») : l'accueil et les compteurs suivent sans attendre la
         // fin de la synchronisation. Les listes d'articles, elles, sont déjà réactives.
@@ -699,18 +709,34 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         return ids
     }
 
-    /** Supprime un flux RSS local ; les autres comptes ne sont pas touchés. */
-    fun deleteLocalFeed(feedId: String) = viewModelScope.launch {
-        repo.deleteLocalFeed(feedId)
+    /**
+     * Désabonne un flux (chez son compte s'il en a un). Les étapes s'affichent dans le bandeau du
+     * bas, comme une synchro : le retrait chez un agrégateur attend le réseau, la purge locale
+     * efface les articles puis les images.
+     */
+    fun deleteFeed(feedId: String) = viewModelScope.launch {
+        val label = com.pressia.data.feedAccountLabel(
+            subs.firstOrNull { it.id == feedId }?.provider, accounts
+        )
+        lockSync()
+        feedOp = true
+        val ok = try {
+            repo.deleteFeed(feedId) { syncMsg = it }
+        } finally {
+            feedOp = false
+            unlockSync()
+        }
         refreshNow()
         // Le compteur de l'écran Comptes (`AccountInfo.feeds`) ne suit pas `refreshNow`.
         account = repo.accountInfo()
+        syncMsg = if (ok) "Flux désabonné." else "Désabonnement refusé par $label."
     }
 
     /**
-     * Ajoute un flux RSS local et le synchronise une première fois. [localFeedAdding] couvre
-     * toute l'opération (enregistrement + première sync) : le bouton de l'écran Comptes reste
-     * désactivé jusque-là, `done` étant appelé dans tous les cas (échec compris).
+     * Ajoute un flux et le synchronise une première fois : chez soi ([accountId] nul ou
+     * « local ») ou chez le compte choisi. [localFeedAdding] couvre toute l'opération
+     * (enregistrement + première sync) : le bouton de l'écran Comptes reste désactivé jusque-là,
+     * `done` étant appelé dans tous les cas (échec compris).
      *
      * La première synchronisation est annoncée comme les autres (bandeau + snackbar, dès qu'une
      * URL valide est reconnue) : sans cela l'ajout restait muet pendant tout le premier
@@ -719,31 +745,47 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Le retour dit ce qui s'est **vraiment** passé : un flux ajouté mais resté vide (URL
      * fausse, serveur injoignable) n'est plus présenté comme une synchronisation réussie.
      */
-    fun addLocalFeed(url: String, folderId: String? = null, done: (LocalFeedResult) -> Unit = {}) = viewModelScope.launch {
+    fun addFeed(
+        url: String,
+        folderId: String? = null,
+        accountId: String? = null,
+        done: (FeedResult) -> Unit = {}
+    ) = viewModelScope.launch {
         if (localFeedAdding) {
-            done(LocalFeedResult(false, "Un autre flux est en cours d'ajout."))
+            done(FeedResult(false, "Un autre flux est en cours d'ajout."))
             return@launch
         }
         localFeedAdding = true
-        var result = LocalFeedResult(false, "Flux non ajouté.")
+        var result = FeedResult(false, "Flux non ajouté.")
         try {
-            when (val added = repo.addLocalFeed(url, folderId)) {
-                LocalFeedAdd.InvalidUrl ->
-                    result = LocalFeedResult(false, "URL de flux invalide (http ou https attendu).")
-                LocalFeedAdd.AlreadyExists ->
-                    result = LocalFeedResult(false, "Ce flux est déjà abonné.")
-                is LocalFeedAdd.Added -> {
+            when (val added = repo.addFeed(url, folderId, accountId)) {
+                FeedAdd.InvalidUrl ->
+                    result = FeedResult(false, "URL de flux invalide (http ou https attendu).")
+                FeedAdd.AlreadyExists ->
+                    result = FeedResult(false, "Ce flux est déjà abonné.")
+                FeedAdd.Refused -> result = FeedResult(
+                    false,
+                    "Ajout refusé par " + com.pressia.data.feedAccountLabel(accountId, accounts) +
+                        " : l'URL est-elle celle d'un flux ?"
+                )
+                is FeedAdd.Added -> {
                     val link = added.id
+                    val where = if (com.pressia.data.isLocalProvider(accountId)) ""
+                    else " chez " + com.pressia.data.feedAccountLabel(accountId, accounts)
                     lockSync()
                     try {
                         syncMsg = "Réception des articles du nouveau flux…"
+                        // Chez un compte, une passe complète : la passe ciblée ne relit pas les
+                        // abonnements, et le flux garderait l'URL pour nom (au lieu de son titre)
+                        // jusqu'à la synchro suivante.
+                        val target = if (com.pressia.data.isLocalProvider(accountId)) link else null
                         // Sous le verrou de synchro, comme le pipeline : le provider local porte
                         // ses flux et son rappel d'avancement dans des champs partagés, une passe
                         // qui se chevauche les écraserait (flux ajouté pendant une synchro).
-                        repo.withSyncLock { repo.syncDown(link) }
+                        repo.withSyncLock { repo.syncDown(target) }
                         val n = repo.countArticlesOfFeed(link)
-                        result = if (n > 0) LocalFeedResult(true, "Flux ajouté et synchronisé ($n articles).")
-                        else LocalFeedResult(true, "Flux ajouté, mais aucun article reçu : l'URL est-elle exacte ?")
+                        result = if (n > 0) FeedResult(true, "Flux ajouté$where et synchronisé ($n articles).")
+                        else FeedResult(true, "Flux ajouté$where, mais aucun article reçu : l'URL est-elle exacte ?")
                     } finally {
                         unlockSync()
                     }
@@ -751,7 +793,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             }
         } finally {
             refreshNow()
-            // Voir deleteLocalFeed : le compteur Comptes ne suit pas `refreshNow`.
+            // Voir deleteFeed : le compteur Comptes ne suit pas `refreshNow`.
             account = repo.accountInfo()
             localFeedAdding = false
             done(result)
@@ -804,17 +846,26 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /**
      * Monte ou descend un dossier d'une place dans la liste affichée, puis rafraîchit l'écran.
      *
-     * Le rafraîchissement attend la fin de l'écriture : sans cela, la liste se recomposait avec
-     * l'ancien ordre et le dossier revenait à sa place initiale sous le doigt de l'utilisateur.
+     * La liste est celle de [folders] : un dossier fusionné n'a pas d'identifiant à lui, c'est
+     * donc cette liste qui dit où il passe (voir `movedFolderOrder`). Le rafraîchissement attend
+     * la fin de l'écriture : sans cela, la liste se recomposait avec l'ancien ordre et le dossier
+     * revenait à sa place initiale sous le doigt de l'utilisateur.
      */
     fun moveFolder(folder: PressRepository.Folder, delta: Int) = viewModelScope.launch {
-        repo.moveFolder(folder.id, delta)
+        val from = folders.indexOfFirst { it.id == folder.id }
+        movedFolderOrder(folders.map { it.ids }, from, delta)?.let { repo.setFolderOrder(it) }
         refreshNow()
     }
 
-    /** Idem pour un flux, dans la liste de son dossier ou dans « Flux sans dossier ». */
-    fun moveFeedOrder(feedId: String, delta: Int, categoryId: String?) = viewModelScope.launch {
-        repo.moveSubscription(feedId, delta, categoryId)
+    /**
+     * Idem pour un flux, dans la liste affichée : [categoryIds] = les identifiants du dossier
+     * (plusieurs s'il est fusionné entre comptes, `null` pour « Flux sans dossier »), [visible] =
+     * les flux dans l'ordre de l'écran.
+     */
+    fun moveFeedOrder(
+        feedId: String, delta: Int, categoryIds: List<String>?, visible: List<String>
+    ) = viewModelScope.launch {
+        repo.moveSubscription(feedId, delta, categoryIds, visible)
         refreshNow()
     }
 

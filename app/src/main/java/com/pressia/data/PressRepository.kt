@@ -241,16 +241,18 @@ fun undoneReadRows(page: List<QueuedAction>, queued: List<QueuedAction>): Set<Lo
 }
 
 /**
- * Résultat de l'ajout d'un flux RSS local.
+ * Résultat de l'ajout d'un flux, local ou chez un compte.
  *
  * [AlreadyExists] évite deux dégâts de l'ancien `upsert` : le flux était rangé dans le
  * dossier demandé (déplacé au passage) et sa première synchronisation était relancée en
- * entier, alors que rien ne manquait.
+ * entier, alors que rien ne manquait. [Refused] : le compte a refusé l'abonnement, rien n'a
+ * bougé.
  */
-sealed interface LocalFeedAdd {
-    data class Added(val id: String) : LocalFeedAdd
-    data object AlreadyExists : LocalFeedAdd
-    data object InvalidUrl : LocalFeedAdd
+sealed interface FeedAdd {
+    data class Added(val id: String) : FeedAdd
+    data object AlreadyExists : FeedAdd
+    data object InvalidUrl : FeedAdd
+    data object Refused : FeedAdd
 }
 
 /** Compte rendu d'un import OPML : ce qui est entré, ce qui était déjà là, ce qui a été refusé. */
@@ -342,6 +344,41 @@ fun capByQuota(
         counts[a.feedId] = (counts[a.feedId] ?: 0) + 1
         true
     } else false
+}
+
+/**
+ * Ordre d'une liste de flux après un déplacement d'une place : [all] dans l'ordre en base,
+ * [visible] dans l'ordre de l'écran (le filtre « sans non-lus » en cache une partie), le flux
+ * prenant la place de son voisin **visible**. Rend `null` quand il n'y a rien à faire (flux
+ * absent, ou bout de liste atteint).
+ */
+fun movedFeedOrder(
+    all: List<String>, feedId: String, delta: Int, visible: List<String>
+): List<String>? {
+    val index = all.indexOf(feedId)
+    val from = visible.indexOf(feedId)
+    val to = from + delta
+    if (index < 0 || from < 0 || to !in visible.indices) return null
+    val moved = all.toMutableList()
+    val item = moved.removeAt(index)
+    val anchor = moved.indexOf(visible[to])
+    if (anchor < 0) return null
+    moved.add(if (delta > 0) anchor + 1 else anchor, item)
+    return moved
+}
+
+/**
+ * Ordre des identifiants de dossiers après un déplacement d'une place dans la liste affichée :
+ * [groups] porte, pour chaque dossier affiché, ses identifiants réels (plusieurs quand il fusionne
+ * les dossiers homonymes de deux comptes), aplatis dans l'ordre voulu. Rend `null` quand il n'y a
+ * rien à faire (bout de liste).
+ */
+fun movedFolderOrder(groups: List<List<String>>, from: Int, delta: Int): List<String>? {
+    val to = from + delta
+    if (from !in groups.indices || to !in groups.indices) return null
+    val moved = groups.toMutableList()
+    moved.add(to, moved.removeAt(from))
+    return moved.flatten()
 }
 
 /**
@@ -1104,55 +1141,48 @@ class PressRepository(
     }
 
     /**
-     * Monte ou descend un dossier d'une place, sans tri intermédiaire.
+     * Réécrit l'ordre des dossiers : [orderedIds] est la liste **affichée**, dans l'ordre, chaque
+     * dossier fusionné y apportant ses plusieurs identifiants réels (voir [movedFolderOrder]).
      *
-     * On travaille sur la liste déjà ordonnée par la base : échanger le rang du dossier visé avec
-     * celui de son voisin produit exactement le déplacement demandé, et les autres dossiers ne
-     * bougent pas. `sortOrder` vaut 0 pour les dossiers venus d'un compte, qui restent donc
-     * ordonnés par libellé entre eux : l'échange porte sur les rangs, pas sur une liste reconstruite.
+     * L'ordre part ensuite chez les comptes qui le tiennent (Feedly, via une préférence) : sans
+     * cela leur propre application web garderait le sien. Un refus est journalisé, l'ordre local
+     * restant valable — Inoreader et FreshRSS n'ont pas d'ordre de dossiers, ils ne reçoivent rien.
      */
-    suspend fun moveFolder(id: String, delta: Int) = withContext(Dispatchers.IO) {
-        val cats = dao.categories()
-        val index = cats.indexOfFirst { it.id == id }
-        val target = index + delta
-        if (index < 0 || target !in cats.indices) return@withContext
-        val a = cats[index]
-        val b = cats[target]
-        // Rangs égaux (dossiers d'un compte, tous à 0) : on énumère toute la liste pour donner à
-        // chacun un rang distinct, sinon l'échange resterait sans effet visible.
-        val ordered = if (a.sortOrder == b.sortOrder) {
-            cats.indices.toList()
-        } else null
-        if (ordered != null) {
-            val moved = ordered.toMutableList()
-            moved.add(target, moved.removeAt(index))
-            dao.reorderCategories(moved.map { cats[it].id })
-        } else {
-            dao.setCategoryOrder(a.id, b.sortOrder)
-            dao.setCategoryOrder(b.id, a.sortOrder)
+    suspend fun setFolderOrder(orderedIds: List<String>) = withContext(Dispatchers.IO) {
+        val owners = dao.categories().associate { it.id to it.provider }
+        dao.reorderCategories(orderedIds)
+        val accounts = cloudAccounts()
+        orderedIds.groupBy { owners[it] ?: LOCAL_PROVIDER }.forEach { (owner, ids) ->
+            val account = accounts.firstOrNull { it.id == owner } ?: return@forEach
+            try {
+                providerFor(account.provider).reorderCategories(account.token, ids)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("PressIA", "ordre des dossiers refusé par ${account.provider} : ${e.message}")
+            }
         }
     }
 
     /**
-     * Monte ou descend un flux d'une place, dans la liste visible à l'écran : celle de son
-     * dossier, ou celle des « flux sans dossier ». On laisse [delta] entre les rangs voisins.
+     * Monte ou descend un flux d'une place dans la liste **affichée** : [categoryIds] porte les
+     * identifiants réels du dossier (plusieurs quand il est fusionné entre comptes), [visible]
+     * les flux dans l'ordre de l'écran (filtre « sans non-lus » compris).
+     *
+     * Le flux prend la place de son voisin visible, pas de son voisin en base : sur un dossier
+     * fusionné, la liste d'un seul compte ne contient pas les flux de l'autre, et le déplacement
+     * sautait par-dessus plusieurs lignes. Toute la liste est ensuite renumérotée (voir
+     * [movedFeedOrder]), ce qui lève au passage les rangs égaux — flux d'un compte arrivés tous à
+     * 0 — source des mêmes sauts.
      */
-    suspend fun moveSubscription(feedId: String, delta: Int, categoryId: String?) =
-        withContext(Dispatchers.IO) {
-            val list = if (categoryId == null) dao.subscriptions().filter { it.categoryId == null }
-            else dao.subscriptionsForCategory(categoryId)
-            val index = list.indexOfFirst { it.id == feedId }
-            val target = index + delta
-            if (index < 0 || target !in list.indices) return@withContext
-            if (list[index].sortOrder == list[target].sortOrder) {
-                val moved = list.indices.toMutableList()
-                moved.add(target, moved.removeAt(index))
-                dao.reorderSubscriptions(moved.map { list[it].id })
-            } else {
-                dao.setSubscriptionOrder(list[index].id, list[target].sortOrder)
-                dao.setSubscriptionOrder(list[target].id, list[index].sortOrder)
-            }
-        }
+    suspend fun moveSubscription(
+        feedId: String, delta: Int, categoryIds: List<String>?, visible: List<String>
+    ) = withContext(Dispatchers.IO) {
+        val list = if (categoryIds == null) dao.subscriptions().filter { it.categoryId == null }
+        else dao.subscriptionsForCategories(categoryIds)
+        movedFeedOrder(list.map { it.id }, feedId, delta, visible)
+            ?.let { dao.reorderSubscriptions(it) }
+    }
 
     /** Identifiants du périmètre, dans l'ordre d'affichage (liste de balayage de l'écran article). */
     suspend fun streamIds(
@@ -3527,14 +3557,14 @@ class PressRepository(
      * `…%00`, le serveur répondait 404, et le flux restait vide sans le moindre message.
      * Une URL d'un autre protocole que http(s) est refusée.
      */
-    suspend fun addLocalFeed(url: String, folderId: String? = null): LocalFeedAdd = withContext(Dispatchers.IO) {
+    suspend fun addLocalFeed(url: String, folderId: String? = null): FeedAdd = withContext(Dispatchers.IO) {
         val link = sanitizeFeedUrl(url)
-        if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext LocalFeedAdd.InvalidUrl
+        if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext FeedAdd.InvalidUrl
         // Même adresse écrite autrement (http/https, barre finale) = même flux : ne rien
         // toucher, ni le dossier, ni les articles déjà reçus.
         val key = feedUrlKey(link)
         if (dao.subscriptions().any { isLocalProvider(it.provider) && feedUrlKey(it.id) == key }) {
-            return@withContext LocalFeedAdd.AlreadyExists
+            return@withContext FeedAdd.AlreadyExists
         }
         dao.upsertSubscriptions(
             listOf(SubscriptionEntity(id = link, title = link, url = link, siteUrl = link, provider = LOCAL_PROVIDER))
@@ -3543,8 +3573,44 @@ class PressRepository(
         // identifiant n'existe pas dans `categories` — l'écrire tel quel faisait planter
         // l'application sur la clé étrangère.
         if (folderId != null) moveFeedsToFolder(listOf(link), folderId)
-        LocalFeedAdd.Added(link)
+        FeedAdd.Added(link)
     }
+
+    /**
+     * Ajoute un flux, chez soi ([accountId] nul ou « local ») ou chez un compte d'agrégateur,
+     * éventuellement rangé dans [folderId].
+     *
+     * Chez un compte, l'abonnement part **avant** l'écriture locale : si le service refuse, rien
+     * ne bouge et l'appelant le dit — même règle que le déplacement d'un flux, sinon la
+     * synchronisation suivante effacerait une ligne que le compte ne connaît pas.
+     */
+    suspend fun addFeed(url: String, folderId: String? = null, accountId: String? = null): FeedAdd =
+        withContext(Dispatchers.IO) {
+            if (isLocalProvider(accountId)) return@withContext addLocalFeed(url, folderId)
+            val link = sanitizeFeedUrl(url)
+            if (link.isEmpty() || !isSupportedFeedUrl(link)) return@withContext FeedAdd.InvalidUrl
+            // Déjà abonné ailleurs (autre compte, flux local) : même règle que l'import OPML.
+            if (dao.subscriptions().any { feedUrlKey(it.id) == feedUrlKey(link) }) {
+                return@withContext FeedAdd.AlreadyExists
+            }
+            val account = cloudAccounts().firstOrNull { it.id == accountId }
+                ?: return@withContext FeedAdd.Refused
+            val id = try {
+                providerFor(account.provider).addSubscription(account.token, link)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("PressIA", "ajout refusé par ${account.provider} : ${e.message}")
+                return@withContext FeedAdd.Refused
+            }
+            dao.upsertSubscriptions(
+                listOf(SubscriptionEntity(id = id, title = link, url = link, siteUrl = link, provider = account.id))
+            )
+            // Le dossier par le chemin commun : un dossier d'un autre compte (ou local) n'existe
+            // pas chez ce compte et y est alors créé (voir moveFeedsToFolder).
+            if (folderId != null) moveFeedsToFolder(listOf(id), folderId)
+            FeedAdd.Added(id)
+        }
 
     /**
      * Importe un fichier OPML : chaque flux devient un abonnement RSS **local**, rangé dans son
@@ -3606,16 +3672,44 @@ class PressRepository(
     }
 
     /**
-     * Désabonne un flux. Un flux appartenant à un compte est retiré chez ce compte ; un flux RSS
-     * local est simplement effacé de la base, avec ses articles et ses HTML extraits. Ses traces
-     * de lecture ne partent pas (elles nourrissent les statistiques, qui survivent à un
-     * désabonnement comme à une suppression de compte). Puis les miniatures orphelines (même
-     * motif que le désabonnement en synchro : sinon les images du flux supprimé resteraient sur
-     * disque, sans article pour les réclamer), et les images pleine taille du cache Coil.
+     * Désabonne un flux : chez son compte d'abord (sinon la synchronisation suivante le
+     * ramènerait), puis sur l'appareil. Rend false quand le compte refuse — rien n'est alors
+     * supprimé localement.
+     *
+     * [onStep] reçoit les étapes (retrait chez le compte, purge locale) : le bandeau les affiche,
+     * un désabonnement chez un agrégateur prenant le temps d'un aller-retour réseau.
      */
-    suspend fun deleteLocalFeed(feedId: String) = withContext(Dispatchers.IO) {
-        val sub = dao.subscription(feedId) ?: return@withContext
-        if (!isLocalProvider(sub.provider)) return@withContext
+    suspend fun deleteFeed(feedId: String, onStep: ((String) -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
+        val sub = dao.subscription(feedId) ?: return@withContext false
+        if (!isLocalProvider(sub.provider)) {
+            // Flux d'un compte disparu entre-temps : plus rien à pousser, la suppression locale suffit.
+            val accounts = cloudAccounts()
+            val account = accounts.firstOrNull { it.id == sub.provider }
+            if (account != null) {
+                onStep?.invoke("Retrait du flux chez " + feedAccountLabel(account.id, accounts) + "…")
+                try {
+                    providerFor(account.provider).removeSubscription(account.token, feedId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("PressIA", "désabonnement refusé par ${account.provider} : ${e.message}")
+                    return@withContext false
+                }
+            }
+        }
+        purgeFeed(feedId, onStep)
+        true
+    }
+
+    /**
+     * Désabonne un flux, ses articles et ses HTML extraits, puis les miniatures devenues
+     * orphelines (même motif que le désabonnement en synchro : sinon les images du flux supprimé
+     * resteraient sur disque, sans article pour les réclamer), et ses images pleine taille du
+     * cache Coil. Ses traces de lecture ne partent pas (elles nourrissent les statistiques, qui
+     * survivent à un désabonnement comme à une suppression de compte).
+     */
+    private suspend fun purgeFeed(feedId: String, onStep: ((String) -> Unit)? = null) {
+        onStep?.invoke("Suppression des articles et des images de l'appareil…")
         // URLs d'images relevées avant la suppression des lignes : miniature déclarée et images
         // du corps (HTML complet ou extrait). Les images des autres flux partageant une URL
         // restent en cache — le filtre est appliqué plus bas, une fois les articles partis.
@@ -3628,8 +3722,8 @@ class PressRepository(
             dao.deleteArticlesOfFeed(feedId)
             dao.deleteSubscription(feedId)
         }
-        // Ses traces de lecture et d'extraction restent : elles ne servent qu'aux statistiques,
-        // qui doivent survivre au désabonnement (elles s'afficheront sous « Flux supprimé »).
+        // Actions de lecture encore en file pour ce flux : elles n'ont plus d'article à viser.
+        dao.deleteQueueOfFeeds(listOf(feedId))
         // Seules les images sans plus aucun article pour les réclamer sont retirées.
         gcThumbs()
         purgeImages(images.filterNot { it in dao.allThumbUrls() })

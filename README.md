@@ -13,7 +13,14 @@ images conservés sur l'appareil.
 - **Dossiers** : fusionnés (même nom chez tous les comptes) ou séparés (un
   dossier par compte). Créer, renommer ou supprimer un dossier part chez le
   compte qui le porte ; l'application le crée chez lui au premier flux rangé
-  dedans, et affiche le compte sous chaque dossier au déplacement.
+  dedans, et affiche le compte sous chaque dossier au déplacement. « Monter » et
+  « Descendre » réordonnent l'écran, dossier fusionné compris, et l'ordre part
+  chez Feedly (Inoreader n'a pas d'ordre de dossiers).
+- **Flux** : une icône « + » (Accueil, menu d'un dossier, Comptes) ajoute un
+  flux — local, ou chez le compte choisi : l'abonnement part au compte avant
+  d'être écrit sur l'appareil, et un refus ne laisse rien. « Se désabonner » le
+  retire aussi du compte, efface ses articles et ses images, et s'annonce dans le
+  bandeau du bas, étape par étape.
 - **Lecture** : quatre vues (liste, carte, magazine, compacte), quatre tailles de
   police, thème clair/sombre/AMOLED et apparence automatique selon la lumière
   ambiante. Un article ouvert est conservé hors-ligne (extrait du flux, images).

@@ -105,6 +105,36 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         api.deleteCategory(auth(token), category.id)
     }
 
+    /**
+     * L'ordre des dossiers n'est pas dans `/v3/categories` (pas de rang) : Feedly le tient dans la
+     * préférence `categoriesOrderingId`, un tableau JSON d'identifiants que son application web lit
+     * pour ordonner ses collections. `POST /v3/preferences` attend une **table** `{clé: valeur}` :
+     * la forme `{"name":…,"value":…}` répond 200 sans rien écrire (vérifié en direct). Guillemets et
+     * barres inverses sont échappés, la valeur étant du JSON dans du JSON.
+     */
+    override suspend fun reorderCategories(token: String?, orderedIds: List<String>) {
+        if (orderedIds.isEmpty()) return
+        val value = orderedIds.joinToString(",", "[", "]") {
+            "\"" + it.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        }
+        api.preferences(auth(token), mapOf("categoriesOrderingId" to value)).close()
+    }
+
+    /**
+     * S'abonner et modifier passent par le même appel ; sans titre, Feedly reprend celui du flux
+     * annoncé par son URL. L'identifiant d'un flux est `feed/<url>` (même convention que les
+     * abonnements déjà reçus du serveur).
+     */
+    override suspend fun addSubscription(token: String?, url: String): String {
+        val id = "feed/$url"
+        api.updateSubscription(auth(token), FeedlySubscriptionUpdate(id = id))
+        return id
+    }
+
+    override suspend fun removeSubscription(token: String?, feedId: String) {
+        api.deleteSubscription(auth(token), feedId)
+    }
+
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
             ?: return StreamPage(emptyList(), null)
@@ -462,6 +492,28 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         (local + call(token) { h -> apiFor(token).subs(h) }
             .subscriptions.filter { s -> s.categories.any { it.id == categoryId } }
             .map { it.id }).distinct()
+
+    /**
+     * `subscription/quickadd` : le serveur résout l'adresse et rend le flux, ou `numResults = 0`
+     * quand ce n'en est pas un (refus explicite plutôt qu'un flux fantôme en base). Le dossier,
+     * lui, est posé ensuite par `moveSubscription`. FreshRSS hérite du même chemin.
+     */
+    override suspend fun addSubscription(token: String?, url: String): String {
+        val stream = "feed/$url"
+        call(token) { h ->
+            val t = csrf(token, h)
+            val added = apiFor(token).quickAdd(h, stream, t)
+            if (added.numResults <= 0) throw IllegalStateException(added.error ?: "flux introuvable")
+        }
+        return stream
+    }
+
+    /** `subscription/edit` avec `ac=unsubscribe` : un appel, jeton CSRF de la session. */
+    override suspend fun removeSubscription(token: String?, feedId: String) {
+        call(token) { h ->
+            apiFor(token).editSubscription(h, feedId, csrf(token, h), action = "unsubscribe")
+        }
+    }
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val stream = feedId ?: categoryId ?: "user/-/state/com.google/reading-list"
         // `newerThanMs` ignoré : l'équivalent Reader API (`nt`) n'est pas vérifié en live

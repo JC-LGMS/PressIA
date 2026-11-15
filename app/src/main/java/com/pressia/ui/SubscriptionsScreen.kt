@@ -75,7 +75,12 @@ fun SubscriptionsScreen(
     var creating by remember { mutableStateOf(false) }                          // création d'un dossier
     var moving by remember { mutableStateOf<SubscriptionEntity?>(null) }       // déplacement d'un flux
     var toDelete by remember { mutableStateOf<PressRepository.Folder?>(null) }
-    var addingTo by remember { mutableStateOf<PressRepository.Folder?>(null) } // ajout d'un flux local
+    var addingTo by remember { mutableStateOf<PressRepository.Folder?>(null) } // ajout d'un flux (depuis un dossier)
+    var adding by remember { mutableStateOf(false) }                            // ajout d'un flux, sans dossier
+    var removing by remember { mutableStateOf<SubscriptionEntity?>(null) }      // désabonnement d'un flux
+    // Cibles d'un ajout : « Local » puis les comptes connectés, sous leur libellé.
+    val feedOwners = (listOf(com.pressia.data.LOCAL_PROVIDER) + vm.accounts.map { it.id })
+        .map { it to com.pressia.data.feedAccountLabel(it, vm.accounts) }
     // Précision du compte : inutile quand il n'y a qu'un compte, ou que des flux locaux
     // (voir `showFeedAccount`) — on ne l'affiche alors nulle part.
     val showAccount = com.pressia.data.showFeedAccount(vm.accounts, vm.localFeeds)
@@ -107,6 +112,7 @@ fun SubscriptionsScreen(
                             toast(ctx, "Actualisation des abonnements")
                             vm.sync()
                         }
+                        IconButton({ adding = true }) { RssAddIcon("ajouter un flux") }
                         IconButton({ creating = true }) { Icon(Icons.Filled.CreateNewFolder, "nouveau dossier") }
                     }
                 )
@@ -217,13 +223,14 @@ fun SubscriptionsScreen(
                                     SubRow(
                                         vm, s, Modifier.padding(start = 20.dp), feedSp, onOpenStream,
                                         onMove = { moving = s },
-                                        onMoveUp = { vm.moveFeedOrder(s.id, -1, s.categoryId) },
-                                        onMoveDown = { vm.moveFeedOrder(s.id, 1, s.categoryId) },
+                                        onMoveUp = { vm.moveFeedOrder(s.id, -1, f.ids, shown.map { it.id }) },
+                                        onMoveDown = { vm.moveFeedOrder(s.id, 1, f.ids, shown.map { it.id }) },
                                         canMoveUp = i > 0,
                                         canMoveDown = i < shown.lastIndex,
                                         onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) },
                                         account = if (showAccount) com.pressia.data.feedAccountLabel(s.provider, vm.accounts) else null,
-                                        onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) }
+                                        onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) },
+                                        onDelete = { removing = s }
                                     )
                                 }
                             }
@@ -241,13 +248,14 @@ fun SubscriptionsScreen(
                             SubRow(
                                 vm, s, Modifier, feedSp, onOpenStream,
                                 onMove = { moving = s },
-                                onMoveUp = { vm.moveFeedOrder(s.id, -1, null) },
-                                onMoveDown = { vm.moveFeedOrder(s.id, 1, null) },
+                                onMoveUp = { vm.moveFeedOrder(s.id, -1, null, visibleUncategorized.map { it.id }) },
+                                onMoveDown = { vm.moveFeedOrder(s.id, 1, null, visibleUncategorized.map { it.id }) },
                                 canMoveUp = i > 0,
                                 canMoveDown = i < visibleUncategorized.lastIndex,
                                 onMarkAllRead = { vm.markAllReadFor(listOf(s.id)) },
                                 account = if (showAccount) com.pressia.data.feedAccountLabel(s.provider, vm.accounts) else null,
-                                onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) }
+                                onSearch = { onSearch(Scope(feedId = s.id, label = prettyFeedTitle(s.title))) },
+                                onDelete = { removing = s }
                             )
                         }
                     }
@@ -346,16 +354,52 @@ fun SubscriptionsScreen(
             dismissButton = { TextButton({ toDelete = null }) { Text("Annuler") } }
         )
     }
+    if (adding) {
+        AddFeedDialog(
+            title = "Ajouter un flux",
+            choices = feedOwners,
+            onDismiss = { adding = false },
+            onConfirm = { url, owner ->
+                adding = false
+                vm.addFeed(url, null, owner) { res -> toast(ctx, res.message) }
+            }
+        )
+    }
     addingTo?.let { f ->
         AddFeedDialog(
             title = "Ajouter un flux dans « ${f.label} »",
+            choices = feedOwners,
             onDismiss = { addingTo = null },
-            onConfirm = { url ->
+            onConfirm = { url, owner ->
                 addingTo = null
-                vm.addLocalFeed(url, f.id) { res ->
+                vm.addFeed(url, f.id, owner) { res ->
                     toast(ctx, res.message)
                 }
             }
+        )
+    }
+    removing?.let { s ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text("Désabonner ce flux ?") },
+            text = {
+                val where = if (com.pressia.data.isLocalProvider(s.provider)) ""
+                else " Il sera aussi retiré du compte " +
+                    com.pressia.data.feedAccountLabel(s.provider, vm.accounts) +
+                    ", sinon la synchronisation suivante le ramènerait."
+                Text(
+                    "« ${prettyFeedTitle(s.title)} » et ses articles seront supprimés de l'appareil.$where" +
+                        " Les statistiques de lecture déjà comptées sont conservées."
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    val id = s.id
+                    removing = null
+                    vm.deleteFeed(id)
+                }) { Text("Désabonner", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ removing = null }) { Text("Annuler") } }
         )
     }
     moving?.let { s ->
@@ -495,8 +539,8 @@ private fun FolderRow(
                     onClick = { open = false; onRename() }
                 )
                 DropdownMenuItem(
-                    text = { Text("Ajouter un flux local") },
-                    leadingIcon = { Icon(Icons.Filled.Add, null) },
+                    text = { Text("Ajouter un flux") },
+                    leadingIcon = { RssAddIcon() },
                     onClick = { open = false; onAddFeed() }
                 )
                 // Les deux actions de position sont désactivées en bout de liste : un dossier déjà
@@ -611,24 +655,56 @@ private fun MoveTargetRow(
     }
 }
 
-/** Saisie de l'URL d'un flux RSS local. */
+/**
+ * Saisie de l'URL d'un flux, et chez qui l'ajouter ([choices] : « Local » puis les comptes ;
+ * le premier est coché). Le choix n'est affiché que s'il y a plusieurs cibles.
+ */
 @Composable
-private fun AddFeedDialog(title: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun AddFeedDialog(
+    title: String,
+    choices: List<Pair<String, String>> = emptyList(),
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
     var url by remember { mutableStateOf("") }
+    var owner by remember { mutableStateOf(choices.firstOrNull()?.first ?: com.pressia.data.LOCAL_PROVIDER) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                url, { url = it }, label = { Text("URL du flux RSS/Atom") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
-                    autoCorrectEnabled = false
+            Column {
+                OutlinedTextField(
+                    url, { url = it }, label = { Text("URL du flux RSS/Atom") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                        autoCorrectEnabled = false
+                    )
                 )
-            )
+                if (choices.size > 1) {
+                    Text(
+                        "Ajouter chez",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+                    choices.forEach { (id, label) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = owner == id, role = Role.RadioButton) { owner = id },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = owner == id, onClick = null)
+                            Text(label, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
         },
-        confirmButton = { TextButton({ onConfirm(url.trim()) }, enabled = url.isNotBlank()) { Text("Ajouter") } },
+        confirmButton = {
+            TextButton({ onConfirm(url.trim(), owner) }, enabled = url.isNotBlank()) { Text("Ajouter") }
+        },
         dismissButton = { TextButton(onDismiss) { Text("Annuler") } }
     )
 }
@@ -650,7 +726,9 @@ private fun SubRow(
     /** Compte du flux, quand la précision est utile (null = masquée). */
     account: String? = null,
     /** Ouvre la recherche sur ce flux. */
-    onSearch: () -> Unit = {}
+    onSearch: () -> Unit = {},
+    /** Désabonnement : confirmé par l'écran hôte avant d'être appliqué. */
+    onDelete: () -> Unit = {}
 ) {
     val pretty = prettyFeedTitle(sub.title)
     val n = vm.unreads[sub.id] ?: 0
@@ -718,6 +796,11 @@ private fun SubRow(
                     enabled = canMoveDown,
                     leadingIcon = { Icon(Icons.Filled.KeyboardArrowDown, null) },
                     onClick = { menu = false; onMoveDown() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Se désabonner") },
+                    leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                    onClick = { menu = false; onDelete() }
                 )
             }
         }

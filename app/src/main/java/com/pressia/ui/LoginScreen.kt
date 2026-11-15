@@ -349,7 +349,7 @@ fun LoginScreen(
             {
                 val url = rssUrl.trim()
                 scope.launch {
-                    vm.addLocalFeed(url) { res ->
+                    vm.addFeed(url) { res ->
                         msg = res.message
                         // Un flux déjà abonné (ou refusé) ne change rien : le toast le dit,
                         // l'URL saisie reste en place pour être corrigée.
@@ -367,6 +367,8 @@ fun LoginScreen(
                 Spacer(Modifier.width(8.dp))
                 Text("Ajout en cours…")
             } else {
+                RssAddIcon()
+                Spacer(Modifier.width(8.dp))
                 Text("Ajouter ce flux")
             }
         }
@@ -490,8 +492,7 @@ fun LoginScreen(
                 TextButton({
                     val id = f.id
                     removingFeed = null
-                    vm.deleteLocalFeed(id)
-                    toast(ctx, "Flux désabonné")
+                    vm.deleteFeed(id)
                 }) { Text("Désabonner", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton({ removingFeed = null }) { Text("Annuler") } }

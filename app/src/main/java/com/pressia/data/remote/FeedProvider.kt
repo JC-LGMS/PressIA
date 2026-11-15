@@ -117,6 +117,27 @@ interface FeedProvider {
      */
     suspend fun deleteCategory(token: String?, category: CategoryEntity, feeds: List<String>) {}
     /**
+     * Pousse l'ordre des dossiers chez le compte, dans l'ordre où [orderedIds] les donne.
+     *
+     * Feedly le range dans une préférence du compte (voir `FeedlyProvider`) ; l'API Google Reader
+     * d'Inoreader et de FreshRSS n'a pas d'ordre de dossiers. Défaut : rien.
+     */
+    suspend fun reorderCategories(token: String?, orderedIds: List<String>) {}
+    /**
+     * S'abonne à [url] et rend l'identifiant de l'abonnement créé (le dossier est posé ensuite,
+     * par [moveSubscription]). Défaut : non supporté — l'appelant le dit, plutôt que d'écrire
+     * une ligne locale que la synchronisation suivante effacerait.
+     */
+    suspend fun addSubscription(token: String?, url: String): String =
+        throw UnsupportedOperationException("ajout de flux non supporté ($id)")
+    /**
+     * Retire un abonnement chez le service. Défaut : non supporté — la suppression locale seule
+     * serait annulée à la synchronisation suivante, le flux reviendrait.
+     */
+    suspend fun removeSubscription(token: String?, feedId: String) {
+        throw UnsupportedOperationException("désabonnement non supporté ($id)")
+    }
+    /**
      * Une session web capturée (cookie de session d'une WebView) est-elle acceptée ?
      *
      * [tokens] : valeurs candidates tirées du cookie, dans l'ordre de préférence. Le
