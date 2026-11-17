@@ -616,6 +616,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         streamLimit.value += STREAM_PAGE
     }
 
+    /**
+     * Reste-t-il un non-lu plus ancien que cet article dans le périmètre affiché ? Le bouton
+     * « descendre » s'en sert pour charger les pages jusqu'au plus ancien non lu du flux, et pas
+     * seulement de la page déjà lue de la base (voir `ArticleList`).
+     */
+    suspend fun hasUnreadOlder(published: Long): Boolean =
+        repo.hasUnreadOlder(scope.feedId, scope.categoryId, unreadOnly, published = published)
+
     /** Changement de périmètre ou de filtre : la liste repart de la première page. */
     private fun resetStreamPages() {
         streamLimit.value = STREAM_PAGE

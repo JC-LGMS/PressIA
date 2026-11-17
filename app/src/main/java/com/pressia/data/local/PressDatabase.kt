@@ -255,6 +255,15 @@ interface PressDao {
      */
     @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
+    /**
+     * Reste-t-il un non-lu **plus ancien** que [published] dans ce périmètre ? Le bouton
+     * « descendre » s'en sert : la liste n'étant lue que par tranches, c'est cette question —
+     * et non `published` seul — qui dit si la borne du plus ancien non lu est connue. Même
+     * filtre que [streamFlow]. `<=` et non `<` : à date égale, SQLite ne garantit pas l'ordre,
+     * et un non-lu de la même minute serait sauté (une page de plus est sans conséquence).
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) AND unread = 1 AND published <= :published)")
+    suspend fun hasUnreadOlder(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, published: Long): Boolean
     /** Même requête, réactive : la liste visible se rafraîchit dès que la sync insère des articles. */
     @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlow(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): Flow<List<ArticleEntity>>

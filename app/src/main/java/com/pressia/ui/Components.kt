@@ -793,6 +793,33 @@ suspend fun LazyGridState.scrollToEnd() {
     }
 }
 
+/**
+ * Charge les pages nécessaires pour connaître le plus ancien non lu du **périmètre**, et pas
+ * seulement de la page déjà lue de la base : tant que le périmètre contient un non-lu plus
+ * ancien que le dernier article chargé, la page suivante est demandée et l'on attend que la
+ * liste grandisse (sans croissance dans le délai : fin du périmètre). [hasUnreadOlder] interroge
+ * la base, seule à savoir ce que la liste n'a pas encore chargé ; `null` (écran Recherche, dont
+ * les résultats n'ont pas de périmètre de flux) laisse l'arrêt sur les articles chargés.
+ */
+private suspend fun loadUntilReadBoundary(
+    loadedCount: () -> Int,
+    oldestLoaded: () -> ArticleEntity?,
+    hasUnreadOlder: (suspend (ArticleEntity) -> Boolean)?,
+    requestPage: () -> Unit
+) {
+    if (hasUnreadOlder == null) return
+    while (true) {
+        val oldest = oldestLoaded() ?: return
+        if (!hasUnreadOlder(oldest)) return
+        val n = loadedCount()
+        requestPage()
+        val grew = withTimeoutOrNull(SCROLL_END_PAGE_WAIT_MS) {
+            snapshotFlow(loadedCount).first { it > n }
+        }
+        if (grew == null) return
+    }
+}
+
 /** Nom d'origine lisible : « https://www.lemonde.fr/rss/une.xml » → « lemonde.fr ». */
 fun prettyFeedTitle(title: String?): String {
     if (title.isNullOrBlank()) return ""
@@ -971,6 +998,13 @@ fun ArticleList(
      * Favoris et le tableau « Read later », qui vont toujours tout en bas directement.
      */
     stopAtUnread: Boolean = true,
+    /**
+     * Reste-t-il un non-lu plus ancien que cet article dans le périmètre ? Fourni par l'écran
+     * (`PressVM.hasUnreadOlder` pour un flux, rien pour les résultats de recherche) : le bouton
+     * « descendre » charge les pages tant que c'est vrai, afin de viser le plus ancien non lu du
+     * flux entier et pas seulement de la page déjà lue de la base.
+     */
+    hasUnreadOlder: (suspend (ArticleEntity) -> Boolean)? = null,
     /** Ouvre la recherche sur le flux d'un article (action « Recherche », menu d'appui long). */
     onSearch: ((ArticleEntity) -> Unit)? = null,
     /**
@@ -980,6 +1014,9 @@ fun ArticleList(
     onEndReached: (() -> Unit)? = null
 ) {
     val trailing by vm.trailingAction.collectAsState()
+    // Page suivante, relue à chaque recomposition : la lambda porte la taille de la liste
+    // affichée, or la descente en charge plusieurs à la suite (voir loadUntilReadBoundary).
+    val endReachedNow by rememberUpdatedState(onEndReached)
     val swipe by vm.swipeAction.collectAsState()
     val swipeRight by vm.swipeRightAction.collectAsState()
     val tapFaviconRead by vm.tapFaviconRead.collectAsState()
@@ -1020,6 +1057,10 @@ fun ArticleList(
         val unreadStopPos = remember(articles, stopAtUnread) {
             if (stopAtUnread) articles.indexOfLast { it.unread && !vm.starState(it) } else -1
         }
+        // Valeurs vivantes : la descente charge des pages, donc la liste et l'arrêt changent
+        // pendant l'action — la lambda du bouton, elle, garde la composition qui l'a créée.
+        val articlesNow by rememberUpdatedState(articles)
+        val unreadStopNow by rememberUpdatedState(unreadStopPos)
         Box(
             Modifier.fillMaxSize()
                 // Point d'appui du futur appui long : observé sans consommer, pour ancrer
@@ -1045,16 +1086,24 @@ fun ArticleList(
                     onTop = { scope.launch { gridState.animateToTop() } },
                     onBottom = {
                         scope.launch {
+                            // Le plus ancien non lu du flux entier : les pages qui peuvent en
+                            // contenir un sont chargées avant de calculer l'arrêt.
+                            if (stopAtUnread) loadUntilReadBoundary(
+                                { articlesNow.size },
+                                { articlesNow.lastOrNull() },
+                                hasUnreadOlder,
+                                { endReachedNow?.invoke() }
+                            )
                             val info = gridState.layoutInfo
                             val last = (info.totalItemsCount - 1).coerceAtLeast(0)
                             val target = downTarget(
-                                gridState.firstVisibleItemIndex, unreadStopPos, last,
+                                gridState.firstVisibleItemIndex, unreadStopNow, last,
                                 info.visibleItemsInfo.size, stopAtUnread
                             )
                             // L'arrêt sur le dernier non-lu est la fin du flux quand rien de lu ne
                             // suit : on va alors jusqu'au dernier article du périmètre, en
                             // chargeant les pages (voir scrollToEnd), pas jusqu'à celle chargée.
-                            val toEnd = target >= last || unreadStopPos < 0 || unreadStopPos >= last
+                            val toEnd = target >= last || unreadStopNow < 0 || unreadStopNow >= last
                             if (toEnd && onEndReached != null) gridState.scrollToEnd()
                             else gridState.animateScrollToItem(target)
                         }
@@ -1082,6 +1131,9 @@ fun ArticleList(
         val unreadStopPos = remember(grouped, stopAtUnread) {
             if (stopAtUnread) lastUnreadLazyIndex(grouped) { vm.starState(it) } else -1
         }
+        // Valeurs vivantes (voir la branche magazine).
+        val articlesNow by rememberUpdatedState(articles)
+        val unreadStopNow by rememberUpdatedState(unreadStopPos)
         Box(
             Modifier.fillMaxSize()
                 // Point d'appui du futur appui long (voir la branche magazine).
@@ -1120,16 +1172,24 @@ fun ArticleList(
                     onTop = { scope.launch { listState.animateToTop() } },
                     onBottom = {
                         scope.launch {
+                            // Voir la branche magazine : pages chargées jusqu'à connaître le plus
+                            // ancien non lu du périmètre.
+                            if (stopAtUnread) loadUntilReadBoundary(
+                                { articlesNow.size },
+                                { articlesNow.lastOrNull() },
+                                hasUnreadOlder,
+                                { endReachedNow?.invoke() }
+                            )
                             val info = listState.layoutInfo
                             val last = (info.totalItemsCount - 1).coerceAtLeast(0)
                             val target = downTarget(
-                                listState.firstVisibleItemIndex, unreadStopPos, last,
+                                listState.firstVisibleItemIndex, unreadStopNow, last,
                                 info.visibleItemsInfo.size, stopAtUnread
                             )
                             // L'arrêt sur le dernier non-lu est la fin du flux quand rien de lu ne
                             // suit : on va alors jusqu'au dernier article du périmètre, en
                             // chargeant les pages (voir scrollToEnd), pas jusqu'à celle chargée.
-                            val toEnd = target >= last || unreadStopPos < 0 || unreadStopPos >= last
+                            val toEnd = target >= last || unreadStopNow < 0 || unreadStopNow >= last
                             if (toEnd && onEndReached != null) listState.scrollToEnd()
                             else listState.animateScrollToItem(target)
                         }

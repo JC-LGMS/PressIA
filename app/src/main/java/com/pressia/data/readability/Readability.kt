@@ -186,16 +186,38 @@ object Readability {
             }
         }
         var best: org.jsoup.nodes.Element? = null; var bestScore = 0
+        // Repli : un article fait surtout de liens (revue de liens) serait écarté par le seuil
+        // de densité ; on garde le meilleur candidat « classique » pour ce cas.
+        var fallback: org.jsoup.nodes.Element? = null; var fallbackScore = 0
         for (el in candidates) {
             val cls = el.className() + " " + el.id()
             if (NOISE.containsMatchIn(cls) && !CONTENT_HINT.containsMatchIn(cls)) continue
             val ps = pCount[el] ?: 0
             if (ps < 2) continue
             val score = ps * 20 + (pLen[el] ?: 0) / 100 - (aCount[el] ?: 0) * 10
+            if (score > fallbackScore) { fallbackScore = score; fallback = el }
+            // Plus de la moitié du texte en liens = liste de titres, encart « à la une »,
+            // sommaire… jamais le corps d'un article. C'est ce qui faisait gagner la colonne
+            // « derniers articles » d'un site (titres courts mais nombreux) contre l'article.
+            if (linkDensity(el) > 0.5) continue
             if (score > bestScore) { bestScore = score; best = el }
         }
-        val target = best ?: doc.body() ?: return doc.outerHtml()
-        return cleaned(target)
+        val target = best ?: fallback ?: doc.body() ?: return doc.outerHtml()
+        // Un conteneur large (main + colonne latérale) peut gagner au score : si un <article>
+        // y porte la moitié du texte, c'est le corps — et lui seul. Retire les « derniers
+        // articles » de la colonne de droite, qui sinon suivaient l'article.
+        val semantic = target.select("article")
+            .filter { it.text().length * 2 >= target.text().length }
+            .filter { linkDensity(it) <= 0.5 }
+            .maxByOrNull { it.select("p").size * 20 + it.text().length / 100 }
+        return cleaned(semantic ?: target)
+    }
+
+    /** Part du texte d'un bloc qui est cliquable (1 = tout est lien). */
+    private fun linkDensity(el: org.jsoup.nodes.Element): Double {
+        val text = el.text().length
+        if (text <= 0) return 1.0
+        return el.select("a").sumOf { it.text().length }.toDouble() / text
     }
 
     private fun cleaned(target: org.jsoup.nodes.Element): String {

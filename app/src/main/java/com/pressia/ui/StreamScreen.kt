@@ -171,7 +171,9 @@ fun StreamScaffold(
                     ArticleList(localArticles, viewMode, onOpen, vm, showSource = vm.scope.feedId == null,
                         onSearch = onSearch,
                         // Bas de liste : page suivante (la liste n'est plus plafonnée à 2000).
-                        onEndReached = { vm.loadMoreStream(localArticles.size) })
+                        onEndReached = { vm.loadMoreStream(localArticles.size) },
+                        // Bouton « descendre » : arrêt sur le plus ancien non lu du flux entier.
+                        hasUnreadOlder = { a -> vm.hasUnreadOlder(a.published) })
                 }
             }
             if (onSwipeBack != null && backDrag > 0f) {

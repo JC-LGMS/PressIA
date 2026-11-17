@@ -47,6 +47,27 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.18",
+        listOf(
+            ChangelogItem(
+                "2026-11-17",
+                "Article complet, et flèche « descendre » jusqu'au plus ancien non lu",
+                "- Une extraction ne prend plus une colonne « derniers articles » pour le corps : " +
+                    "les blocs dont plus de la moitié du texte est fait de liens sont écartés. Sur " +
+                    "MacGeneration, l'article du sondage AirPods affichait la liste des titres " +
+                    "voisins.\n\n" +
+                    "- Quand le conteneur retenu englobe l'article et sa colonne latérale, c'est " +
+                    "l'article qui est gardé : la liste des derniers articles ne suit plus le " +
+                    "texte à la fin.\n\n" +
+                    "- La flèche « descendre » atteint le plus ancien non lu du flux entier, et non " +
+                    "plus seulement de la page chargée : les pages suivantes sont demandées tant " +
+                    "que la base annonce un non-lu plus ancien. Le deuxième appui va tout en bas, " +
+                    "la flèche du haut toujours tout en haut.",
+                time = "23:30"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.17",
         listOf(
             ChangelogItem(

@@ -1228,6 +1228,19 @@ class PressRepository(
         val (catFeeds, catEmpty) = catScope(catId)
         return dao.streamIds(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, limit, offset)
     }
+
+    /**
+     * Reste-t-il un non-lu plus ancien que [published] dans le périmètre ? Le bouton
+     * « descendre » charge les pages tant que c'est vrai (voir `loadUntilReadBoundary`).
+     */
+    suspend fun hasUnreadOlder(
+        feedId: String?, catId: String?, unreadOnly: Boolean, favScope: String = "", published: Long
+    ): Boolean {
+        val (catFeeds, catEmpty) = catScope(catId)
+        return dao.hasUnreadOlder(
+            feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, favScopeArg(favScope), published
+        )
+    }
     /**
      * Flux du flux de lecture : la liste affichée se met à jour toute seule quand la
      * synchronisation insère de nouveaux articles.

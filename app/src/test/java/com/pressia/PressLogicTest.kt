@@ -468,6 +468,46 @@ class PressLogicTest {
         assertFalse("la newsletter ne doit pas être extraite", out.contains("newsletter personnalisée"))
         assertFalse(Readability.isConsentWallText(org.jsoup.Jsoup.parse(out).text()))
     }
+    @Test fun `readability ecarte une colonne de titres (densite de liens)`() {
+        // Cas MacGeneration : la colonne « derniers articles » a beaucoup de <p> courts (des
+        // titres) et gagnait le comptage. Plus de la moitié de son texte est en liens : elle
+        // doit être écartée, sinon c'est elle qui est extraite à la place de l'article.
+        val teasers = (1..12).joinToString("") {
+            "<article class=\"teaser\"><a href=\"/t$it\"><p>Titre $it de la colonne</p></a></article>"
+        }
+        val html = """<html><body><main class="w-full"><div class="grid">
+            <article class="post">
+                <p>Premier paragraphe du vrai article MacGeneration, avec du contenu journalistique.</p>
+                <p>Deuxième paragraphe du vrai article, également informatif et détaillé.</p>
+                <p>Troisième paragraphe du vrai article pour tenir la distance.</p>
+            </article>
+            <div class="news-sidebar"><div class="teasers-grid">$teasers</div></div>
+        </div></main></body></html>"""
+        val out = Readability.extract(html, "https://www.macg.co/")
+        assertTrue("le corps doit être extrait", out.contains("Premier paragraphe du vrai article"))
+        assertFalse("la colonne ne doit pas être extraite", out.contains("Titre 1 de la colonne"))
+    }
+
+    @Test fun `readability prefere le corps a son conteneur avec colonne`() {
+        // Peu de titres : le conteneur `main` garde une densité de liens acceptable et gagne au
+        // score. Le <article> qui porte la moitié de son texte doit alors être préféré — sinon
+        // les « derniers articles » de la colonne suivent l'article.
+        val teasers = (1..3).joinToString("") {
+            "<article class=\"teaser\"><a href=\"/t$it\"><p>Titre $it de la colonne</p></a></article>"
+        }
+        val html = """<html><body><main class="w-full"><div class="grid">
+            <article class="post">
+                <p>Premier paragraphe du vrai article, avec du contenu journalistique.</p>
+                <p>Deuxième paragraphe du vrai article, également informatif.</p>
+                <p>Troisième paragraphe du vrai article pour tenir la distance.</p>
+            </article>
+            <div class="news-sidebar"><div class="teasers-grid">$teasers</div></div>
+        </div></main></body></html>"""
+        val out = Readability.extract(html, "https://www.macg.co/")
+        assertTrue("le corps doit être extrait", out.contains("Premier paragraphe du vrai article"))
+        assertFalse("la colonne ne doit pas suivre l'article", out.contains("Titre 1 de la colonne"))
+    }
+
     @Test fun `page anti-robot detectee comme bloquee`() {
         val html = "<html><body><div><p>A required part of this site couldn't load. " +
             "This may be due to a browser extension, network issues, or browser settings.</p></div></body></html>"

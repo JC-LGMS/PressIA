@@ -1124,6 +1124,16 @@ articles et favoris du compte compris).
 - `Readability.CONTENT_SELECTORS` porte `#next-single-post` : sur Next le corps est là, alors
   que le conteneur `article` embarque les commentaires (37 810 car. extraits contre 4 811 de vrai
   corps).
+- **Le repli générique écarte les blocs qui sont des listes de liens** (`linkDensity` > 0,5 : plus
+  de la moitié du texte en `<a>`). Une colonne « derniers articles » a beaucoup de `<p>` courts
+  (des titres) et gagnait le comptage `p*20 + texte/100` : sur MacGeneration, l'extraction du
+  sondage AirPods était la liste des titres voisins, pas l'article. Le calcul garde un **repli**
+  (meilleur candidat sans ce filtre) pour un article fait surtout de liens.
+- **Un `<article>` qui porte l'essentiel du texte est préféré à son conteneur** : quand `main`
+  englobe l'article et sa colonne latérale, il gagne au score et l'extraction se terminait par les
+  « derniers articles ». Si un `<article>` du conteneur retenu pèse au moins la moitié de son texte
+  (et reste sous 0,5 de densité de liens), c'est lui le corps. Vérifié sur les deux articles
+  MacGeneration : le sondage (1756 car.) et la dépêche Nvidia (3706 car.), sans la colonne.
 - `articleBlocks` ne retient que `p, li, h1..h6, pre, blockquote, figcaption, img, video, iframe,
   table` : certains flux livrent le corps en texte nu (`…texte…<br><img …>`, cas des Numériques).
   Les nœuds texte de premier niveau sont enveloppés dans un `<p>` avant sélection, sinon
@@ -1329,6 +1339,22 @@ articles et favoris du compte compris).
   page chargée, et le bouton va jusqu'au dernier article du flux. Vers le haut, rien à faire :
   les pages s'ajoutent **en dessous** (`ORDER BY published DESC`), l'élément 0 est donc déjà
   le plus récent.
+  - **L'arrêt doit viser le plus ancien non lu du flux, pas de la page chargée.** La liste
+    n'étant lue que par tranches de 200, l'arrêt calculé sur les articles présents tombait au
+    dernier non-lu de la tranche — bien avant le vrai. Comme les non-lus sont dispersés (un lu
+    ne dit pas qu'il n'y en a plus derrière), la seule réponse exacte vient de la base :
+    `dao.hasUnreadOlder` / `PressVM.hasUnreadOlder` demandent « reste-t-il un non-lu plus ancien
+    que cet article, dans ce périmètre ? » (même filtre que `streamFlow`, `published <=` pour ne
+    pas sauter une date égale) et `loadUntilReadBoundary` charge la page suivante tant que oui,
+    en attendant que la liste grandisse (`SCROLL_END_PAGE_WAIT_MS`). La lambda vient de l'écran
+    (`hasUnreadOlder` d'`ArticleList` : `StreamScreen` la fournit, l'écran Recherche non — ses
+    résultats n'ont pas de périmètre de flux et l'arrêt reste sur ce qui est chargé).
+    Les lambdas du bouton relisent l'état de composition (`rememberUpdatedState` :
+    `articlesNow`, `unreadStopNow`, `endReachedNow`) — la liste grandit pendant l'action, et la
+    lambda `onEndReached` de l'écran porte la taille de la liste qu'elle a capturée : rappelée
+    telle quelle, elle ne demandait plus rien (`loadMoreStream(shown)` sort si
+    `shown < streamLimit`). Favoris et « Read later » (`stopAtUnread = false`) vont toujours
+    directement en bas.
 - Balayage de retour : `rememberBackSwipeState()` + `Modifier.backSwipe(state, onSwipe)` et le
   repère `SwipeBackHint` (`StreamScreen.kt`) sont partagés par `StreamScaffold` et
   `SubscriptionsScreen`. Le détecteur est posé sur la boîte qui **enveloppe** la liste : les lignes
