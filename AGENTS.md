@@ -262,7 +262,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `PressRepository` l'écrit dans `subscriptions.title` (`setFeedTitle`, qui n'écrase que si le
   titre est encore l'URL). Le titre d'une **entrée** ne se confond pas avec celui du flux.
 - **Un flux qui répond 5xx ou 429 est retenté** (une fois, 1,5 s d'attente) : YouTube le fait
-  régulièrement, et un 404 — lui — signifie que l'URL est fausse (insister ne sert à rien).
+  régulièrement, et un 404 — lui — signifie que l'URL est fausse (insister ne sert à rien). Une
+  **`IOException` n'est jamais retentée** : le serveur n'a rien répondu (DNS, connexion refusée,
+  délai), il n'y a pas de réponse à réessayer, et une seconde tentative coûtait le délai du client
+  puis 1,5 s de plus pour un flux mort.
+- **Les flux locaux partent en même temps que les comptes** (`syncDown` : un `async` par côté) :
+  ils étaient interrogés avant, si bien qu'un flux injoignable retardait toute la réception des
+  comptes alors que rien ne les lie (Room sérialise les écritures).
 - **Les médias d'une entrée Atom peuvent être imbriqués** : YouTube met sa miniature et sa
   description dans `<media:group>`, hors du parcours des enfants directs → ni vignette ni résumé.
   `parse` parcourt donc toute la descendance (`getAllElements`). `media:content` n'est retenu comme
@@ -473,7 +479,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `ThumbStore` (`data/local/ThumbStore.kt`), un fichier `SHA-1(url).jpg` dans `filesDir/thumbs` —
   ou `SHA-1(url).png` quand l'image a des **pixels transparents** (logos, illustrations) : un canal
   alpha ne suffit pas à décider (beaucoup de photos sont livrées en PNG RGBA opaque, et le PNG y
-  pèserait dix fois plus), d'où `hasTransparency`. `thumbFileNames` rend les deux noms, `cachedFile`
+  pèserait dix fois plus), d'où `hasTransparency` — mais seulement si le format **source** peut en
+  porter (`formatMayHaveAlpha`, pure et testée : un JPEG n'a pas de canal alpha, ses pixels ne sont
+  donc jamais scannés ; l'en-tête `Content-Type` fait foi, sinon les premiers octets). `thumbFileNames`
+  rend les deux noms, `cachedFile`
   cherche l'un comme l'autre et `gc` supprime les deux : ne pas revenir à une seule extension.
   Gabarit = **carré de la largeur d'écran** : c'est la plus grande taille à laquelle ce fichier est
   affiché (image de tête d'article, pleine largeur ; la bannière magazine de 180 dp en est un
@@ -488,6 +497,17 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `refreshFavicons()` ne vide **plus** tout le cache disque (il retire les seules entrées de
   favicons, `purgeImages`) — « Actualiser favicons » jetait sinon les images préchargées,
   définitivement (`imageCached` reste à 1).
+- **Miniature déclarée et image du corps ne se téléchargent chacune qu'une fois.** Ce sont presque
+  toujours des URL différentes (la miniature vient du champ « visual » du flux, le corps du HTML),
+  mais quand une même adresse sert aux deux, `pendingImageWork` ne la demande qu'une fois et la
+  range du côté miniature (`ThumbStore`) : l'affichage du corps la trouve alors en fichier local
+  (`thumbModel`) sans requête. Une image du corps déjà stockée par `ThumbStore` est sautée de même.
+  Sens inverse non couvert : une URL déjà préchargée comme image de corps (cache Coil) puis
+  déclarée miniature ailleurs est retéléchargée une fois — un seul fichier, cas rare.
+- **Le vrai plafond de parallélisme est le répartiteur d'OkHttp, pas le `Semaphore(6)`** :
+  `PressIAApp` (client de Coil) et `ThumbStore` posent donc `Dispatcher(maxRequests = 32,
+  maxRequestsPerHost = 8)`. Par défaut OkHttp n'exécute que **cinq** requêtes par hôte et met les
+  autres en file : une image lente d'un même CDN retardait toutes les suivantes.
 - Suivi : `ArticleEntity.imageCached` = « toutes les images de cet article sont là ». `syncImages()`
   (`PressRepository`, sous `imagesMutex`) prend les articles à `imageCached = 0` (lus + non lus, 6
   en parallèle, inactif si « Images hors-ligne » coupé ou « Wi-Fi uniquement » hors Wi-Fi), liste
@@ -522,9 +542,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   comme dans le client OkHttp posé sur Coil (`PressIAApp`) : une image qui ne répond pas est
   coupée vite, une image qui répond mais descend lentement (5 Mo à six de front) a 20 s en tout,
   et aucun des deux ne retient la passe. **Plafond de taille : 10 Mo** (`MAX_SOURCE_BYTES`) sur les deux chemins —
-  `readCapped` pour les miniatures, `imageCapInterceptor` pour Coil (le `Content-Length` manque
+  `CappedInputStream` pour les miniatures, `imageCapInterceptor` pour Coil (le `Content-Length` manque
   souvent, il compte les octets lus) : les CDN servent des originales de 30 Mo, qui allaient
   jusqu'au délai et s'annonçaient « délai dépassé » au lieu de « image trop lourde ».
+  **Une miniature n'est jamais lue en entier en mémoire** : `ThumbStore.fetch` lit le corps en flux,
+  mesure l'image sur son en-tête (`mark`/`reset` sur un `BufferedInputStream`, fenêtre de 1 Mo), puis
+  la décode **sous-échantillonnée** (`BitmapFactory.decodeStream` + `inSampleSize`). L'ancienne
+  version chargeait jusqu'à 10 Mo d'octets avant de décoder — six à la fois, plus le bitmap de
+  chacun. Si `BitmapFactory` avale l'exception d'E/S (il rend alors `null`), le drapeau du flux
+  plafonné rétablit le vrai motif (« image trop lourde »).
   **Les SVG sont pris en charge** (logos de flux, illustrations) : `coil-svg` + `AndroidSVG`
   (dépendances), `SvgDecoder` enregistré dans le `ImageLoader` de `PressIAApp` pour le corps et
   les favicons, et `ThumbStore` rasterise lui-même (`isSvgImage` détecte « <svg » dans les
@@ -547,11 +573,23 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     étant « déjà téléchargé ».
   - `gcThumbs()` supprime les fichiers dont plus aucun article ne porte l'URL : une `imageUrl`
     perdue rendait donc la vignette orpheline — c'est pour cela que la perte de l'`imageUrl` était
-    si grave. Il tourne **à la fin de chaque synchro** (`syncDown`, juste après `pruneArticles`) — un
+    si grave. Il tourne **une seule fois par synchro** (`syncDown`, à côté de `pruneArticles`) — un
     fichier orphelin naît d'une URL remplacée, d'une passe interrompue ou d'une suppression hors
     des chemins qui purgent eux-mêmes, et sans cette passe il attendait le prochain dépassement de
-    quota — plus aux endroits qui suppriment des articles (`pruneArticles` quand il coupe, désabonnement
-    d'un compte, `deleteLocalFeed`, `clearCache`). Coût : un listing de dossier et une requête.
+    quota — plus aux endroits qui suppriment des articles (désabonnement d'un compte,
+    `deleteLocalFeed`, `clearCache`). **`pruneArticles` ne l'appelle plus** : il le faisait quand il
+    coupait, et la fin de `syncDown` le refaisait aussitôt — deux listings de dossier de suite. La
+    fin de `syncDown` est décomposée dans le log (`syncDown fin: rejeux=Nms taille=Nms
+    orphelins=Nms miniatures=Nms`) : c'est `miniatures` qui pesait, et **dans `gcThumbs`, ce n'est
+    pas la requête** (`allThumbUrls`, 46 ms) **ni le listing du dossier** (53 ms) mais le calcul
+    des noms : `thumbFileName` formatait chaque octet de l'empreinte (`"%02x".format`, 0,9 ms par
+    URL sur l'émulateur, 6 368 noms = 2,8 s), et `thumbFileNames` calculait l'empreinte **deux
+    fois** par adresse. `ThumbStore.sha1Hex` écrit l'hexadécimal par table de caractères — même nom
+    à la lettre près (les vignettes déjà téléchargées sont retrouvées, test « nom de miniature
+    stable par url ») — et `MessageDigest` est **réutilisé par fil** (ThreadLocal, `digest()` remet
+    l'instance à zéro) au lieu d'être recréé à chaque nom : 2,8 s → 0,3 s → 40 ms mesurés sur
+    6 368 noms. Ne pas revenir à `String.format` par octet ni à `getInstance` par appel.
+    Coût : un listing de dossier et une requête.
 - `clearCache()` / `clearImages()` effacent les fichiers **et** remettent `imageCached` à 0 : la
   prochaine sync, quelle qu'elle soit, récupère tout. Ils purgent aussi les HTML extraits via
   Readability (`content = summary`, `fullFetched = 0`) : les articles sont conservés avec leur
@@ -685,6 +723,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
   article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et poussaient
   deux fois les mêmes lignes.
+- **Les poussées d'une action utilisateur sont fusionnées** (`schedulePush`, appelé par `setRead`
+  et `setStarred`) : lire vingt articles en rafale déclenchait vingt poussées sérialisées par
+  `pushMutex`, donc vingt allers-retours réseau l'un après l'autre. Une passe déjà en cours pose
+  `pushAgain` (un `AtomicBoolean`, pas un drapeau par action) et repassera la file **une fois** à
+  la fin ; l'appelant n'attend pas son tour (`isLocked` → retour immédiat). Mesuré : six articles
+  lus d'affilée donnent « file: 6 lignes traitées (6 pages) » en une passe, au lieu de six passes
+  d'une ligne. « Tout marquer lu » et les marquages groupés gardent `pushQueue` (barre de
+  progression, annulation).
 - **La file ne se bloque plus sur un compte expiré ni sur le réseau** : `pushQueue` sort tôt si
   `!isOnline()` (sinon dix articles lus tentaient dix envois), et quand une page ne retire aucune
   ligne, les flux des comptes dont la session vient d'être déclarée morte sont **écartés**
@@ -734,12 +780,21 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - Marquage de masse Feedly : `POST /v3/markers` accepte `type":"feeds"` (ou `"categories"`, avec ou
   sans `asOf`) puis les **ignore** — HTTP 200, corps vide, `markers/counts` inchangé (vérifié en
   direct). Seul `type":"entries"` marque vraiment : `FeedlyProvider.markAllRead` /
-  `markAllReadGlobal` énumèrent donc les non-lus du flux (`streams/ids`, paquets de 100
-  identifiants), **jusqu'à épuisement** : la pagination suit `continuation` sans plafond, un
-  flux ou un compte à plus de 5000 non-lus laissait sinon les plus anciens non lus côté serveur,
-  rouverts par la réconciliation suivante. Bonus : ça rattrape les articles que le serveur croit
-  encore non lus alors que l'app les a marqués lus, que la réconciliation suivante rouvrirait
-  sinon. Ne pas « optimiser » ce chemin en un appel de masse.
+  `markAllReadGlobal` énumèrent donc les non-lus du flux (`streams/ids`, **250 identifiants par
+  page**, le maximum documenté), **jusqu'à épuisement** : la pagination suit `continuation` sans
+  plafond, un flux ou un compte à plus de 5000 non-lus laissait sinon les plus anciens non lus
+  côté serveur, rouverts par la réconciliation suivante. Bonus : ça rattrape les articles que le
+  serveur croit encore non lus alors que l'app les a marqués lus, que la réconciliation suivante
+  rouvrirait sinon. Les marqueurs partent par **paquets de 500** (`MARKER_CHUNK`, ~38 Ko) : vérifié
+  en direct sur 500 identifiants (HTTP 200, 499 appliqués — un identifiant ignoré, ce qui arrive
+  aussi hors lot), soit 8 appels pour 3 700 non-lus au lieu de 38. Ne pas « optimiser » ce chemin
+  en un appel de masse `type":"feeds"`, il est ignoré.
+  - **`count` : 250 maximum** (`streams/contents` et `streams/ids`) ; au-delà le serveur rogne en
+    silence. `FEEDLY_PAGE_MAX` porte la valeur, `pageSize` aussi (Inoreader plafonne à 200 et
+    reçoit la même valeur, sans conséquence).
+  - **`newerThan` ne peut pas être plus vieux que 31 jours** : `feedlyNewerThan` borne la tête
+    (`FEEDLY_MAX_AGE_MS`), utile quand « Durée d'historique » dépasse un mois ; le filtrage fin
+    reste côté client (`withinHistory`).
 - Feedly, identifiant de compte : `cachedUserId` le met en cache **par jeton**
   (`ConcurrentHashMap`), pas dans un champ unique — plusieurs comptes connectés se seraient
   servi le flux global l'un de l'autre. `userId(token)` (connexion) reste sans cache.
@@ -805,6 +860,54 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `provisionHistory(onFeed)`, relayé par `syncAccount(..., onFeed)` depuis `syncDown`. Le total est
   celui de la phase en cours — les flux en retard ne sont connus qu'après la découverte : le
   compteur est croissant et finit sur le vrai total, jamais sur le nombre d'abonnements.
+- **La tête ne demande que la fraîcheur** (`headNewerThan(lastSyncMs, cutoffMs)`, pur, testé) :
+  « depuis la dernière synchronisation moins un jour de marge », jamais plus vieux que la fenêtre
+  d'historique. Elle demandait auparavant un mois entier à chaque passe — 500 articles et leur
+  HTML retéléchargés pour rien. Le **rattrapage flux par flux** reste le filet : c'est lui qui
+  remonte l'historique manquant, avec sa propre borne (`historyNewerThan`). Le log dit la borne
+  retenue (`depuis=46h` ; `toujours` pour une première synchronisation ou une fenêtre sans
+  limite) — Inoreader et FreshRSS ignorent `newerThanMs`, le filtre reste alors côté client.
+- **Le provisionnement est parallèle borné** (`Semaphore(3)` dans `provisionHistory`) : la passe
+  était séquentielle et un flux lent retardait tous les suivants. Les compteurs de quota passent
+  dans une `ConcurrentHashMap` (`capByQuota` incrémente par `compute`, sans perdre d'incrément),
+  `added` et le compteur du bandeau sont mis à jour sous verrou. Le log donne la durée
+  (`provision <compte> : Nms (N abonnements, +A articles)`).
+- **La réconciliation accompagne le provisionnement** (`async` dans le `coroutineScope` de
+  `syncAccount`) au lieu de le précéder : elle n'écrit que des états lu/non-lu, le provisionnement
+  que des articles, et l'énumération des non-lus distants (mesurée : 0,5 à 20 s) ne s'ajoute plus
+  devant la partie longue. Son échec est avalé par `reconcileAccount`, l'attendre ne peut pas faire
+  échouer la synchro. Mesure : `reconcileReadState <compte> : Nms (N non-lus distants, N lus,
+  N rouverts)`.
+- **La réconciliation de Feedly passe par un delta, pas par l'énumération à chaque passe.**
+  `GET /v3/markers/reads?newerThan=<repère>` rend les entrées marquées lues depuis le repère, celles
+  gardées non lues, et les flux marqués lus avec leur date — un appel au lieu de 12 à 15 pages
+  (`streams/ids` plafonne à 250 par page, même si on demande 1000). Le repère vit dans
+  `Prefs.RECONCILE_MARKS` (JSON par compte), recule de 5 min à chaque écriture (les événements sont
+  idempotents) et avance avec l'heure locale quand le serveur n'annonce rien de neuf — sinon les
+  derniers événements seraient rejoués à chaque passe —, et n'est posé qu'après une passe
+  **réellement appliquée** (`applied`) : une énumération ratée le laisserait sauter des
+  événements. `FeedProvider.hasReadMarks` dit qui a un delta (Feedly seul) ; les autres gardent
+  l'énumération et le test « total inchangé ».
+  - **Le delta tourne à chaque passe** dès qu'un repère existe : le test « total inchangé » manquait
+    un lu ailleurs compensé par un nouvel article (total identique, état local faux — constaté en
+    direct). Il ne sert plus qu'à éviter l'énumération, coûteuse.
+  - **Un « garder non lu » sur une entrée n'apparaît pas dans `markers/reads`** (la liste `unread`
+    est restée vide en direct ; la doc la réserve aux exceptions d'un marqueur de flux). D'où un
+    **contrôle complet toutes les six heures** (`Prefs.RECONCILE_FULL_AT`, `fullReconcileDue`), qui
+    énumère les non-lus et corrige les états décalés. Le provisionnement rattrape souvent le cas
+    avant (un article réécrit depuis le flux reprend l'état du serveur).
+  - **Un marqueur peut être accepté sans effet** (HTTP 200, aucun événement) : un `markAsRead`
+    d'entrée a été ignoré une fois puis appliqué au second essai, en direct. Ne pas conclure d'un
+    200 que l'état a changé — c'est aussi pourquoi le contrôle complet reste.
+  - **Un marqueur de flux** (`feeds`, « tout marquer lu » posé par le site ou une autre application)
+    ne donne pas la liste des entrées : il déclenche une passe complète, qui seule sait lesquelles
+    sont encore non lues.
+  - Les identifiants annoncés **deux fois** (lus et gardés non lus dans la même fenêtre) ne sont pas
+    touchés (`readMarksTargets`) : l'ordre des événements n'est pas dans la réponse.
+  - `unreadTotal` additionnait **tous** les postes de `markers/counts` (flux + dossiers +
+    `global.all`) : le repli comptait plusieurs fois les mêmes non-lus. Il prend `global.all`, à
+    défaut la somme des `feed/…` ; noter que le compteur d'un flux est plafonné à 1 000
+    (`capped`), donc la somme des flux sous-estime un compte très chargé.
 - **Pas de planificateur de synchro** (le Worker a été supprimé : elle ne tourne qu'app ouverte) :
   `MainActivity` appelle `vm.syncOnLaunch()` à **chaque `ON_RESUME`**, pas seulement à la création
   de l'activité. Un déclenchement au seul `onCreate` laissait une application rouverte après des

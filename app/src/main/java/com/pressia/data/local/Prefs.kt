@@ -199,6 +199,21 @@ class Prefs(private val ctx: Context) {
          */
         val RECONCILE_TOTALS = stringPreferencesKey("reconcile_totals")
         /**
+         * Repère de réconciliation par delta, par compte (JSON `{id: timestamp ms}`) : date
+         * des derniers événements de lecture appliqués (`markers/reads` chez Feedly). Sans
+         * repère, la réconciliation énumère les non-lus (premier passage, ou fournisseur
+         * qui n'expose pas de delta). Cache dérivé comme ci-dessus, hors sauvegarde : une
+         * restauration doit refaire une passe complète.
+         */
+        val RECONCILE_MARKS = stringPreferencesKey("reconcile_marks")
+        /**
+         * Date de la dernière réconciliation **complète** par compte (JSON `{id: ms}`) : le
+         * delta ne voit pas tout (un « garder non lu » posé sur une entrée n'apparaît pas
+         * dans les événements de Feedly, vérifié en direct), d'où un contrôle complet
+         * périodique qui corrige les états décalés. Cache dérivé, hors sauvegarde.
+         */
+        val RECONCILE_FULL_AT = stringPreferencesKey("reconcile_full_at")
+        /**
          * Empreintes des tableaux « Read later » par compte (JSON `{id: sha256}`), pour sauter
          * l'import quand rien n'a changé. Cache dérivé comme ci-dessus, hors sauvegarde.
          */

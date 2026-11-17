@@ -66,6 +66,23 @@ interface FeedProvider {
      */
     suspend fun unreadIds(token: String?, maxIds: Int = 5000): UnreadSet? = null
     /**
+     * Événements de lecture depuis [sinceMs] — la voie **légère** de la réconciliation, quand
+     * le service expose un delta (`GET /v3/markers/reads` chez Feedly) : entrées lues
+     * ailleurs, entrées gardées non lues, et flux marqués lus avec leur date. Un appel au
+     * lieu d'énumérer tous les non-lus.
+     *
+     * Null = non supporté ou refusé : l'appelant retombe sur [unreadIds], comportement
+     * d'avant. Inoreader et FreshRSS n'ont pas d'équivalent (Google Reader expose les
+     * compteurs, pas les événements).
+     */
+    suspend fun readMarks(token: String?, sinceMs: Long): ReadMarks? = null
+    /**
+     * Le service expose des événements de lecture ([readMarks]) : la réconciliation se fait
+     * alors **par delta** à chaque passe (un appel léger), au lieu d'énumérer tous les non-lus.
+     * Sert aussi à ne pas poser de repère chez un service qui n'a pas de delta.
+     */
+    val hasReadMarks: Boolean get() = false
+    /**
      * Total des non-lus côté compte, en un appel léger : détecteur de changement pour la
      * réconciliation (voir `reconcileUnchanged`). Null = non supporté → réconciliation
      * complète à chaque fois.
@@ -188,6 +205,74 @@ fun cleanTitle(raw: String?): String {
 
 /** Non-lus d'un compte + exhaustivité de l'énumération (voir [FeedProvider.unreadIds]). */
 data class UnreadSet(val ids: Set<String>, val complete: Boolean)
+
+/**
+ * Événements de lecture d'un compte depuis un repère (voir [FeedProvider.readMarks]).
+ *
+ * [watermark] est la date du dernier événement côté serveur : elle devient le repère du
+ * prochain appel (le recul appliqué par l'appelant rend le chevauchement inoffensif — les
+ * événements rejoués sont sans effet).
+ */
+data class ReadMarks(
+    val read: Set<String> = emptySet(),
+    val keptUnread: Set<String> = emptySet(),
+    val feeds: Map<String, Long> = emptyMap(),
+    val watermark: Long = 0L
+)
+
+/**
+ * Repère du prochain `markers/reads` : date du dernier événement annoncé par le serveur, ou
+ * l'heure locale si elle est plus récente (une période calme doit faire avancer le repère,
+ * sinon les derniers événements seraient rejoués à chaque passe), moins un [overlapMs] de
+ * recul — les événements rejoués sont idempotents, et cette marge couvre un léger décalage
+ * d'horloge. Si le serveur est en avance, sa date l'emporte : on ne saute pas ses événements.
+ * Pure, testée.
+ */
+fun nextReadMarksWatermark(updated: Long, now: Long, overlapMs: Long = 5 * 60_000L): Long =
+    (if (updated > now) updated else now) - overlapMs
+
+/**
+ * Intervalle du **contrôle complet** périodique d'un service à delta. Le delta ne voit pas
+ * tout : un « garder non lu » posé sur une entrée n'apparaît pas dans les événements de
+ * Feedly (vérifié en direct), et un état décalé pour une autre raison (poussée refusée,
+ * geste fait hors ligne) ne se corrige que par l'énumération des non-lus.
+ */
+const val FULL_RECONCILE_MS = 6L * 3600 * 1000
+
+/**
+ * Un contrôle complet est-il dû ? Jamais de contrôle (repère absent) compte comme dû ; le
+ * premier passage, lui, est déjà complet par construction. Pure, testée.
+ */
+fun fullReconcileDue(nowMs: Long, lastFullMs: Long?, intervalMs: Long = FULL_RECONCILE_MS): Boolean =
+    lastFullMs == null || lastFullMs <= 0L || nowMs - lastFullMs >= intervalMs
+
+/**
+ * Cibles d'une réconciliation **par delta** (`markers/reads`) : entrées lues ailleurs encore
+ * non lues ici, et entrées gardées non lues ailleurs déjà lues ici.
+ *
+ * [pending] (actions lu/non-lu encore en file) n'est jamais touché : le serveur est périmé
+ * pour elles, il n'a pas encore vu le geste local. Les identifiants inconnus localement ne
+ * font rien (ils seront importés par le flux). Pure, testée.
+ */
+fun readMarksTargets(
+    local: List<ReconcileState>,
+    readIds: Set<String>,
+    keptUnreadIds: Set<String>,
+    pending: Set<String>
+): Pair<Set<String>, Set<String>> {
+    // Annoncé lu **et** gardé non lu dans la même fenêtre : l'ordre des deux événements
+    // n'est pas dans la réponse. On n'y touche pas — l'état local reste, et l'éventuelle
+    // divergence sera corrigée par l'énumération qu'un marqueur de flux déclenche.
+    val ambiguous = readIds intersect keptUnreadIds
+    val toRead = HashSet<String>()
+    val toUnread = HashSet<String>()
+    local.forEach { s ->
+        if (s.id in pending || s.id in ambiguous) return@forEach
+        if (s.unread && s.id in readIds) toRead += s.id
+        else if (!s.unread && s.id in keptUnreadIds) toUnread += s.id
+    }
+    return toRead to toUnread
+}
 
 /** IDs d'un tableau « à lire plus tard » + exhaustivité (voir [FeedProvider.readLaterIds]). */
 data class IdSet(val ids: Set<String>, val complete: Boolean)

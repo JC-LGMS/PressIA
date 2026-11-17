@@ -101,6 +101,7 @@ val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "fe
  */
 val NON_EXPORTED_PREFS = setOf(
     Prefs.RESTORED_STARRED.name, Prefs.RESTORED_READ.name, Prefs.RECONCILE_TOTALS.name,
+    Prefs.RECONCILE_MARKS.name, Prefs.RECONCILE_FULL_AT.name,
     Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name,
     Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name,
     Prefs.BACKUP_CHECKPOINT.name, Prefs.BACKUP_CHECKPOINT_HASH.name, Prefs.BACKUP_NUDGE_AT.name

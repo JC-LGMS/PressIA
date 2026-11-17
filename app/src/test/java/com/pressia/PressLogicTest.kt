@@ -76,6 +76,73 @@ class PressLogicTest {
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = null, currentTotal = 42))
         assertFalse(reconcileUnchanged(added = 0, hasPending = false, lastTotal = 42, currentTotal = null))
     }
+    @Test fun `reconciliation par delta applique les evenements`() {
+        fun st(id: String, unread: Boolean) = com.pressia.data.local.ReconcileState(id, unread, 1000L)
+        val local = listOf(st("1", true), st("2", false), st("3", true), st("4", false))
+        // 1 lu ailleurs → passé en lu ; 2 gardé non lu ailleurs → rouvert ; 3 « gardé non
+        // lu » alors qu'il est déjà non lu → rien ; 4 lu ailleurs mais déjà lu → rien ;
+        // 9 inconnu localement → rien (il arrivera par le flux avec son état).
+        val (read, unread) = com.pressia.data.remote.readMarksTargets(
+            local,
+            readIds = setOf("1", "4", "9"),
+            keptUnreadIds = setOf("2", "3"),
+            pending = emptySet()
+        )
+        assertEquals(setOf("1"), read)
+        assertEquals(setOf("2"), unread)
+        // Une action lu/non-lu encore en file n'est jamais écrasée : le serveur ne l'a pas vue.
+        val (r2, u2) = com.pressia.data.remote.readMarksTargets(
+            local, setOf("1"), setOf("2"), setOf("1", "2")
+        )
+        assertTrue(r2.isEmpty())
+        assertTrue(u2.isEmpty())
+        // Annoncé lu **et** gardé non lu dans la même fenêtre : l'ordre est inconnu, on ne
+        // touche à rien (l'état local reste, la prochaine énumération tranchera).
+        val (r3, u3) = com.pressia.data.remote.readMarksTargets(
+            local, setOf("1", "2"), setOf("1", "2"), emptySet()
+        )
+        assertTrue(r3.isEmpty())
+        assertTrue(u3.isEmpty())
+    }
+
+    @Test fun `repere du delta recule de la marge`() {
+        fun w(updated: Long, now: Long = 1_000_000L) =
+            com.pressia.data.remote.nextReadMarksWatermark(updated, now, overlapMs = 60_000L)
+        // Dernier événement au moment de la passe, moins la marge (les rejeux sont sans effet).
+        assertEquals(940_000L, w(1_000_000L))
+        // Serveur muet (ou événement ancien) : l'heure locale fait avancer le repère, sinon
+        // les derniers événements seraient rejoués à chaque synchronisation.
+        assertEquals(940_000L, w(0L))
+        assertEquals(940_000L, w(500_000L))
+        // Serveur en avance sur l'appareil : sa date l'emporte, sinon ses événements seraient sautés.
+        assertEquals(1_140_000L, w(1_200_000L))
+    }
+
+    @Test fun `newerThan feedly borne a trente et un jours`() {
+        val now = 1_000_000_000_000L
+        val day = 86_400_000L
+        fun nt(t: Long?) = com.pressia.data.remote.feedlyNewerThan(t, now)
+        // Date récente : telle quelle.
+        assertEquals(now - day, nt(now - day))
+        // Plus vieille que 31 jours : ramenée à la borne (Feedly refuse au-delà).
+        assertEquals(now - 31 * day, nt(now - 60 * day))
+        // Pas de filtre : null ou zéro restent nuls.
+        assertNull(nt(null))
+        assertNull(nt(0L))
+    }
+
+    @Test fun `controle complet du a six heures`() {
+        val h = 3_600_000L
+        fun due(now: Long, last: Long?) =
+            com.pressia.data.remote.fullReconcileDue(now, last, intervalMs = 6 * h)
+        // Aucun contrôle encore fait : dû.
+        assertTrue(due(1_000_000_000L, null))
+        assertTrue(due(1_000_000_000L, 0L))
+        // Moins de six heures : pas encore ; six heures ou plus : dû.
+        assertFalse(due(1_000_000_000L, 1_000_000_000L - h))
+        assertTrue(due(1_000_000_000L, 1_000_000_000L - 6 * h))
+    }
+
     @Test fun `lancement saute si synchro recente`() {
         // Fenêtre de 10 min : 5 min après, frais ; 15 min après, à refaire.
         assertTrue(isSyncFresh(lastMs = 1000L, nowMs = 1000L + 5 * 60_000L, windowMin = 10))
@@ -228,6 +295,28 @@ class PressLogicTest {
         assertEquals(true, svg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"/>"))
         assertEquals(true, svg("<?xml version=\"1.0\"?>\n<svg viewBox=\"0 0 8 8\"></svg>"))
         assertEquals(false, svg("\u00FF\u00D8\u00FF\u0000 quelque chose"))
+    }
+
+    @Test fun `transparence seulement si le format peut en porter`() {
+        // Scanner les pixels d'un JPEG est du travail perdu : il n'a pas de canal alpha.
+        fun may(type: String?, head: ByteArray = ByteArray(0)) =
+            com.pressia.data.local.formatMayHaveAlpha(type, head)
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0x00)
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x00)
+        val gif = "GIF89a".toByteArray()
+        // L'en-tête HTTP fait foi quand il est là.
+        assertEquals(false, may("image/jpeg", png))
+        assertEquals(false, may("image/jpg; charset=binary", png))
+        assertEquals(true, may("image/png", jpeg))
+        assertEquals(true, may("image/webp", jpeg))
+        // Type muet : les premiers octets décident, un JPEG se reconnaît à FF D8 FF.
+        assertEquals(false, may(null, jpeg))
+        assertEquals(false, may("application/octet-stream", jpeg))
+        assertEquals(true, may(null, png))
+        assertEquals(true, may(null, gif))
+        // Rien de reconnaissable : on scanne (un logo aplati coûte plus qu'un scan).
+        assertEquals(true, may(null, ByteArray(0)))
+        assertEquals(true, may(null, byteArrayOf(1, 2, 3)))
     }
 
     @Test fun `cause d une image en echec`() {
@@ -1497,6 +1586,24 @@ class PressLogicTest {
         assertNull(com.pressia.data.historyNewerThan(0, cutoff))
     }
 
+    @Test fun `tete demandee depuis la derniere synchro`() {
+        val day = 24L * 3600 * 1000
+        val now = 1_700_000_000_000L
+        val cutoff = now - 31 * day
+        // Rien de connu (premiere synchro) : la fenetre d'historique, comme avant.
+        assertEquals(cutoff, com.pressia.data.headNewerThan(null, cutoff))
+        assertEquals(cutoff, com.pressia.data.headNewerThan(0L, cutoff))
+        // Derniere synchro recente : depuis elle, moins un jour de marge.
+        assertEquals(now - 2 * day, com.pressia.data.headNewerThan(now - day, cutoff))
+        // Derniere synchro tres ancienne : la fenetre d'historique l'emporte (on ne remonte pas
+        // plus loin qu'elle, le rattrapage par flux s'en charge).
+        assertEquals(cutoff, com.pressia.data.headNewerThan(now - 90 * day, cutoff))
+        // Fenetre sans limite : la borne reste celle de la derniere synchro.
+        assertEquals(now - day, com.pressia.data.headNewerThan(now, 0L))
+        // Marge reglable (les tests n'attendent pas 24 h).
+        assertEquals(now - 7 * day, com.pressia.data.headNewerThan(now, 0L, 7 * day))
+    }
+
     @Test fun `action de geste inconnue retombe sur le defaut`() {
         assertEquals("readability", com.pressia.ui.articleGestureAction("readability", "readability", com.pressia.ui.DOUBLE_TAP_IDS))
         assertEquals("older", com.pressia.ui.articleGestureAction("bidule", "older", com.pressia.ui.ARTICLE_SWIPE_IDS - "newer"))
@@ -1685,9 +1792,11 @@ class PressLogicTest {
         // HTTP 200, corps vide, compteurs inchangés (constaté en direct sur un flux à 3
         // non-lus). Le marquage doit donc partir article par article, par paquets — sinon la
         // synchro suivante rouvre tout, le serveur faisant foi.
-        val ids = (1..250).map { "entry-$it" }
+        val ids = (1..1200).map { "entry-$it" }
         val payloads = feedlyMarkAllMarkers(ids)
+        // Paquets de 500 (vérifié en direct) : 500 + 500 + 200.
         assertEquals(3, payloads.size)
+        assertEquals(listOf(500, 500, 200), payloads.map { it.entryIds!!.size })
         payloads.forEach {
             assertEquals("markAsRead", it.action)
             assertEquals("entries", it.type)
@@ -1809,6 +1918,9 @@ class PressLogicTest {
         assertTrue(n1.endsWith(".jpg"))
         // SHA-1 hexadécimal : pas de séparateur, pas de casse ambiguë.
         assertTrue(n1.dropLast(4).matches(Regex("[0-9a-f]{40}")))
+        // Valeur exacte : les vignettes déjà téléchargées portent ce nom, il ne doit pas changer
+        // (la table hexadécimale remplace `"%02x".format`, même résultat à la lettre près).
+        assertEquals("10b27a03030921815150cfbac8ae8af77253397b.jpg", n1)
         // Une image transparente est rangée en PNG : même empreinte, autre extension, et les deux
         // noms sont proposés (le cache doit retrouver l'un comme l'autre).
         val png = com.pressia.data.local.ThumbStore.thumbFileName("https://ex.com/a.jpg", "png")

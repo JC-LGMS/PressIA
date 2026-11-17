@@ -24,6 +24,16 @@ class PressIAApp : Application() {
                         .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                         .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                         .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                        // Le vrai plafond d'une passe d'images est ici, pas dans le `Semaphore`
+                        // de `syncImages` : sans répartiteur propre, OkHttp n'exécute que
+                        // cinq requêtes par hôte et met les autres en file — une image lente
+                        // d'un même CDN retardait toutes les suivantes.
+                        .dispatcher(
+                            okhttp3.Dispatcher().apply {
+                                maxRequests = 32
+                                maxRequestsPerHost = 8
+                            }
+                        )
                         .build()
                 }
                 .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.2).build() }

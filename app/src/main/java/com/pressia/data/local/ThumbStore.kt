@@ -8,11 +8,15 @@ import com.pressia.data.exceedsCap
 import com.pressia.data.readCapped
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.buffer
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.InterruptedIOException
 import java.net.SocketException
 import java.net.UnknownHostException
@@ -72,6 +76,59 @@ fun imageFailureCause(e: Throwable?): String = when {
 fun isSvgImage(bytes: ByteArray): Boolean =
     bytes.take(512).toByteArray().toString(Charsets.ISO_8859_1).contains("<svg", ignoreCase = true)
 
+/** Premiers octets d'un JPEG (`FF D8 FF`), d'un PNG (`89 50 4E 47`) ou d'un GIF (`GIF8`). */
+private fun hasMagic(bytes: ByteArray, vararg magic: Int): Boolean =
+    bytes.size >= magic.size && magic.indices.all { (bytes[it].toInt() and 0xFF) == magic[it] }
+
+/**
+ * Le format **source** peut-il porter de la transparence ? La réponse est connue d'avance pour
+ * un JPEG : il n'a pas de canal alpha, et scanner ses pixels est du travail perdu (une vignette
+ * plein écran fait plus d'un million de pixels, sur un fil qui télécharge aussi les images).
+ *
+ * L'en-tête `Content-Type` fait foi quand il est là ; sinon les premiers octets du corps parlent
+ * (un JPEG se reconnaît à `FF D8 FF`). Type absent et format inconnu : on scanne, faute de
+ * certitude — mieux vaut un PNG un peu plus lourd qu'un logo aplati. Pure, testée.
+ */
+fun formatMayHaveAlpha(contentType: String?, head: ByteArray): Boolean {
+    val type = contentType?.lowercase().orEmpty()
+    return when {
+        type.contains("jpeg") || type.contains("jpg") -> false
+        type.contains("png") || type.contains("webp") ||
+            type.contains("gif") || type.contains("svg") -> true
+        // Type inconnu (serveur muet, `application/octet-stream`) : les octets décident.
+        hasMagic(head, 0xFF, 0xD8, 0xFF) -> false
+        hasMagic(head, 0x89, 0x50, 0x4E, 0x47) -> true
+        hasMagic(head, 0x47, 0x49, 0x46, 0x38) -> true
+        else -> true
+    }
+}
+
+/** Flux qui coupe la lecture au plafond et retient qu'il l'a dépassé. BitmapFactory avale
+ *  parfois l'exception d'E/S et rend `null` : le drapeau permet alors de dire « image trop
+ *  lourde » plutôt que « image illisible ». */
+private class CappedInputStream(inner: InputStream, private val cap: Long) :
+    FilterInputStream(inner) {
+    var read = 0L
+        private set
+    var overflowed = false
+        private set
+
+    private fun count(n: Int): Int {
+        if (n > 0) {
+            read += n
+            if (read > cap) {
+                overflowed = true
+                throw ImageTooLargeException()
+            }
+        }
+        return n
+    }
+
+    override fun read(): Int = count(super.read())
+    override fun read(b: ByteArray, off: Int, len: Int): Int = count(super.read(b, off, len))
+    override fun skip(n: Long): Long = super.skip(n).also { count(it.toInt()) }
+}
+
 /**
  * Miniatures d'articles stockées en local, à la taille affichée — jamais l'original full-size.
  *
@@ -92,6 +149,12 @@ object ThumbStore {
     private const val JPEG_QUALITY = 85
     /** Plafond d'un original : au-delà, on saute (une vignette pèse ~100 Ko). */
     const val MAX_SOURCE_BYTES = 10 * 1024 * 1024
+    /** En-tête lu pour reconnaître le format (SVG, JPEG, PNG, GIF) : 512 octets suffisent. */
+    private const val SVG_SNIFF_BYTES = 512
+    /** Tampon de lecture du corps (l'en-tête y est rejoué par `mark`/`reset`). */
+    private const val HEAD_BUFFER = 16 * 1024
+    /** Fenêtre d'en-tête gardée pour mesurer l'image avant de la décoder sous-échantillonnée. */
+    private const val BOUNDS_MARK = 1024 * 1024
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -102,7 +165,26 @@ object ThumbStore {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .callTimeout(20, TimeUnit.SECONDS)
+            // Le vrai plafond de parallélisme, ici et pour Coil : par défaut OkHttp met
+            // **cinq requêtes en file** et n'en exécute que cinq par hôte — une image lente
+            // d'un même CDN bloquait les suivantes alors que six passes étaient autorisées.
+            .dispatcher(Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 8 })
             .build()
+    }
+
+    /**
+     * Empreinte SHA-1 réutilisée **par fil** : `MessageDigest.getInstance` coûte à lui seul
+     * l'essentiel d'un nom de fichier, et `cachedFile` en demande un par URL (3 184 au début
+     * d'une passe, autant au marquage final). `digest()` remet l'instance à zéro, d'où le
+     * `ThreadLocal` — pas de partage entre fils, pas de verrou.
+     */
+    private val sha1Digest = object : ThreadLocal<MessageDigest>() {
+        override fun initialValue(): MessageDigest = MessageDigest.getInstance("SHA-1")
+    }
+
+    private fun urlHash(url: String): String {
+        val md = sha1Digest.get() ?: MessageDigest.getInstance("SHA-1")
+        return sha1Hex(md.digest(url.toByteArray(Charsets.UTF_8)))
     }
 
     /**
@@ -110,13 +192,33 @@ object ThumbStore {
      * format écrit : `.jpg` par défaut, `.png` quand l'image a de la transparence (le JPEG la
      * perdrait).
      */
-    fun thumbFileName(url: String, ext: String = "jpg"): String {
-        val sha1 = MessageDigest.getInstance("SHA-1").digest(url.toByteArray(Charsets.UTF_8))
-        return sha1.joinToString("") { "%02x".format(it) } + "." + ext
+    fun thumbFileName(url: String, ext: String = "jpg"): String = urlHash(url) + "." + ext
+
+    /**
+     * Empreinte SHA-1 en hexadécimal minuscule.
+     *
+     * `"%02x".format(octet)` par octet coûtait à lui seul la passe de nettoyage des miniatures :
+     * 6 368 noms = 2,8 s mesurées sur l'émulateur, contre 52 ms pour la requête qui les fournit.
+     * La table de caractères fait le même travail en quelques dizaines de millisecondes, et le
+     * nom produit reste **identique** (les vignettes déjà téléchargées sont retrouvées).
+     */
+    fun sha1Hex(bytes: ByteArray): String {
+        val hex = "0123456789abcdef"
+        val out = CharArray(bytes.size * 2)
+        for (i in bytes.indices) {
+            val v = bytes[i].toInt() and 0xFF
+            out[i * 2] = hex[v ushr 4]
+            out[i * 2 + 1] = hex[v and 0x0F]
+        }
+        return String(out)
     }
 
     /** Les deux noms possibles d'une miniature (JPEG, ou PNG si l'image a de l'alpha). */
-    fun thumbFileNames(url: String): List<String> = listOf(thumbFileName(url), thumbFileName(url, "png"))
+    fun thumbFileNames(url: String): List<String> {
+        // Une seule empreinte pour les deux extensions : elle était calculée deux fois par URL.
+        val base = urlHash(url)
+        return listOf("$base.jpg", "$base.png")
+    }
 
     /**
      * Facteur de sous-échantillonnage (puissance de 2) qui fait tenir une image source dans
@@ -163,24 +265,40 @@ object ThumbStore {
         withContext(Dispatchers.IO) {
             if (cachedFile(ctx, url) != null) return@withContext null
             try {
-                val bytes = http.newCall(Request.Builder().url(url).get().build())
+                // Corps lu **en flux** : une originale de 10 Mo ne passe plus par un tableau de
+                // 10 Mo (six à la fois, plus le bitmap décodé de chacun), et le
+                // sous-échantillonnage se décide sur l'en-tête, avant de décoder. `mark`/`reset`
+                // rejoue cet en-tête pour la passe de décodage : l'image n'est demandée qu'une
+                // fois au réseau.
+                var contentType: String? = null
+                var head = ByteArray(0)
+                val decoded = http.newCall(Request.Builder().url(url).get().build())
                     .execute().use { resp ->
                         if (!resp.isSuccessful) return@withContext "HTTP ${resp.code}"
                         val body = resp.body ?: return@withContext "réponse vide"
                         // Taille annoncée au-delà du plafond : inutile de la télécharger.
                         if (exceedsCap(body.contentLength(), MAX_SOURCE_BYTES)) return@withContext "image trop lourde"
-                        // Plafond : charger 10 Mo en RAM pour une vignette de ~100 Ko ne sert à rien.
-                        // `readCapped` rend `null` au-delà du plafond (taille non annoncée) :
-                        // l'appeler « image vide » masquait le vrai motif.
-                        val bytes = readCapped(body.byteStream(), MAX_SOURCE_BYTES)
-                            ?: return@withContext "image trop lourde"
-                        if (bytes.isEmpty()) return@withContext "image vide"
-                        bytes
+                        contentType = body.contentType()?.toString()
+                        val capped = CappedInputStream(body.byteStream(), MAX_SOURCE_BYTES.toLong())
+                        val stream = BufferedInputStream(capped, HEAD_BUFFER)
+                        head = readHead(stream, SVG_SNIFF_BYTES)
+                        if (head.isEmpty()) return@withContext "image vide"
+                        stream.reset()
+                        if (isSvgImage(head)) {
+                            // Un SVG se lit entier (quelques kilo-octets) : AndroidSVG veut le
+                            // document, et BitmapFactory rendrait `null` — l'image resterait
+                            // éternellement en échec.
+                            val bytes = readCapped(stream, MAX_SOURCE_BYTES)
+                                ?: return@withContext "image trop lourde"
+                            decodeSvg(bytes, maxW, maxH) ?: return@withContext "image illisible"
+                        } else {
+                            val decoded = decodeRaster(stream, maxW, maxH)
+                            // BitmapFactory avale parfois l'exception d'E/S : le drapeau du
+                            // flux plafonné dit alors le vrai motif.
+                            if (decoded == null && capped.overflowed) return@withContext "image trop lourde"
+                            decoded ?: return@withContext "image illisible"
+                        }
                     }
-                // SVG (logos, illustrations vectorielles de certains flux) : BitmapFactory
-                // rendrait `null` et l'image resterait éternellement en échec.
-                val decoded = (if (isSvgImage(bytes)) decodeSvg(bytes, maxW, maxH)
-                else decodeRaster(bytes, maxW, maxH)) ?: return@withContext "image illisible"
                 val (w, h) = fitSize(decoded.width, decoded.height, maxW, maxH)
                 val scaled = if (decoded.width == w && decoded.height == h) decoded
                 else Bitmap.createScaledBitmap(decoded, w, h, true).also {
@@ -190,7 +308,9 @@ object ThumbStore {
                 // pixels transparents (logos, illustrations — le JPEG les aplatirait), JPEG
                 // sinon. Un canal alpha ne suffit pas à décider : beaucoup de photos sont
                 // livrées en PNG RGBA parfaitement opaque, et le PNG y pèserait dix fois plus.
-                val alpha = scaled.hasAlpha() && hasTransparency(scaled)
+                // Un JPEG, lui, ne peut pas en avoir : le scanner serait du travail perdu.
+                val alpha = formatMayHaveAlpha(contentType, head) &&
+                    scaled.hasAlpha() && hasTransparency(scaled)
                 val d = dir(ctx)
                 if (!d.exists()) d.mkdirs()
                 val target = File(d, thumbFileName(url, if (alpha) "png" else "jpg"))
@@ -232,14 +352,49 @@ object ThumbStore {
         return false
     }
 
-    /** Décode un raster (JPEG, PNG, WebP…) sous-échantillonné au plus près du gabarit. */    private fun decodeRaster(bytes: ByteArray, maxW: Int, maxH: Int): Bitmap? {
+    /**
+     * Décode un raster (JPEG, PNG, WebP…) **sous-échantillonné** au plus près du gabarit, sans
+     * jamais tenir l'original en mémoire : deux passes sur le même flux plafonné, séparées par
+     * `mark`/`reset` — la première ne lit que l'en-tête (dimensions), la seconde décode avec
+     * `inSampleSize`. L'ancienne version chargeait jusqu'à 10 Mo d'octets puis décodait.
+     */
+    private fun decodeRaster(stream: BufferedInputStream, maxW: Int, maxH: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        // Fenêtre d'en-tête : EXIF et profils ICC d'un JPEG peuvent précéder les dimensions,
+        // mais tiennent dans cette marge. Au-delà, `reset` échouerait (image refusée plutôt
+        // que décodée de travers).
+        stream.mark(BOUNDS_MARK)
+        BitmapFactory.decodeStream(stream, null, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        if (!resetQuietly(stream)) return null
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxW, maxH)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        return BitmapFactory.decodeStream(stream, null, opts)
+    }
+
+    /** `reset` d'un flux marqué : faux si la marque a été invalidée (lecture au-delà de la
+     *  fenêtre), sans lever — l'appelant en fait une image illisible. */
+    private fun resetQuietly(stream: BufferedInputStream): Boolean =
+        try {
+            stream.reset()
+            true
+        } catch (e: IOException) {
+            false
+        }
+
+    /** Lit au plus [size] octets (moins si le flux se termine) : en-tête d'image. */
+    private fun readHead(stream: BufferedInputStream, size: Int): ByteArray {
+        stream.mark(size)
+        val buf = ByteArray(size)
+        var n = 0
+        while (n < size) {
+            val r = stream.read(buf, n, size - n)
+            if (r < 0) break
+            n += r
+        }
+        return if (n == size) buf else buf.copyOf(n)
     }
 
     /** Rasterise un SVG directement à la taille du gabarit (AndroidSVG, apporté par coil-svg).

@@ -48,6 +48,21 @@ import okhttp3.MediaType.Companion.toMediaType
 /** Compteurs de non-lus : 1 appel léger, détecteur de changement pour la réconciliation. */
 @Serializable data class FeedlyUnreadCount(val id: String = "", val count: Int = 0)
 @Serializable data class FeedlyUnreadCounts(val unreadcounts: List<FeedlyUnreadCount> = emptyList())
+/**
+ * Événements de lecture du compte (`GET /v3/markers/reads`) : le delta que Feedly expose
+ * pour synchroniser l'état lu/non-lu sans énumérer tous les non-lus.
+ *
+ * `entries` = entrées marquées **lues** depuis `newerThan` ; `unread` = entrées **gardées
+ * non lues** ; `feeds` = flux marqués lus, avec la date du marqueur (`asOf`) ; `updated` =
+ * date du dernier événement (repère du prochain appel).
+ */
+@Serializable data class FeedlyReadMarks(
+    val entries: List<String> = emptyList(),
+    val unread: List<String> = emptyList(),
+    val feeds: List<FeedlyReadMarkFeed> = emptyList(),
+    val updated: Long = 0L
+)
+@Serializable data class FeedlyReadMarkFeed(val id: String = "", val asOf: Long = 0L)
 @Serializable data class FeedlyMarkers(val action: String, val type: String, val entryIds: List<String>? = null, val feedIds: List<String>? = null, val categoryIds: List<String>? = null)
 @Serializable data class FeedlyProfile(
     val id: String? = null,
@@ -127,13 +142,22 @@ interface FeedlyService {
     suspend fun streamIds(
         @Header("Authorization") h: String,
         @Query("streamId") streamId: String,
-        @Query("count") count: Int = 1000,
+        @Query("count") count: Int = 250,
         @Query("unreadOnly") unreadOnly: Boolean = false,
         @Query("continuation") cont: String? = null
     ): FeedlyIdList
     /** Total des non-lus du compte, en un appel. */
     @GET("markers/counts")
     suspend fun unreadCounts(@Header("Authorization") h: String): FeedlyUnreadCounts
+    /**
+     * Événements de lecture depuis [newerThan] (le serveur prend 30 jours à défaut) : la
+     * voie légère de la réconciliation — un appel au lieu d'énumérer tous les non-lus.
+     */
+    @GET("markers/reads")
+    suspend fun readMarks(
+        @Header("Authorization") h: String,
+        @Query("newerThan") newerThan: Long?
+    ): FeedlyReadMarks
     @POST("markers")
     suspend fun markers(@Header("Authorization") h: String, @Body b: FeedlyMarkers)
 

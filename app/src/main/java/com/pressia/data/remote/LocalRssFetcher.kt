@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -120,6 +121,14 @@ object LocalRssFetcher {
                     error = "HTTP ${resp.code}"
                     if (resp.code != 429 && resp.code !in 500..599) return@withContext LocalFeedFetch(feedId, error = error)
                 }
+            } catch (e: IOException) {
+                // Le serveur n'a **rien** répondu (DNS, connexion refusée, délai) : il n'y a pas
+                // de réponse à retenter, et une seconde tentative coûtait le délai du client
+                // (15 s) puis 1,5 s d'attente pour un flux mort — un flux injoignable n'a rien
+                // à signaler au-delà de son échec.
+                val why = "${e.javaClass.simpleName} : ${e.message ?: "sans détail"}"
+                android.util.Log.i("PressIA", "flux local $url : $why")
+                return@withContext LocalFeedFetch(feedId, error = why)
             } catch (e: Exception) {
                 error = "${e.javaClass.simpleName} : ${e.message ?: "sans détail"}"
             }

@@ -349,6 +349,13 @@ interface PressDao {
      */
     @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND (a.unread = 1 OR a.id IN (:ids))")
     suspend fun readStatesOfProvider(provider: String, ids: List<String>): List<ReconcileState>
+    /**
+     * États locaux des **seules** entrées demandées : la requête de la réconciliation complète
+     * rend aussi tous les non-lus du compte, ce qui chargeait des milliers de lignes pour deux
+     * événements de delta (`markers/reads`).
+     */
+    @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.id IN (:ids)")
+    suspend fun readStatesByIds(provider: String, ids: List<String>): List<ReconcileState>
     @Query("UPDATE articles SET unread = 0, readAt = :now WHERE id IN (:ids)")
     suspend fun markIdsRead(ids: List<String>, now: Long)
     @Query("UPDATE articles SET unread = 1, readAt = NULL WHERE id IN (:ids)")

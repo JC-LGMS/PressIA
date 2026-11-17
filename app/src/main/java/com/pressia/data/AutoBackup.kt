@@ -89,6 +89,8 @@ suspend fun PressRepository.restoreAutoBackupIfEmpty(): Boolean = withContext(Di
     // du tableau alors que la base ne le contient plus.
     prefs.set(Prefs.LAST_SYNC_AT, 0L)
     prefs.set(Prefs.RECONCILE_TOTALS, "")
+    prefs.set(Prefs.RECONCILE_MARKS, "")
+    prefs.set(Prefs.RECONCILE_FULL_AT, "")
     prefs.set(Prefs.READLATER_HASHES, "")
     // shortcut: la copie n'est pas réécrite ici — les articles ne sont pas encore revenus, et
     // l'écrire maintenant effacerait les lus/favoris en attente. Elle l'est à la fin de la

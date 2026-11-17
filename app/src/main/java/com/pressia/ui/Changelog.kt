@@ -47,6 +47,39 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.17",
+        listOf(
+            ChangelogItem(
+                "2026-11-17",
+                "Synchronisation : moins d'attente et moins de réseau",
+                "- Les comptes et les flux locaux se synchronisent en même temps, le provisionnement " +
+                    "des flux se fait trois à la fois et la réconciliation des états lus ne s'ajoute " +
+                    "plus devant le reste. Un serveur qui ne répond pas n'est plus retenté (seuls un " +
+                    "429 ou un 5xx le sont : eux ont répondu).\n\n" +
+                    "- La tête ne redemande plus un mois d'articles et leur HTML : elle demande ce qui " +
+                    "a pu changer depuis la dernière synchronisation, moins un jour de marge. Un " +
+                    "historique réglé au-delà d'un mois ne demande plus à Feedly une date qu'il " +
+                    "refuse (borne à 31 jours).\n\n" +
+                    "- Lire plusieurs articles d'affilée ne déclenche plus une poussée réseau par " +
+                    "article : une seule pour tout le lot.\n\n" +
+                    "- Le balayage des miniatures orphelines ne passe qu'une fois par synchronisation, " +
+                    "et son calcul des noms est tombé de 2,8 s à 40 ms : les vignettes déjà " +
+                    "téléchargées gardent le même nom.\n\n" +
+                    "- Les images se téléchargent en parallèle (la file d'OkHttp ne laissait que cinq " +
+                    "requêtes par hôte), une vignette n'est plus lue entière en mémoire (décodage en " +
+                    "flux), et un JPEG n'est plus scanné pour sa transparence : il ne peut pas en " +
+                    "avoir.\n\n" +
+                    "- La réconciliation des états lus suit les événements de lecture de Feedly : un " +
+                    "appel au lieu de 12 à 15 pages, avec un contrôle complet toutes les six heures. " +
+                    "Un article lu sur un autre appareil n'échappe plus au passage quand un nouvel " +
+                    "article arrive en même temps.\n\n" +
+                    "- Le marquage de masse part par paquets de 500 identifiants au lieu de 100 : " +
+                    "cinq fois moins d'appels pour « tout marquer lu ».",
+                time = "22:12"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.16",
         listOf(
             ChangelogItem(

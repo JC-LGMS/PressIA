@@ -148,6 +148,27 @@ fun historyCutoffMs(nowMs: Long, months: Int): Long {
 fun historyNewerThan(months: Int, cutoffMs: Long): Long? = if (months == 1) cutoffMs else null
 
 /**
+ * Borne basse de la **tête** (le flux global demandé à chaque synchronisation) : ce qui a pu
+ * changer depuis la dernière synchronisation, moins un jour de marge (article publié pendant la
+ * passe précédente, fuseaux, horloges des serveurs), et jamais plus vieux que la fenêtre
+ * d'historique. Le rattrapage flux par flux reste le filet : c'est lui qui remonte l'historique
+ * manquant, avec sa propre borne ([historyNewerThan]).
+ *
+ * `null` = aucune borne : première synchronisation (rien de connu) ou fenêtre sans limite.
+ * Demander « depuis un mois » à chaque passe ramenait 500 articles avec leur HTML pour rien.
+ * Pur, testé.
+ */
+fun headNewerThan(
+    lastSyncMs: Long?,
+    cutoffMs: Long,
+    marginMs: Long = 24L * 3600 * 1000
+): Long? {
+    if (lastSyncMs == null || lastSyncMs <= 0L) return cutoffMs.takeIf { it > 0L }
+    val since = lastSyncMs - marginMs
+    return if (cutoffMs > 0L) maxOf(since, cutoffMs) else since
+}
+
+/**
  * Article sorti de la fenêtre d'historique : plus vieux que [cutoffMs], et ni étoilé ni
  * « Read later » — la durée est « hors favoris ». Une date inconnue (0) n'expire jamais.
  *
@@ -340,10 +361,19 @@ fun capByQuota(
     keep: Int
 ): List<ArticleEntity> = articles.filter { a ->
     if (a.id in known || a.starred || a.laterSaved) true
-    else if ((counts[a.feedId] ?: 0) < keep) {
-        counts[a.feedId] = (counts[a.feedId] ?: 0) + 1
-        true
-    } else false
+    else {
+        // `compute` : plusieurs flux sont provisionnés en parallèle, une lecture puis une
+        // écriture en deux temps laissait perdre des incréments (table concurrente).
+        var accepted = false
+        counts.compute(a.feedId) { _, current ->
+            val v = current ?: 0
+            if (v < keep) {
+                accepted = true
+                v + 1
+            } else v
+        }
+        accepted
+    }
 }
 
 /**
@@ -442,6 +472,12 @@ class PressRepository(
      * `pushQueue`, un Mutex n'étant pas réentrant, ce serait un interblocage.
      */
     private val pushMutex = Mutex()
+    /**
+     * Une action utilisateur a demandé une poussée pendant qu'une passe tient [pushMutex] :
+     * la passe en cours repassera la file **une fois** de plus à la fin, au lieu de laisser
+     * chaque action lancer sa propre passe (voir `schedulePush`).
+     */
+    private val pushAgain = java.util.concurrent.atomic.AtomicBoolean(false)
     /**
      * Verrou du registre des comptes ([Prefs.ACCOUNTS]) : toute écriture est une
      * lecture-modification-écriture (reconnexion, renouvellement de jeton, suppression), et
@@ -770,10 +806,11 @@ class PressRepository(
     suspend fun maxItems(): Int = prefs.data.first()[Prefs.MAX_ITEMS] ?: 1000
 
     /**
-     * Taille d'une page de l'approvisionnement initial. 500 est le maximum accepté par Feedly ;
-     * Inoreader plafonne de son côté à 200 et reçoit donc la même valeur, sans conséquence.
+     * Taille d'une page de l'approvisionnement initial. **250** est le maximum accepté par
+     * Feedly (`streams/contents` comme `streams/ids`) ; Inoreader plafonne de son côté à 200
+     * et reçoit donc la même valeur, sans conséquence.
      */
-    private val pageSize = 500
+    private val pageSize = 250
 
     /**
      * Plafond de sécurité de l'approvisionnement ([backfillArticles]) : borne le nombre d'articles
@@ -1262,7 +1299,9 @@ class PressRepository(
         dao.setRead(id, unread, if (!unread) System.currentTimeMillis() else null)
         if (!isLocal()) {
             dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (unread) "unread" else "read"))
-            pushQueue()
+            // Fusionnée avec la passe en cours : lire vingt articles d'affilée ne fait plus
+            // vingt allers-retours sérialisés (voir `schedulePush`).
+            schedulePush()
         }
     }
     /**
@@ -1291,7 +1330,7 @@ class PressRepository(
                 dao.unmarkLaterSaved(listOf(id))
             }
             dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (starred) "save" else "unsave"))
-            pushQueue()
+            schedulePush()
         } else {
             dao.setStarred(id, starred)
         }
@@ -1660,39 +1699,44 @@ class PressRepository(
         val max = maxItems()
         val t0 = System.currentTimeMillis()
         var added = 0
-        // Flux RSS saisis à la main : sans compte, donc toujours synchronisés.
-        runCatching {
-            // Seuls les flux « local » : les abonnements d'un compte ont une URL de flux
-            // interne (« feed/… ») que le lecteur local ne sait pas interroger.
-            local.feeds = repairLocalFeeds(dao.subscriptions().filter { isLocalProvider(it.provider) })
-            if (local.feeds.isNotEmpty()) onSource?.invoke("flux locaux")
-            // Un flux nommé au fil de la réception : sans cela le bandeau restait sur
-            // « flux locaux » pendant que plusieurs dizaines de flux défilaient.
-            local.onFeed = { label, done, total ->
-                syncStep.value = "Réception des articles… (flux locaux $done/$total : $label)"
-            }
-            val page = try {
-                local.stream(null, feedId, categoryId, max)
-            } finally {
-                // Le rappel ne doit pas survivre à la passe, même en échec : laissé en place, il
-                // réécrivait l'étape du bandeau pendant la synchro suivante.
-                local.onFeed = null
-            }
-            android.util.Log.i("PressIA", "flux locaux : ${local.feeds.size} flux interrogés, ${page.articles.size} articles")
-            // Nom du flux : il remplace l'URL, seule étiquette possible d'un flux saisi à la main
-            // (« youtube.com » → « Talks with a Spy »).
-            page.feedTitles.forEach { (id, title) -> dao.setFeedTitle(id, title) }
-            // keepRead : le flux RSS ne porte aucun état de lecture, tout article déjà connu
-            // garde donc son lu/non-lu local (voir `storeArticles`).
-            added += storeArticles(page.articles, keepRead = true)
-        }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }
-
-        // Comptes cloud en parallèle : chacun a son jeton et ses propres dossiers, et les
-        // écritures concurrentes sont sérialisées par Room. Sur un flux précis, seul le
-        // compte qui le détient est interrogé.
+        // Comptes cloud et flux locaux partent **ensemble** : les flux locaux étaient attendus
+        // avant les comptes, si bien qu'un flux injoignable (15 s de délai) retardait toute la
+        // synchro des comptes. Les écritures concurrentes sont sérialisées par Room, et le
+        // verrou de synchro couvre les champs partagés du fournisseur local.
         val owner = feedId?.let { dao.subscription(it)?.provider }
         added += coroutineScope {
-            cloudAccounts()
+            val localJob = async {
+                // Flux RSS saisis à la main : sans compte, donc toujours synchronisés.
+                runCatching {
+                    // Seuls les flux « local » : les abonnements d'un compte ont une URL de flux
+                    // interne (« feed/… ») que le lecteur local ne sait pas interroger.
+                    local.feeds = repairLocalFeeds(dao.subscriptions().filter { isLocalProvider(it.provider) })
+                    if (local.feeds.isNotEmpty()) onSource?.invoke("flux locaux")
+                    // Un flux nommé au fil de la réception : sans cela le bandeau restait sur
+                    // « flux locaux » pendant que plusieurs dizaines de flux défilaient.
+                    local.onFeed = { label, done, total ->
+                        syncStep.value = "Réception des articles… (flux locaux $done/$total : $label)"
+                    }
+                    val page = try {
+                        local.stream(null, feedId, categoryId, max)
+                    } finally {
+                        // Le rappel ne doit pas survivre à la passe, même en échec : laissé en place, il
+                        // réécrivait l'étape du bandeau pendant la synchro suivante.
+                        local.onFeed = null
+                    }
+                    android.util.Log.i("PressIA", "flux locaux : ${local.feeds.size} flux interrogés, ${page.articles.size} articles")
+                    // Nom du flux : il remplace l'URL, seule étiquette possible d'un flux saisi à la main
+                    // (« youtube.com » → « Talks with a Spy »).
+                    page.feedTitles.forEach { (id, title) -> dao.setFeedTitle(id, title) }
+                    // keepRead : le flux RSS ne porte aucun état de lecture, tout article déjà connu
+                    // garde donc son lu/non-lu local (voir `storeArticles`).
+                    storeArticles(page.articles, keepRead = true)
+                }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }.getOrDefault(0)
+            }
+            // Comptes cloud en parallèle : chacun a son jeton et ses propres dossiers, et les
+            // écritures concurrentes sont sérialisées par Room. Sur un flux précis, seul le
+            // compte qui le détient est interrogé.
+            val cloudAdded = cloudAccounts()
                 .filter { owner == null || sameAccount(owner, it.id) }
                 .map { account ->
                     async {
@@ -1718,20 +1762,39 @@ class PressRepository(
                             .getOrDefault(0)
                     }
                 }.awaitAll().sum()
+            localJob.await() + cloudAdded
         }
+        // Bloc de fin, décomposé (une ligne de log par passe) : ces quatre opérations balaient
+        // toutes la table `articles`, dont les lignes portent le HTML du corps — un seul chiffre
+        // global ne disait pas laquelle pesait, et c'est ce qu'il faut savoir avant de fusionner
+        // les scans (quotaCounts, overQuotaFeedIds, expiredArticleIds, orphelins).
+        var tTail = System.currentTimeMillis()
         replayRestoredStarred()
         replayRestoredRead()
+        val msReplay = System.currentTimeMillis() - tTail
+        tTail = System.currentTimeMillis()
         pruneArticles()
+        val msPrune = System.currentTimeMillis() - tTail
+        tTail = System.currentTimeMillis()
         // Articles sans flux (passe interrompue, flux retiré hors des chemins qui purgent) :
         // ils restaient visibles dans le global et les non-lus, sans compte pour les expliquer.
         // Favoris et « Read later » d'un flux non abonné sont exclus : le tableau d'un compte en
         // contient, et ils n'ont pas à disparaître à la première synchronisation.
         dao.deleteUnsavedOrphanArticles()
+        val msOrphans = System.currentTimeMillis() - tTail
+        tTail = System.currentTimeMillis()
         // Fichiers de miniatures qu'aucun article ne réclame (URL d'image remplacée, passe
         // interrompue, suppression faite hors des chemins qui purgent eux-mêmes) : la fin de
-        // synchro est le moment où la table des articles est fraîche, et une fois par synchro
-        // suffit (un simple listing de dossier et une requête).
+        // synchro est le moment où la table des articles est fraîche. **Seule** passe du
+        // balayage ici : `pruneArticles` ne le fait plus (il listait le dossier deux fois de
+        // suite quand la taille avait supprimé quelque chose).
         gcThumbs()
+        val msThumbs = System.currentTimeMillis() - tTail
+        android.util.Log.i(
+            "PressIA",
+            "syncDown fin: rejeux=${msReplay}ms taille=${msPrune}ms orphelins=${msOrphans}ms " +
+                "miniatures=${msThumbs}ms (total=${msReplay + msPrune + msOrphans + msThumbs}ms)"
+        )
         // Listes et compteurs à jour avant la (longue) passe miniatures : l'accueil n'attend
         // pas la fin de la synchronisation. Les listes d'articles, elles, sont réactives.
         pokeLists()
@@ -1988,6 +2051,9 @@ class PressRepository(
             // pour des lignes aussitôt supprimées), listes à jour avant la longue passe.
             syncStep.value = "Application de la rétention…"
             pruneArticles()
+            // Une seule passe de balayage des miniatures par synchro (voir `pruneArticles`,
+            // qui ne le fait plus lui-même).
+            gcThumbs()
             pokeLists()
             val withThumbs = imagesAllowed()
             if (withThumbs) syncStep.value = "Téléchargement des images…"
@@ -2029,11 +2095,67 @@ class PressRepository(
             val t = total ?: p.unreadTotal(account.token)
             val pending = dao.pendingSync().isNotEmpty()
             val last = reconcileTotals()[account.id]
-            if (com.pressia.data.remote.reconcileUnchanged(added, pending, last, t)) {
+            // Repère du delta. Il n'existe pas encore au premier passage (ou après une
+            // restauration) : cette passe-là énumère les non-lus pour poser l'état de départ.
+            val since = if (p.hasReadMarks) reconcileMarks()[account.id] else null
+            // Contrôle complet périodique : le delta ne voit pas tout (un « garder non lu »
+            // sur une entrée n'est pas dans les événements de Feedly, vérifié en direct).
+            val now = System.currentTimeMillis()
+            val fullDue = p.hasReadMarks && since != null &&
+                com.pressia.data.remote.fullReconcileDue(now, reconcileFullAt()[account.id])
+            // À partir du moment où le delta est disponible, il tourne **à chaque passe** :
+            // un appel léger vaut mieux que le test « total inchangé », qui manquait un lu
+            // ailleurs compensé par un nouvel article (total identique, état local faux —
+            // constaté en direct). Le test reste pour l'énumération, qui est coûteuse.
+            if (since == null && com.pressia.data.remote.reconcileUnchanged(added, pending, last, t)) {
                 android.util.Log.i("PressIA", "reconcile ${account.id} sauté (total $t inchangé)")
             } else {
-                val (read, unread) = reconcileReadState(account)
-                if (t != null) storeReconcileTotal(account.id, t)
+                // Voie légère d'abord : les **événements de lecture** depuis le dernier repère
+                // (`markers/reads` chez Feedly) — un appel au lieu d'énumérer tous les non-lus
+                // (14 pages pour ce compte). Sans repère (première passe, fournisseur sans
+                // delta), l'énumération complète sert de point de départ, puis le repère est posé.
+                val marks = if (since != null && !fullDue) p.readMarks(account.token, since) else null
+                // Un marqueur de **flux** (« tout marquer lu » posé ailleurs) ne donne pas la
+                // liste des entrées : seule l'énumération complète sait lesquelles sont encore
+                // non lues, et elle corrige au passage les états locaux décalés. Les marqueurs
+                // de masse restent rares ; le delta reprend à la passe suivante.
+                val delta = marks != null && marks.feeds.isEmpty()
+                // `applied` : l'état local a réellement été mis à jour. Une énumération ratée
+                // (compte injoignable) ne doit ni poser de repère ni retenir un total — la
+                // passe suivante doit revoir ce qu'elle n'a pas vu.
+                var applied = false
+                val (read, unread) = if (delta) {
+                    reconcileFromMarks(account, marks!!).also { applied = true }
+                } else {
+                    val full = reconcileReadState(account)
+                    if (full != null) applied = true
+                    when {
+                        marks != null -> android.util.Log.i(
+                            "PressIA",
+                            "reconcile ${account.id} : ${marks.feeds.size} marqueur(s) de flux, " +
+                                "passe complète"
+                        )
+                        fullDue -> android.util.Log.i(
+                            "PressIA",
+                            "reconcile ${account.id} : contrôle complet périodique"
+                        )
+                    }
+                    full ?: (0 to 0)
+                }
+                if (applied) {
+                    // Repère suivant : date du dernier événement annoncé, ou l'heure locale
+                    // quand le serveur n'en donne pas (passe complète après un échec du delta).
+                    // Réservé aux services à delta : un service qui n'en a pas n'interroge
+                    // jamais `readMarks`, et un repère y serait inutile.
+                    if (p.hasReadMarks) {
+                        storeReconcileMark(
+                            account.id,
+                            nextReadMarksWatermark(marks?.watermark ?: 0L, now)
+                        )
+                        if (!delta) storeReconcileFullAt(account.id, now)
+                    }
+                    if (t != null) storeReconcileTotal(account.id, t)
+                }
                 if (read > 0 || unread > 0) android.util.Log.i("PressIA", "reconcile ${account.id}: $read passés en lus, $unread rouverts")
             }
         }.onFailure {
@@ -2044,11 +2166,41 @@ class PressRepository(
     }
 
     /**
+     * Réconciliation **par delta** : applique les événements de lecture du compte aux seules
+     * entrées qu'ils nomment. Aucune énumération, aucune hypothèse sur le reste du compte.
+     *
+     * Entrées lues ailleurs → passées en lus si encore non lues ici ; « gardées non lues »
+     * ailleurs → rouvertes si lues ici. Les actions encore en file ne sont jamais touchées
+     * (le serveur ne les a pas vues : c'est [readMarksTargets] qui tranche). Les identifiants
+     * inconnus localement ne font rien — l'article arrivera par le flux avec son état.
+     */
+    private suspend fun reconcileFromMarks(account: CloudAccount, marks: ReadMarks): Pair<Int, Int> {
+        val startedAt = System.currentTimeMillis()
+        val pending = dao.pendingReadIds().toSet()
+        val ids = (marks.read + marks.keptUnread).toList()
+        // États locaux des seules entrées annoncées, par paquets : une entrée inconnue ne
+        // remonte pas, et rien n'est lu au-delà de ce que le serveur a nommé.
+        val states = ids.chunked(500).flatMap { dao.readStatesByIds(account.id, it) }
+        val (toRead, toUnread) = readMarksTargets(states, marks.read, marks.keptUnread, pending)
+        if (toRead.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            toRead.chunked(500).forEach { dao.markIdsRead(it, now) }
+        }
+        if (toUnread.isNotEmpty()) toUnread.chunked(500).forEach { dao.markIdsUnread(it) }
+        android.util.Log.i(
+            "PressIA",
+            "reconcileReadState ${account.id} : delta ${System.currentTimeMillis() - startedAt}ms " +
+                "(${marks.read.size} lus, ${marks.keptUnread.size} gardés non lus de loin : " +
+                "${toRead.size} passés en lus, ${toUnread.size} rouverts, ${pending.size} en file)"
+        )
+        return toRead.size to toUnread.size
+    }
+
+    /**
      * Compteurs de non-lus par flux du compte, restreints à ses abonnements. Null si
      * l'appel échoue (le rattrapage est sauté, pas la synchro) — voir l'essai unique
      * dans [provisionHistory] : sous la rafale de la connexion, cet appel flanche parfois.
-     */
-    private suspend fun fetchServerUnread(
+     */    private suspend fun fetchServerUnread(
         account: CloudAccount,
         subIds: Set<String>
     ): Map<String, Int>? =
@@ -2079,6 +2231,7 @@ class PressRepository(
         newerThanMs: Long? = null,
         onFeed: ((done: Int, total: Int) -> Unit)? = null
     ): Pair<Int, Int?> {
+        val startedAt = System.currentTimeMillis()
         var added = 0
         val folders = subs.mapNotNull { s -> s.categoryId?.let { s.id to it } }.toMap()
         val subIds = subs.map { it.id }.toSet()
@@ -2103,6 +2256,25 @@ class PressRepository(
             serverUnread == null || (serverUnread[feedId] ?: 0) > (localUnread[feedId] ?: 0)
         }
         val fresh = discoverFeeds(subs.map { it.id }, dao.articleFeedIds().toSet())
+        // Provisionnement flux par flux **en parallèle borné** (trois à la fois) : la passe
+        // était séquentielle, un flux lent (page de 100 articles, réseau qui traîne) retardait
+        // tous les suivants. Les compteurs de quota passent dans une table concurrente
+        // (`capByQuota` y incrémente de façon atomique), `added` et l'avancement du bandeau
+        // sont mis à jour sous verrou.
+        val quota = java.util.concurrent.ConcurrentHashMap(counts)
+        val gate = Semaphore(3)
+        val addedMutex = Mutex()
+        val feedsDone = AtomicInteger(0)
+        suspend fun provisionOne(feedId: String, total: Int, report: Boolean): Int {
+            val (a, s) = gate.withPermit {
+                healFeed(account, feedId, folders[feedId], quota, keep, cutoff,
+                    allowFallback = allowFallback, newerThanMs = newerThanMs)
+            }
+            addedMutex.withLock { added += a }
+            onFeed?.invoke(feedsDone.incrementAndGet(), total)
+            if (report) android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
+            return a
+        }
         // Compteur de flux (découverte + rattrapage sans chevauchement : le rattrapage exclut
         // les découverts) : l'appelant affiche « x/y » s'il tient le bandeau, sinon silencieux
         // (plusieurs comptes partagent le même bandeau en synchro normale).
@@ -2110,13 +2282,10 @@ class PressRepository(
         // des compteurs mis à jour par la découverte) : « 1/3 » puis « 4/5 » reste croissant et
         // finit sur le vrai total, là où un total figé au nombre d'abonnements annonçait « 3/42 »
         // puis s'arrêtait.
-        var feedDone = 0
         if (fresh.isNotEmpty()) {
             android.util.Log.i("PressIA", "découverte ${account.id} : ${fresh.size} flux à approvisionner")
-            fresh.forEach { feedId ->
-                added += healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs).first
-                feedDone++
-                onFeed?.invoke(feedDone, fresh.size)
+            coroutineScope {
+                fresh.map { id -> async { provisionOne(id, fresh.size, false) } }.awaitAll()
             }
         }
         // Flux sous-approvisionnés (page vide transitoire, passe interrompue) : le compte
@@ -2126,21 +2295,22 @@ class PressRepository(
         if (serverUnread == null) {
             android.util.Log.w("PressIA", "rattrapage ${account.id} : compteurs toujours injoignables, passé (prochaine synchro)")
         } else if (serverUnread.isNotEmpty()) {
-            val lagging = laggingFeeds(serverUnread, localUnread, counts, keep)
+            val lagging = laggingFeeds(serverUnread, localUnread, quota, keep)
                 .filter { it !in fresh }
             if (lagging.isNotEmpty()) {
                 android.util.Log.i("PressIA", "rattrapage ${account.id} : ${lagging.size} flux en retard, historique remonté")
-                lagging.forEach { feedId ->
+                coroutineScope {
                     // healFeed refait la passe par flux (rapide si déjà connue) puis le repli :
                     // le +A/L distingue un compteur fantôme d'un vrai manque.
-                    val (a, s, _) = healFeed(account, feedId, folders[feedId], counts, keep, cutoff, allowFallback = allowFallback, newerThanMs = newerThanMs)
-                    added += a
-                    feedDone++
-                    onFeed?.invoke(feedDone, fresh.size + lagging.size)
-                    android.util.Log.i("PressIA", "rattrapage ${account.id} : $feedId +$a/$s")
+                    lagging.map { id -> async { provisionOne(id, fresh.size + lagging.size, true) } }.awaitAll()
                 }
             }
         }
+        android.util.Log.i(
+            "PressIA",
+            "provision ${account.id} : ${System.currentTimeMillis() - startedAt}ms " +
+                "(${subs.size} abonnements, +$added articles)"
+        )
         return added to serverUnread?.values?.sum()
     }
 
@@ -2174,7 +2344,14 @@ class PressRepository(
             // Fenêtre serveur lue avant la tête : à 1 mois (31 j), Feedly coupe côté serveur.
             val prefsHead = prefs.data.first()
             val monthsHead = prefsHead[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT
-            val newerThan = historyNewerThan(monthsHead, historyCutoffMs(System.currentTimeMillis(), monthsHead))
+            val cutoffHead = historyCutoffMs(System.currentTimeMillis(), monthsHead)
+            // La tête ne redemande que ce qui a pu changer depuis la dernière passe (moins un
+            // jour de marge) : « depuis un mois » ramenait 500 articles et leur HTML à chaque
+            // synchronisation. Le rattrapage flux par flux reste le filet (voir `headNewerThan`).
+            val newerThanHead = headNewerThan(prefsHead[Prefs.LAST_SYNC_AT], cutoffHead)
+            // Bornes du rattrapage, elles, sur la fenêtre d'historique (31 j chez Feedly : le
+            // service coupe côté serveur).
+            val newerThan = historyNewerThan(monthsHead, cutoffHead)
             var msStream = 0L; var msCats = 0L; var msSubs = 0L; var msCounts = 0L
             val page: StreamPage
             val cats: List<CategoryEntity>
@@ -2183,7 +2360,7 @@ class PressRepository(
             coroutineScope {
                 val dPage = async {
                     val s = System.currentTimeMillis()
-                    p.stream(account.token, null, null, max, newerThanMs = newerThan).also { msStream = System.currentTimeMillis() - s }
+                    p.stream(account.token, null, null, max, newerThanMs = newerThanHead).also { msStream = System.currentTimeMillis() - s }
                 }
                 val dCats = async {
                     val s = System.currentTimeMillis()
@@ -2213,51 +2390,60 @@ class PressRepository(
                 "PressIA",
                 "sync ${account.id} tête: flux=${msStream}ms dossiers=${msCats}ms abos=${msSubs}ms " +
                     "compteurs=${msCounts}ms (${if (serverUnread != null) "mutualisés" else "repliés"}, " +
-                    "newerThan=${if (newerThan != null) "31j" else "-"})"
+                    "depuis=${newerThanHead?.let { "${(System.currentTimeMillis() - it) / 3_600_000}h" } ?: "toujours"})"
             )
-            reconcileAccount(account, added, serverUnread?.values?.sum())
-            replaceCategories(account.id, cats)
-            // On ne retire que les flux de ce compte : ceux des autres comptes, et surtout
-            // les flux RSS locaux ajoutés à la main, doivent survivre.
-            // Même raison que pour les dossiers : le rang choisi par l'utilisateur est réinjecté,
-            // sinon la réinsertion le remettrait à zéro et l'ordre saisi disparaîtrait.
-            val current = dao.subscriptions()
-            val ranks = current.associate { it.id to it.sortOrder }
-            val gone = removedFeeds(
-                current.filter { sameAccount(it.provider, account.id) }.map { it.id }.toSet(),
-                subs.map { it.id }.toSet()
-            )
-            // Remplacement atomique : une coupure entre l'effacement et la réinsertion laissait
-            // le compte sans abonnements (et leurs articles sans flux).
-            db.withTransaction {
-                dao.clearSubscriptionsOf(account.id)
-                dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+            // Réconciliation **en parallèle** du provisionnement : elle n'écrit que des états
+            // lu/non-lu, le provisionnement n'écrit que des articles, et aucun des deux ne lit
+            // ce que l'autre écrit. Les enchaîner ajoutait l'énumération des non-lus distants
+            // (1 à 3 s) devant la partie longue de la synchro.
+            return coroutineScope {
+                val reconcileJob = async { reconcileAccount(account, added, serverUnread?.values?.sum()) }
+                replaceCategories(account.id, cats)
+                // On ne retire que les flux de ce compte : ceux des autres comptes, et surtout
+                // les flux RSS locaux ajoutés à la main, doivent survivre.
+                // Même raison que pour les dossiers : le rang choisi par l'utilisateur est réinjecté,
+                // sinon la réinsertion le remettrait à zéro et l'ordre saisi disparaîtrait.
+                val current = dao.subscriptions()
+                val ranks = current.associate { it.id to it.sortOrder }
+                val gone = removedFeeds(
+                    current.filter { sameAccount(it.provider, account.id) }.map { it.id }.toSet(),
+                    subs.map { it.id }.toSet()
+                )
+                // Remplacement atomique : une coupure entre l'effacement et la réinsertion laissait
+                // le compte sans abonnements (et leurs articles sans flux).
+                db.withTransaction {
+                    dao.clearSubscriptionsOf(account.id)
+                    dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+                }
+                // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
+                // visibles partout : global, non-lus, favoris), avec leurs HTML extraits
+                // (Readability, colonne content), puis leurs miniatures orphelines. Les traces de
+                // lecture/extraction restent : les statistiques ne repartent pas de zéro parce
+                // qu'un flux a disparu côté serveur (voir deleteAccount).
+                // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
+                if (gone.isNotEmpty()) {
+                    android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
+                    gone.forEach { dao.deleteArticlesOfFeed(it) }
+                    gcThumbs()
+                    vacuum()
+                }
+                // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
+                // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
+                // bornes que l'approvisionnement global (quota, fenêtre, plafond). Les nouveaux
+                // comptent dans le total. Le bandeau « Réception des articles… » suit le compteur
+                // de flux ([onFeed]), cette passe étant la partie longue d'un compte.
+                val prefsData = prefsHead
+                val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
+                val cutoff = historyCutoffMs(System.currentTimeMillis(), monthsHead)
+                val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
+                added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread, newerThan, onFeed).first
+                // Son échec est déjà avalé et journalisé par `reconcileAccount` : l'attendre ne
+                // peut pas faire échouer la synchro.
+                reconcileJob.await()
+                // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
+                clearAccountExpired(account.id)
+                added
             }
-            // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
-            // visibles partout : global, non-lus, favoris), avec leurs HTML extraits
-            // (Readability, colonne content), puis leurs miniatures orphelines. Les traces de
-            // lecture/extraction restent : les statistiques ne repartent pas de zéro parce
-            // qu'un flux a disparu côté serveur (voir deleteAccount).
-            // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
-            if (gone.isNotEmpty()) {
-                android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
-                gone.forEach { dao.deleteArticlesOfFeed(it) }
-                gcThumbs()
-                vacuum()
-            }
-            // Flux jamais approvisionnés (abonnés côté compte après la connexion) : leur
-            // historique ne viendrait jamais par la fenêtre récente — passe dédiée, mêmes
-            // bornes que l'approvisionnement global (quota, fenêtre, plafond). Les nouveaux
-            // comptent dans le total. Le bandeau « Réception des articles… » suit le compteur
-            // de flux ([onFeed]), cette passe étant la partie longue d'un compte.
-            val prefsData = prefsHead
-            val keep = (prefsData[Prefs.MAX_ITEMS] ?: 1000).coerceAtLeast(1)
-            val cutoff = historyCutoffMs(System.currentTimeMillis(), monthsHead)
-            val counts = dao.quotaCounts().associate { it.feedId to it.c }.toMutableMap()
-            added += provisionHistory(account, subs, counts, keep, cutoff, serverUnread, newerThan, onFeed).first
-        // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
-        clearAccountExpired(account.id)
-        return added
         } catch (e: Exception) {
             // 401/403 = session morte : on lève le drapeau pour l'écran Comptes, puis on
             // laisse l'appelant compter zéro (comportement inchangé pour le reste).
@@ -2283,6 +2469,38 @@ class PressRepository(
         val o = org.json.JSONObject()
         (reconcileTotals() + (accountId to total)).forEach { (k, v) -> o.put(k, v) }
         prefs.set(Prefs.RECONCILE_TOTALS, o.toString())
+    }
+
+    /**
+     * Repère de réconciliation par delta, par compte (`{id: ms}`) : date des derniers
+     * événements de lecture appliqués. Cache dérivé hors sauvegarde, comme les totaux.
+     */
+    private suspend fun reconcileMarks(): Map<String, Long> = runCatching {
+        val raw = prefs.data.first()[Prefs.RECONCILE_MARKS].orEmpty()
+        if (raw.isBlank()) return@runCatching emptyMap<String, Long>()
+        val o = org.json.JSONObject(raw)
+        o.keys().asSequence().associateWith { o.optLong(it) }
+    }.getOrDefault(emptyMap())
+
+    /** Même mutex que [storeReconcileTotal] : les comptes se synchronisent en parallèle. */
+    private suspend fun storeReconcileMark(accountId: String, atMs: Long) = hashMutex.withLock {
+        val o = org.json.JSONObject()
+        (reconcileMarks() + (accountId to atMs)).forEach { (k, v) -> o.put(k, v) }
+        prefs.set(Prefs.RECONCILE_MARKS, o.toString())
+    }
+
+    /** Date du dernier contrôle complet (voir [fullReconcileDue]), par compte. */
+    private suspend fun reconcileFullAt(): Map<String, Long> = runCatching {
+        val raw = prefs.data.first()[Prefs.RECONCILE_FULL_AT].orEmpty()
+        if (raw.isBlank()) return@runCatching emptyMap<String, Long>()
+        val o = org.json.JSONObject(raw)
+        o.keys().asSequence().associateWith { o.optLong(it) }
+    }.getOrDefault(emptyMap())
+
+    private suspend fun storeReconcileFullAt(accountId: String, atMs: Long) = hashMutex.withLock {
+        val o = org.json.JSONObject()
+        (reconcileFullAt() + (accountId to atMs)).forEach { (k, v) -> o.put(k, v) }
+        prefs.set(Prefs.RECONCILE_FULL_AT, o.toString())
     }
 
     /**
@@ -2336,9 +2554,12 @@ class PressRepository(
      * borne, chaque synchronisation refermait les vieux non-lus que Feedly a balayés tout seul.
      * Renvoie (passés en lus, rouverts).
      */
-    suspend fun reconcileReadState(account: CloudAccount, maxIds: Int = 5000): Pair<Int, Int> = withContext(Dispatchers.IO) {
+    suspend fun reconcileReadState(account: CloudAccount, maxIds: Int = 5000): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
         val p = providerFor(account.provider)
-        val remote = p.unreadIds(account.token, maxIds) ?: return@withContext 0 to 0
+        // Null = énumération impossible : rien n'a été appliqué, et l'appelant ne doit pas
+        // poser de repère (il sauterait les événements que cette passe n'a pas vus).
+        val remote = p.unreadIds(account.token, maxIds) ?: return@withContext null
         // Toute la file, pas seulement la page de `pendingSync` : sinon un marquage groupé
         // plus gros qu'une page n'était protégé qu'en partie et la réconciliation rouvrait
         // les articles dont l'action attendait encore (le serveur ne les avait pas vus).
@@ -2375,6 +2596,11 @@ class PressRepository(
         if (split.markUnread.isNotEmpty()) {
             split.markUnread.chunked(500).forEach { dao.markIdsUnread(it); unread += it.size }
         }
+        android.util.Log.i(
+            "PressIA",
+            "reconcileReadState ${account.id} : ${System.currentTimeMillis() - startedAt}ms " +
+                "(${remote.ids.size} non-lus distants, $read passés en lus, $unread rouverts)"
+        )
         read to unread
     }
 
@@ -2840,14 +3066,27 @@ class PressRepository(
                 android.util.Log.i("PressIA", "pruneArticles: $expired articles hors historique ($months mois)")
             }
         }
-        if (deleted + expired > 0) gcThumbs()
+        // Pas de `gcThumbs` ici : les deux appelants (fin de `syncDown`, fin de `initialSync`)
+        // le font eux-mêmes, une seule fois — le faire ici listait le dossier des miniatures
+        // deux fois de suite quand la taille avait supprimé quelque chose.
     }
 
     /** Supprime les miniatures dont plus aucun article n'a besoin (purge, compte supprimé). */
     private suspend fun gcThumbs() {
-        val keep = dao.allThumbUrls().flatMapTo(HashSet()) { ThumbStore.thumbFileNames(it) }
+        // Décomposé (catalogue puis disque) : c'est la passe la plus lourde du bloc de fin, et
+        // savoir laquelle des deux pèse décide du remède (requête ou listing).
+        val t0 = System.currentTimeMillis()
+        val urls = dao.allThumbUrls()
+        val tUrls = System.currentTimeMillis()
+        val keep = urls.flatMapTo(HashSet()) { ThumbStore.thumbFileNames(it) }
+        val tQuery = System.currentTimeMillis()
         val removed = ThumbStore.gc(ctx, keep)
-        if (removed > 0) android.util.Log.i("PressIA", "miniatures orphelines retirées : $removed")
+        android.util.Log.i(
+            "PressIA",
+            "gcThumbs: requete=${tUrls - t0}ms (${urls.size} urls) noms=${tQuery - tUrls}ms " +
+                "(${keep.size} noms) disque=${System.currentTimeMillis() - tQuery}ms" +
+                if (removed > 0) " ($removed orphelines retirées)" else ""
+        )
     }
 
     /**
@@ -2930,7 +3169,37 @@ class PressRepository(
      * lignes traitées après chaque page (marquage groupé : barre du bas).
      */
     suspend fun pushQueue(onProgress: ((done: Int) -> Unit)? = null): Int =
-        pushMutex.withLock { pushQueueUnlocked(onProgress) }
+        pushMutex.withLock {
+            pushAgain.set(false)
+            var n = pushQueueUnlocked(onProgress)
+            // Une action utilisateur a demandé une poussée pendant celle-ci : une seule reprise,
+            // pas une par action (voir `schedulePush`).
+            while (pushAgain.getAndSet(false)) n += pushQueueUnlocked(onProgress)
+            n
+        }
+
+    /**
+     * Poussée demandée par une action utilisateur (article lu, étoile) : **fusionnée** avec la
+     * passe en cours.
+     *
+     * Chaque lecture appelait `pushQueue` : lire vingt articles en rafale faisait vingt passes
+     * sérialisées par [pushMutex], donc vingt allers-retours réseau. Ici, une passe déjà en
+     * cours repassera la file à la fin (un seul drapeau, pas un par action) et l'appelant
+     * n'attend pas son tour quand c'est le cas. Hors passe en cours, la poussée se fait
+     * normalement : la file peut porter une ligne arrivée juste après la dernière lecture de la
+     * passe précédente, et elle ne doit pas attendre la synchro suivante.
+     */
+    suspend fun schedulePush() {
+        pushAgain.set(true)
+        if (pushMutex.isLocked) return
+        pushMutex.withLock {
+            // Le drapeau a pu être consommé par la passe qu'on vient de côtoyer : la file est
+            // alors vide pour nous, et `pushQueueUnlocked` rend 0 sans réseau.
+            pushAgain.set(false)
+            pushQueueUnlocked()
+            while (pushAgain.getAndSet(false)) pushQueueUnlocked()
+        }
+    }
 
     private suspend fun pushQueueUnlocked(onProgress: ((done: Int) -> Unit)? = null): Int =
         withContext(Dispatchers.IO) {

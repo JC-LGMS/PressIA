@@ -12,10 +12,37 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 /**
- * Identifiants d'articles par appel `markers` : ~7,5 Ko de corps, déjà éprouvé par la file
- * montante (une page de 100 actions = un appel).
+ * Identifiants d'articles par appel `markers` : 500 tient en ~38 Ko de corps et a été
+ * **vérifié en direct** (500 identifiants dans un seul appel, 499 appliqués — un identifiant
+ * ignoré par le serveur, ce qui arrive aussi hors lot). C'était 100 : un « tout marquer lu »
+ * de 3 700 non-lus faisait 38 appels au lieu de 8.
+ *
+ * Un marqueur peut être accepté puis ignoré (HTTP 200, aucun effet) : ne jamais conclure du
+ * code de retour que l'état a changé, et garder la réconciliation comme filet.
  */
-private const val MARKER_CHUNK = 100
+private const val MARKER_CHUNK = 500
+
+/**
+ * Nombre d'entrées par page chez Feedly : **250 est le maximum documenté**, pour
+ * `streams/contents` comme pour `streams/ids`. Au-delà, le serveur rogne en silence — le code
+ * croyait paginer par 500 ou 1 000 et paginera de fait par 250.
+ */
+private const val FEEDLY_PAGE_MAX = 250
+
+/**
+ * Plancher de `newerThan` chez Feedly : la doc interdit une borne plus vieille que 31 jours
+ * (« cannot be older than 31 days ago »). La fenêtre d'historique peut être réglée au-delà
+ * d'un mois ; le filtre fin reste côté client (`withinHistory`), la tête n'a pas besoin
+ * d'être bornée plus loin.
+ */
+const val FEEDLY_MAX_AGE_MS = 31L * 24 * 3600 * 1000
+
+/**
+ * `newerThan` borné à ce que Feedly accepte : jamais plus vieux que 31 jours. Une valeur
+ * nulle ou négative reste nulle (pas de filtre). Pure, testée.
+ */
+fun feedlyNewerThan(newerThanMs: Long?, now: Long): Long? =
+    newerThanMs?.takeIf { it > 0L }?.coerceAtLeast(now - FEEDLY_MAX_AGE_MS)
 
 /**
  * Identifiants par `edit-tag` Inoreader : `i` est répétable, tout un lot de la file (une page
@@ -138,7 +165,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
             ?: return StreamPage(emptyList(), null)
-        val s = api.stream(auth(token), streamId, count = max.coerceIn(1, 500), cont = continuation, newerThan = newerThanMs)
+        // `newerThan` plus vieux que 31 jours est refusé par Feedly : la fenêtre d'historique
+        // peut aller au-delà, mais la tête n'a pas à demander plus loin (le rattrapage filtre
+        // côté client). Une date nulle reste nulle (pas de filtre).
+        val newerThan = feedlyNewerThan(newerThanMs, System.currentTimeMillis())
+        val s = api.stream(auth(token), streamId, count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = continuation, newerThan = newerThan)
         return StreamPage(articles = s.items.map { it.toEntity() }, continuation = s.continuation)
     }
 
@@ -217,7 +248,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
         while (true) {
-            val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500), cont = cont)
+            val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = cont)
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
@@ -228,7 +259,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     }
     /**
      * IDs seuls du tableau (même endpoint léger que les non-lus) : une page au même plafond
-     * que les contenus (500, les plus récents d'abord des deux côtés) — au-delà
+     * que les contenus (250, les plus récents d'abord des deux côtés) — au-delà
      * (continuation), `complete` est faux et on redescend tout, sans sauter.
      */
     override suspend fun readLaterIds(token: String?, max: Int): IdSet? {
@@ -238,7 +269,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             val ids = HashSet<String>()
             var cont: String? = null
             while (true) {
-                val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, 500), cont = cont)
+                val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = cont)
                 if (page.ids.isEmpty()) break
                 ids += page.ids
                 val next = page.continuation
@@ -264,6 +295,32 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     }
 
     /**
+     * Événements de lecture depuis [sinceMs] (`GET /v3/markers/reads`) : le delta que Feedly
+     * expose pour synchroniser l'état lu/non-lu. Un appel remplace l'énumération des non-lus
+     * (14 pages pour un compte à 3 500 non-lus).
+     *
+     * Un échec rend `null` : l'appelant refait une réconciliation complète, comportement
+     * d'avant — jamais de passage en lu massif sur une réponse douteuse. L'annulation, elle,
+     * remonte (une synchro annulée ne doit pas continuer en tâche de fond).
+     */
+    override suspend fun readMarks(token: String?, sinceMs: Long): ReadMarks? =
+        runCatching { api.readMarks(auth(token), sinceMs) }
+            .onFailure { if (it is CancellationException) throw it }
+            .map { m ->
+                ReadMarks(
+                    read = m.entries.toHashSet(),
+                    keptUnread = m.unread.toHashSet(),
+                    feeds = m.feeds
+                        .filter { it.id.isNotBlank() && it.asOf > 0L }
+                        .associate { it.id to it.asOf },
+                    watermark = m.updated
+                )
+            }
+            .getOrNull()
+
+    override val hasReadMarks: Boolean get() = true
+
+    /**
      * Non-lus d'un flux quelconque (global du compte, flux précis…), avec l'exhaustivité de
      * l'énumération : voie légère `streams/ids` d'abord, repli `streams/contents` si elle est
      * refusée.
@@ -287,7 +344,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         var stagnant = 0
         while (ids.size < maxIds) {
             val before = ids.size
-            val page = api.streamIds(auth(token), streamId, count = 1000, unreadOnly = true, cont = cont)
+            val page = api.streamIds(auth(token), streamId, count = FEEDLY_PAGE_MAX, unreadOnly = true, cont = cont)
             if (page.ids.isEmpty()) { complete = true; break }
             ids += page.ids
             // Pages qui n'apportent rien de neuf : on sort au lieu de boucler.
@@ -309,7 +366,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
-            val s = api.stream(auth(token), streamId, count = 500, unreadOnly = true, cont = cont)
+            val s = api.stream(auth(token), streamId, count = FEEDLY_PAGE_MAX, unreadOnly = true, cont = cont)
             if (s.items.isEmpty()) { complete = true; break }
             s.items.filter { it.unread && publishedMs(it.published) >= cutoff }.forEach { ids += it.id }
             val oldest = s.items.minOf { publishedMs(it.published) }
@@ -323,7 +380,13 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
 
     /** Total des non-lus en un appel (`markers/counts`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
-        api.unreadCounts(auth(token)).unreadcounts.sumOf { it.count }
+        // La réponse porte **les flux, les dossiers et `global.all`** : additionner le tout
+        // comptait plusieurs fois les mêmes non-lus (et ne pouvait donc jamais correspondre au
+        // total retenu par la réconciliation). `global.all` est le total ; à défaut, les flux
+        // seuls. Les compteurs d'un flux sont plafonnés à 1 000, le total ne l'est pas.
+        val counts = api.unreadCounts(auth(token)).unreadcounts
+        counts.firstOrNull { it.id.endsWith("/category/global.all") }?.count
+            ?: counts.filter { it.id.startsWith("feed/") }.sumOf { it.count }
     }.getOrNull()
     /** Non-lus par flux (`markers/counts` donne aussi le détail : catégories et flux). */
     override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
