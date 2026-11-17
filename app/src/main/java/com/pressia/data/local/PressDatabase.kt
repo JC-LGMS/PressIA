@@ -265,7 +265,7 @@ interface PressDao {
     @Query("SELECT EXISTS(SELECT 1 FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) AND unread = 1 AND published <= :published)")
     suspend fun hasUnreadOlder(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, published: Long): Boolean
     /** Même requête, réactive : la liste visible se rafraîchit dès que la sync insère des articles. */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlow(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int): Flow<List<ArticleEntity>>
     /**
      * Variante « collante » : les articles passés en lus pendant la session restent listés
@@ -276,7 +276,7 @@ interface PressDao {
      * depuis « Tous les articles » restait « collant » et réapparaissait en tête de Favoris alors
      * qu'il n'est pas étoilé.
      */
-    @Query("SELECT * FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:favScope = '' OR (:favScope = 'starred' AND starred = 1) OR (:favScope = 'later' AND laterSaved = 1 AND laterProvider = 'feedly') OR (:favScope = 'later_ino' AND laterSaved = 1 AND laterProvider = 'inoreader') OR (:favScope = 'later_fr' AND laterSaved = 1 AND laterProvider = 'freshrss') OR (:favScope = 'all' AND (starred = 1 OR laterSaved = 1)))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     fun streamFlowSticky(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, favScope: String, limit: Int, offset: Int, keepIds: List<String>): Flow<List<ArticleEntity>>
     @Query("SELECT COUNT(*) FROM articles WHERE feedId = :feedId")
     suspend fun articleCount(feedId: String): Int
@@ -532,7 +532,7 @@ interface PressDao {
      * **Paginée** (`limit`/`offset`) : l'écran charge 200 résultats puis la tranche suivante au
      * défilement ; un `LIMIT 200` fixe laissait les résultats plus anciens inatteignables.
      */
-    @Query("SELECT * FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun search(
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
         onlyUnread: Int, limit: Int, offset: Int
@@ -751,6 +751,19 @@ const val MAX_ARTICLE_HTML = 300_000
 /** Coupe un HTML d'article au plafond [MAX_ARTICLE_HTML] (null et textes courts inchangés). */
 fun capArticleHtml(html: String?): String? =
     if (html == null || html.length <= MAX_ARTICLE_HTML) html else html.substring(0, MAX_ARTICLE_HTML)
+
+/**
+ * Colonnes d'une **liste** d'articles : toutes, sauf les deux HTML, rendus vides.
+ *
+ * Une liste ne les affiche jamais — l'écran article relit la ligne par son identifiant —, mais
+ * une page de 200 articles les portait, et quelques lignes longues suffisaient à remplir la
+ * fenêtre de curseur d'Android (~2 Mo) : la ligne qui ne tenait plus était illisible et
+ * l'application se fermait en retirant un vieux favori (« Couldn't read row 54, col 0 »). Le
+ * plafond de [MAX_ARTICLE_HTML] borne la taille d'**une** ligne, pas celle d'une page.
+ */
+private const val ARTICLE_LIST_COLUMNS =
+    "id, feedId, title, author, url, '' AS summary, '' AS content, imageUrl, published, " +
+        "unread, starred, laterSaved, fullFetched, imageCached, titleHash, readAt, feedTitle, laterProvider"
 
 @Database(
     entities = [CategoryEntity::class, SubscriptionEntity::class, ArticleEntity::class, SyncActionEntity::class, ReadingEventEntity::class, ExtractEventEntity::class],

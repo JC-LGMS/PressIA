@@ -47,6 +47,32 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.19",
+        listOf(
+            ChangelogItem(
+                "2026-11-18",
+                "Liste sans plantage, et balayages haut/bas qui se voient dans un article",
+                "- Les listes ne lisent plus le texte des articles : seulement les informations " +
+                    "affichées (titre, source, date, image, lu/non-lu, étoile). Une page de 200 " +
+                    "articles portait les deux versions du texte, et la mémoire de lecture " +
+                    "d'Android (environ 2 Mo) débordait : la ligne qui ne tenait plus était " +
+                    "illisible et l'application se fermait. L'écran article relit, lui, le texte " +
+                    "complet par son identifiant, comme avant.\n\n" +
+                    "- Effet de bord bienvenu : la liste s'ouvre plus vite et occupe moins de " +
+                    "mémoire, puisque les textes des articles ne sont plus chargés pour rien.\n\n" +
+                    "- Dans un article, les balayages haut et bas emmènent la page avec le doigt, " +
+                    "comme les balayages horizontaux : on voit que le geste va faire quelque " +
+                    "chose avant de le relâcher. L'icône de ce qui va se déclencher s'affiche " +
+                    "pendant le geste, dans les quatre sens : sombre tant que la course est trop " +
+                    "courte, en couleur d'accentuation dès que le relâchement agira. Le seuil est " +
+                    "de 300 px pour le haut et le bas, 120 px pour la gauche et la droite.\n\n" +
+                    "- Sur du texte sélectionné, un appui à côté du menu le referme ; l'appui " +
+                    "suivant retire la sélection, sans avoir à toucher les poignées.",
+                time = "00:26"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.18",
         listOf(
             ChangelogItem(

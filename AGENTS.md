@@ -356,7 +356,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   un menu plusieurs lignes au-dessus du mot touché. `selectionAnchor` (même fichier) mémorise le
   doigt en passant `Initial`, sans rien consommer. Un voile transparent ferme au
   premier appui ailleurs,
-  et `BackHandler` le ferme aussi. Deux garde-fous dans `ArticleTextToolbar` : un `hide()` moins de
+  et `BackHandler` le ferme aussi. **Deux temps** : l'appui qui ferme le menu arme le retrait
+  (`clearArmed`), et l'appui suivant **sur le texte** retire la sélection — `selectionAnchor` le
+  voit passer (`Initial`) et incrémente `clearEpoch`, qui entoure la zone sélectionnable d'une
+  `key` : recréer la zone est la seule façon de retirer une sélection en Compose 1.7 (aucune API).
+  L'effacement se fait donc à l'appui sur le texte, sans voile bloquant (un voile armé aurait
+  confisqué le défilement). Deux garde-fous dans `ArticleTextToolbar` : un `hide()` moins de
   250 ms après un `showMenu` est ignoré (un champ éditable voisin le déclenche), et la sélection
   fermée par l'utilisateur n'est pas rallumée par Compose (`dismissedRect`, 800 ms).
   **Les pages de texte ont le même menu** : `SelectableArea` (À propos, Journal des modifications)
@@ -633,7 +638,15 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   (défaut : article plus récent) ; ailleurs il fait défiler, et un doigt sur un lecteur lui
   appartient (même exception que l'horizontale). Le détecteur est posé **après** `verticalScroll`
   dans la chaîne de modificateurs : dans le passage montant, il voit l'évènement avant le
-  défilement et peut lui prendre la course au bord. Sans voisin dans ce sens, un message le dit et
+  défilement et peut lui prendre la course au bord. Le contenu **suit le doigt** pendant le geste
+  (`offsetY` → `graphicsLayer`, comme `offsetX` pour l'horizontale), et seulement quand le
+  relâchement fera quelque chose (voisin dans ce sens, ou action configurée) : on voit le geste
+  aboutir avant de lâcher. Le seuil est `SWIPE_Y_PX` (300 px, dans les deux sens) contre
+  `SWIPE_PX` (120 px) pour l'horizontale. L'**icône** de ce qui va se déclencher s'affiche
+  pendant le geste, dans les quatre sens — flèche du sens quand c'est la navigation, icône de
+  l'action sinon (`gestureActionIcon`) —, en `onSurface` (noir en thème clair) tant que la course
+  n'atteint pas le seuil, en `primary` dès que le relâchement agira (`swipeTint`). Sans voisin
+  dans ce sens, un message le dit et
   l'on **revient à la liste**, comme pour le balayage horizontal. Comme les balayages
   gauche/droite, chaque sens interdit la navigation inverse de l'autre (« newer » n'est pas
   proposé en haut, « older » pas en bas).
@@ -1070,6 +1083,15 @@ articles et favoris du compte compris).
   illisible — constaté en release sur la liste des articles, « Couldn't read row 54, col 0 from
   CursorWindow », l'application se fermait. `MIGRATION_7_8` coupe une fois les corps déjà en base
   (et remet `fullFetched = 0`, l'article sera ré-extrait à l'ouverture).
+  - **Le plafond d'une ligne ne borne pas une page** : 200 articles à 300 000 caractères
+    remplissent la fenêtre, et la ligne qui ne tient plus était illisible — `Couldn't read row
+    54, col 0` sur téléphone, `Row too big to fit into CursorWindow` avec une seule ligne de 3 Mo
+    (reproduit en l'écrivant en base). Les requêtes de **liste** (`streamFlow`,
+    `streamFlowSticky`, `search`) ne lisent donc plus les deux HTML : elles projettent
+    `ARTICLE_LIST_COLUMNS` (`'' AS summary, '' AS content`, `PressDatabase.kt`). Une liste ne les
+    affichait jamais — l'écran article relit sa ligne par identifiant (`repo.article(id)`), y
+    compris pour `ensureFull`, qui prend un `id`. Ne pas revenir à `SELECT *` sur ces requêtes :
+    c'est un plantage à la première page lourde.
 - **« Durée d'historique hors favoris » est une borne de rétention**, pas seulement la fenêtre
   remontée à la synchronisation : `pruneArticles()` (fin de `syncDown`, ancien `trimToMax`)
   supprime à chaque passe les articles plus vieux que la fenêtre, selon la règle pure

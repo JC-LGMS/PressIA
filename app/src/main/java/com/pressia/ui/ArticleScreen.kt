@@ -177,6 +177,11 @@ fun ArticleScreen(
     // Course verticale du balayage haut/bas, comptée seulement quand l'article est déjà au bord
     // (bas pour un geste vers le haut, haut pour un geste vers le bas).
     var dragY by remember(articleId) { mutableFloatStateOf(0f) }
+    // Déplacement visible du contenu pendant ce balayage, comme l'horizontale ([offsetX]) : le
+    // doigt emmène la page avec lui et l'on voit ce qui va se passer.
+    var offsetY by remember(articleId) { mutableFloatStateOf(0f) }
+    // Balayage vertical en cours (l'horizontale a déjà `dragging`) : l'icône du geste s'affiche.
+    var swipingY by remember(articleId) { mutableStateOf(false) }
     // Le défilement repart du haut à chaque article : sans clé, le voisin ouvert par balayage
     // s'affichait à la position de l'article quitté.
     val scrollState = remember(articleId) { ScrollState(0) }
@@ -393,6 +398,8 @@ fun ArticleScreen(
         // sens, comme l'absence de voisin avant.
         val leftNav = swipeLeft == "older"
         val rightNav = swipeRight == "newer"
+        val upNav = swipeUp == "older"
+        val downNav = swipeDown == "newer"
         Box(
             Modifier.padding(pad).fillMaxSize()
                 .pointerInput(prevId, nextId, swipeLeft, swipeRight) {
@@ -416,14 +423,14 @@ fun ArticleScreen(
                         onEnd = {
                             dragging = false
                             when {
-                                dragX <= -120f && leftNav && nextId != null -> onShowArticle(nextId)
-                                dragX >= 120f && rightNav && prevId != null -> onShowArticle(prevId)
+                                dragX <= -SWIPE_PX && leftNav && nextId != null -> onShowArticle(nextId)
+                                dragX >= SWIPE_PX && rightNav && prevId != null -> onShowArticle(prevId)
                                 // Sens « navigation » sans voisin : on revient à la liste (retour)
                                 // et on garde le toast informatif.
-                                dragX <= -120f && leftNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
-                                dragX >= 120f && rightNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
-                                dragX <= -120f && !leftNav && swipeLeft != "none" -> fireArticleAction(swipeLeft)
-                                dragX >= 120f && !rightNav && swipeRight != "none" -> fireArticleAction(swipeRight)
+                                dragX <= -SWIPE_PX && leftNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
+                                dragX >= SWIPE_PX && rightNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
+                                dragX <= -SWIPE_PX && !leftNav && swipeLeft != "none" -> fireArticleAction(swipeLeft)
+                                dragX >= SWIPE_PX && !rightNav && swipeRight != "none" -> fireArticleAction(swipeRight)
                             }
                             offsetX = 0f
                             dragX = 0f
@@ -435,7 +442,9 @@ fun ArticleScreen(
         ) {
         // Texte sélectionnable (appui long, puis poignées ou « Tout sélectionner ») : la
         // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
-        // défilement comme les badges de balayage restent en dehors.
+        // défilement comme les badges de balayage restent en dehors. `clearEpoch` ne change
+        // qu'au deuxième appui à côté du menu de sélection.
+        key(textToolbar.clearEpoch) {
         CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
         SelectionContainer(selectionAnchor(textToolbar)) {
         Column(
@@ -449,31 +458,39 @@ fun ArticleScreen(
                 // défiler (bas atteint vers le haut, haut atteint vers le bas) ; partout ailleurs
                 // le défilement reste maître.
                 .pointerInput(prevId, nextId, swipeUp, swipeDown) {
-                    val upNav = swipeUp == "older"
-                    val downNav = swipeDown == "newer"
                     detectArticleVerticalSwipe(
                         onPlayer = { inPlayer.value },
                         atTop = { scrollState.value <= 0 },
                         atBottom = { scrollState.value >= scrollState.maxValue },
-                        onStart = { dragY = 0f },
-                        onDrag = { dy -> dragY = (dragY + dy).coerceIn(-600f, 600f) },
+                        onStart = { dragY = 0f; offsetY = 0f; swipingY = true },
+                        onDrag = { dy ->
+                            dragY = (dragY + dy).coerceIn(-600f, 600f)
+                            // Le contenu suit le doigt quand le geste aboutit à quelque chose
+                            // (voisin dans ce sens, ou action configurée) — même règle que
+                            // l'horizontale.
+                            val go = if (dy < 0) (!upNav && swipeUp != "none") || (upNav && nextId != null)
+                            else (!downNav && swipeDown != "none") || (downNav && prevId != null)
+                            offsetY = if (go) dragY else 0f
+                        },
                         onEnd = {
                             when {
-                                dragY <= -120f && upNav && nextId != null -> onShowArticle(nextId)
-                                dragY >= 120f && downNav && prevId != null -> onShowArticle(prevId)
+                                dragY <= -SWIPE_Y_PX && upNav && nextId != null -> onShowArticle(nextId)
+                                dragY >= SWIPE_Y_PX && downNav && prevId != null -> onShowArticle(prevId)
                                 // Sens « navigation » sans voisin : on revient à la liste (comme
                                 // le balayage horizontal), le message disant pourquoi.
-                                dragY <= -120f && upNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
-                                dragY >= 120f && downNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
-                                dragY <= -120f && !upNav && swipeUp != "none" -> fireArticleAction(swipeUp)
-                                dragY >= 120f && !downNav && swipeDown != "none" -> fireArticleAction(swipeDown)
+                                dragY <= -SWIPE_Y_PX && upNav -> { toast(ctx, "Pas d'article plus ancien"); onBack() }
+                                dragY >= SWIPE_Y_PX && downNav -> { toast(ctx, "Pas d'article plus récent"); onBack() }
+                                dragY <= -SWIPE_Y_PX && !upNav && swipeUp != "none" -> fireArticleAction(swipeUp)
+                                dragY >= SWIPE_Y_PX && !downNav && swipeDown != "none" -> fireArticleAction(swipeDown)
                             }
                             dragY = 0f
+                            offsetY = 0f
+                            swipingY = false
                         },
-                        onCancel = { dragY = 0f }
+                        onCancel = { dragY = 0f; offsetY = 0f; swipingY = false }
                     )
                 }
-                .graphicsLayer { translationX = offsetX }
+                .graphicsLayer { translationX = offsetX; translationY = offsetY }
                 .pointerInput(doubleTap) {
                     detectTapGestures(onDoubleTap = { fireArticleAction(doubleTap) })
                 }
@@ -615,6 +632,7 @@ fun ArticleScreen(
         }
         }  // fin de SelectionContainer
         }
+        }  // fin de la `key` (retrait de la sélection)
         // Barre de défilement : au bord droit, dans la marge de 16 dp que le texte laisse libre.
         // Elle vit hors de la colonne défilante pour deux raisons — ne pas partir avec le
         // contenu quand le balayage horizontal translate la page, et ne pas suivre le
@@ -634,7 +652,8 @@ fun ArticleScreen(
         // visé), sinon l'icône de l'action réglée dans ce sens — mêmes visuels que la bande
         // de balayage des listes. Rien n'est annoncé si le sens ne fait rien (voisin absent
         // ou « Aucun ») : un chevron « article suivant » alors que le relâchement déclenche
-        // une action serait trompeur.
+        // une action serait trompeur. Elle s'assombrit tant que la course n'atteint pas le
+        // seuil, puis prend la couleur d'accentuation : on voit quand lâcher.
         if (dragging) {
             val starred = article?.let { vm.starState(it) } == true
             val unread = article?.unread == true
@@ -643,23 +662,55 @@ fun ArticleScreen(
                 leftNav -> if (nextId != null) Icons.Filled.ChevronRight to "article suivant" else null
                 else -> gestureActionIcon(swipeLeft, starred, unread)
             }
+            leftBadge?.let { (icon, desc) ->
+                Icon(
+                    icon, desc,
+                    Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(40.dp),
+                    tint = swipeTint(-dragX >= SWIPE_PX)
+                )
+            }
             val rightBadge: Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when {
                 offsetX < 40f -> null
                 rightNav -> if (prevId != null) Icons.Filled.ChevronLeft to "article précédent" else null
                 else -> gestureActionIcon(swipeRight, starred, unread)
             }
-            leftBadge?.let { (icon, desc) ->
-                Icon(
-                    icon, desc,
-                    Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(40.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
             rightBadge?.let { (icon, desc) ->
                 Icon(
                     icon, desc,
                     Modifier.align(Alignment.CenterStart).padding(start = 8.dp).size(40.dp),
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = swipeTint(dragX >= SWIPE_PX)
+                )
+            }
+        }
+        // Même chose pour le balayage haut/bas, dans l'espace libéré : en bas quand la page monte
+        // (vers le plus ancien), en haut quand elle descend (vers le plus récent).
+        if (swipingY) {
+            val starred = article?.let { vm.starState(it) } == true
+            val unread = article?.unread == true
+            val upBadge: Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when {
+                offsetY > -40f -> null
+                // Flèche comme l'horizontale : elle pointe d'où arrive la page suivante, pas le
+                // sens du doigt (vers le haut on va au plus ancien, le chevron descend).
+                upNav -> if (nextId != null) Icons.Filled.KeyboardArrowDown to "article suivant" else null
+                else -> gestureActionIcon(swipeUp, starred, unread)
+            }
+            upBadge?.let { (icon, desc) ->
+                Icon(
+                    icon, desc,
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp).size(40.dp),
+                    tint = swipeTint(-dragY >= SWIPE_Y_PX)
+                )
+            }
+            val downBadge: Pair<androidx.compose.ui.graphics.vector.ImageVector, String>? = when {
+                offsetY < 40f -> null
+                downNav -> if (prevId != null) Icons.Filled.KeyboardArrowUp to "article précédent" else null
+                else -> gestureActionIcon(swipeDown, starred, unread)
+            }
+            downBadge?.let { (icon, desc) ->
+                Icon(
+                    icon, desc,
+                    Modifier.align(Alignment.TopCenter).padding(top = 16.dp).size(40.dp),
+                    tint = swipeTint(dragY >= SWIPE_Y_PX)
                 )
             }
         }
@@ -669,6 +720,24 @@ fun ArticleScreen(
     }
     viewerUrl?.let { ImageViewer(it) { viewerUrl = null } }
 }
+
+/** Course minimale d'un balayage horizontal (px) : au-delà, le relâchement agit. */
+private const val SWIPE_PX = 120f
+
+/**
+ * Idem pour le balayage vertical, plus long : il ne part que du bord de l'article, on le veut
+ * délibéré (300 px dans les deux sens).
+ */
+private const val SWIPE_Y_PX = 300f
+
+/**
+ * Couleur de l'icône du geste : sombre tant que la course n'atteint pas le seuil — le
+ * relâchement ne fera rien —, couleur d'accentuation dès qu'il agira. `onSurface` plutôt qu'un
+ * noir franc : en thème sombre, un noir sur fond sombre disparaîtrait.
+ */
+@Composable
+private fun swipeTint(armed: Boolean): Color =
+    if (armed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
 
 /**
  * Icône et libellé d'une action de geste d'article non navigante, pendant le balayage :
@@ -681,6 +750,7 @@ private fun gestureActionIcon(act: String, starred: Boolean, unread: Boolean): P
         (if (unread) "marquer lu" else "marquer non lu")
     "share" -> Icons.Filled.Share to "partager"
     "instapaper" -> Icons.Filled.BookmarkAdd to "envoyer vers Instapaper"
+    "search" -> Icons.Filled.Search to "rechercher"
     "star" -> (if (starred) Icons.Filled.Star else Icons.Filled.StarBorder) to
         (if (starred) "Retirer des favoris" else "Ajouter aux favoris")
     else -> null
@@ -712,6 +782,22 @@ internal class ArticleTextToolbar : TextToolbar {
      *  ne pas la rouvrir. Passé ce délai, une nouvelle sélection au même endroit reste possible. */
     private var dismissedRect: Rect? = null
     private var dismissedAt = 0L
+    /**
+     * Un appui à côté du menu vient de le fermer : l'appui suivant retire la sélection (deux
+     * temps, comme demandé — le premier ferme, le second efface).
+     */
+    var clearArmed by mutableStateOf(false)
+    /**
+     * Incrémenté à chaque retrait demandé. La zone sélectionnable est alors recréée (`key`) :
+     * Compose 1.7 n'offre aucune API pour retirer une sélection.
+     */
+    var clearEpoch by mutableStateOf(0)
+        private set
+
+    fun clearSelection() {
+        clearArmed = false
+        clearEpoch++
+    }
 
     class Menu(
         val rect: Rect,
@@ -775,12 +861,16 @@ internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.
             area = it.size
         }
     ) {
-        // Voile transparent : tout appui hors du menu le referme.
+        // Voile transparent : tout appui hors du menu le referme, et arme le retrait de la
+        // sélection — l'appui suivant l'efface (voir `clearArmed`).
         Box(
             Modifier.matchParentSize().clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null
-            ) { toolbar.hide() }
+            ) {
+                toolbar.hide()
+                toolbar.clearArmed = true
+            }
         )
         val x = (menu.rect.left - origin.x).roundToInt()
             .coerceIn(0, (area.width - menuW.toInt()).coerceAtLeast(0))
@@ -848,10 +938,13 @@ fun SelectableArea(content: @Composable () -> Unit) {
     val toolbar = remember { ArticleTextToolbar() }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     Box(Modifier.fillMaxSize()) {
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalTextToolbar provides toolbar
-        ) {
-            SelectionContainer(selectionAnchor(toolbar)) { content() }
+        // Même deux temps que l'écran article : deuxième appui à côté du menu = sélection retirée.
+        key(toolbar.clearEpoch) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalTextToolbar provides toolbar
+            ) {
+                SelectionContainer(selectionAnchor(toolbar)) { content() }
+            }
         }
         SelectionActions(toolbar, ctx)
     }
@@ -859,7 +952,10 @@ fun SelectableArea(content: @Composable () -> Unit) {
 
 /** Mémorise le doigt qui touche le texte, pour poser le menu juste à côté (voir
  *  [ArticleTextToolbar.anchor]). Simple observateur (`Initial`, rien n'est consommé) : la
- *  sélection de Compose, elle, reçoit l'évènement intact. */
+ *  sélection de Compose, elle, reçoit l'évènement intact.
+ *
+ *  C'est aussi ici que se fait le **deuxième temps** de l'appui à côté : le menu ayant été
+ *  fermé par le voile, l'appui suivant sur le texte retire la sélection ([clearArmed]). */
 @Composable
 private fun selectionAnchor(toolbar: ArticleTextToolbar): Modifier {
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -871,6 +967,7 @@ private fun selectionAnchor(toolbar: ArticleTextToolbar): Modifier {
                     val e = awaitPointerEvent(PointerEventPass.Initial)
                     if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press) {
                         toolbar.anchor = e.changes.first().position + origin
+                        if (toolbar.clearArmed) toolbar.clearSelection()
                     }
                 }
             }
