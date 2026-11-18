@@ -113,6 +113,8 @@ fun ArticleScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Cycle de vie de l'écran : le chronomètre de lecture s'arrête avec l'application.
+    val lifecycleOwner = LocalLifecycleOwner.current
     var article by remember { mutableStateOf<ArticleEntity?>(null) }
     var feedName by remember { mutableStateOf<String?>(null) }
     var feedSub by remember { mutableStateOf<com.pressia.data.local.SubscriptionEntity?>(null) }
@@ -256,11 +258,29 @@ fun ArticleScreen(
     DisposableEffect(articleId) {
         // Chronomètre par article : il repart à chaque balayage vers un autre article.
         // (Un `remember` non clé gardait l'heure du premier article et cumulait les durées.)
-        val start = System.currentTimeMillis()
+        // Il ne compte que l'application au premier plan : ouvrir Chrome (onglet intégré
+        // compris), éteindre l'écran ou passer à une autre application l'arrête et enregistre
+        // le temps déjà lu ; le retour le reprend, sous la même ouverture — un aller-retour
+        // reste **une** lecture, sinon il en compterait deux.
+        val clock = ReadingTimer()
+        val openedAt = System.currentTimeMillis()
+        clock.resume(openedAt)
+        fun save() {
+            val secs = clock.pause(System.currentTimeMillis()) ?: return
+            val cur = article ?: return
+            vm.logReading(cur.id, cur.feedId, openedAt, secs)
+        }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> save()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> clock.resume(System.currentTimeMillis())
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
-            val secs = ((System.currentTimeMillis() - start) / 1000).toInt()
-            val cur = article
-            if (cur != null) vm.logReading(cur.id, cur.feedId, secs)
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            save()
         }
     }
 
@@ -1948,6 +1968,29 @@ fun openUrl(ctx: android.content.Context, url: String) {
         val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
         ctx.startActivity(i)
     } catch (_: Exception) {}
+}
+
+/**
+ * Chronomètre de lecture d'un article : des segments mis bout à bout, un seul total.
+ *
+ * [resume] ouvre un segment (sans effet si le chronomètre tourne déjà), [pause] le referme et rend
+ * le total en secondes — `null` si rien ne tournait, pour qu'un second appel n'écrive rien. Le
+ * total ne redescend jamais : arrêter l'application puis revenir repart de ce qui était déjà lu.
+ */
+class ReadingTimer {
+    private var sinceMs: Long? = null
+    private var totalMs = 0L
+
+    fun resume(nowMs: Long) {
+        if (sinceMs == null) sinceMs = nowMs
+    }
+
+    fun pause(nowMs: Long): Int? {
+        val started = sinceMs ?: return null
+        totalMs += (nowMs - started).coerceAtLeast(0L)
+        sinceMs = null
+        return (totalMs / 1000).toInt()
+    }
 }
 
 /**

@@ -1139,9 +1139,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
     /** Étoile affichée : étoile locale, ou « Read later » du compte. */
     fun starState(a: ArticleEntity): Boolean = a.starred || (isSavedInAccount(a) && a.laterSaved)
-    /** Journalise une lecture (viewModelScope : survit à la fermeture de l'écran article). */
-    fun logReading(articleId: String, feedId: String, durationSec: Int) = viewModelScope.launch {
-        repo.logReading(articleId, feedId, durationSec)
+    /**
+     * Journalise une lecture (viewModelScope : survit à la fermeture de l'écran article).
+     * [openedAt] est l'heure d'arrivée sur l'article : elle identifie la visite, dont la durée
+     * s'allonge à chaque retour au premier plan.
+     */
+    fun logReading(articleId: String, feedId: String, openedAt: Long, durationSec: Int) = viewModelScope.launch {
+        repo.logReading(articleId, feedId, openedAt, durationSec)
     }
     fun markAllRead() = viewModelScope.launch {
         val folder = scope.categoryId

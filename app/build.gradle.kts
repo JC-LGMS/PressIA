@@ -226,6 +226,9 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
+    // WorkManager : synchronisation en arrière-plan (réglage « toutes les X heures »)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     // Réseau
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0")

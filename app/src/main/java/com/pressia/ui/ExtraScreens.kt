@@ -465,6 +465,14 @@ fun StatsScreen(vm: PressVM) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // Compté au premier plan seulement : le temps passé dans Chrome ou l'écran
+                // éteint ne gonfle pas le total (voir ReadingTimer).
+                Text(
+                    "Seul le temps passé sur l'article, application au premier plan, est compté : " +
+                        "ouvrir l'article dans Chrome met le chronomètre en pause.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -768,6 +776,7 @@ fun SettingsScreen(vm: PressVM) {
     var drawerScale by remember { mutableStateOf(100) }
     var homeScale by remember { mutableStateOf(100) }
     var syncOnLaunch by remember { mutableStateOf(true) }
+    var backgroundSyncHours by remember { mutableStateOf(0) }
     var feedlyKeepUnread by remember { mutableStateOf(true) }
     var showAccentPicker by remember { mutableStateOf(false) }
     var showBgPicker by remember { mutableStateOf(false) }
@@ -809,6 +818,7 @@ fun SettingsScreen(vm: PressVM) {
         artSwipeDown = get(Prefs.ARTICLE_SWIPE_DOWN, Prefs.ARTICLE_SWIPE_DOWN_DEFAULT)
         drawerScale = get(Prefs.DRAWER_TEXT_SCALE, 100); homeScale = get(Prefs.HOME_TEXT_SCALE, 100)
         syncOnLaunch = get(Prefs.SYNC_ON_LAUNCH, true)
+        backgroundSyncHours = get(Prefs.BACKGROUND_SYNC_HOURS, 0)
         feedlyKeepUnread = get(Prefs.FEEDLY_KEEP_UNREAD, true)
         refreshCacheInfo()
     }
@@ -861,6 +871,9 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
         vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
         vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
+        vm.repo.prefs.set(Prefs.BACKGROUND_SYNC_HOURS, backgroundSyncHours)
+        // La planification suit le réglage tout de suite, sans attendre le prochain démarrage.
+        com.pressia.data.sync.BackgroundSyncWorker.schedule(ctx, backgroundSyncHours, wifiOnly)
         vm.repo.prefs.set(Prefs.FEEDLY_KEEP_UNREAD, feedlyKeepUnread)
         vm.refresh()
     }
@@ -1220,8 +1233,8 @@ fun SettingsScreen(vm: PressVM) {
         // dans son encadré — la phrase était au milieu des interrupteurs, sans lien avec eux.
         Text(
             "Un seul réglage de volume : le nombre d'articles conservés. La fréquence règle la " +
-                "fenêtre pendant laquelle le lancement ne resynchronise pas (pas de synchronisation " +
-                "quand l'application est fermée).",
+                "fenêtre pendant laquelle le lancement ne resynchronise pas ; la synchronisation " +
+                "en arrière-plan, elle, tourne application fermée.",
             style = MaterialTheme.typography.bodySmall
         )
         SettingBox {
@@ -1236,6 +1249,25 @@ fun SettingsScreen(vm: PressVM) {
                     "synchronisation » ci-dessous (10 minutes par défaut) : les données sont déjà là. " +
                     "Option coupée : rien n'est récupéré au démarrage. " +
                     "Le bouton d'actualisation, lui, marche toujours.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        SettingBox {
+            Text(
+                if (backgroundSyncHours <= 0) "Synchronisation en arrière-plan : désactivée"
+                else "Synchronisation en arrière-plan : toutes les $backgroundSyncHours h"
+            )
+            // 0 = coupée, 1..24 heures entières (23 crans intermédiaires).
+            Slider(
+                backgroundSyncHours.toFloat(),
+                { backgroundSyncHours = it.toInt(); save() },
+                valueRange = 0f..24f,
+                steps = 23
+            )
+            Text(
+                "Application fermée, Android la lance mais décide du moment exact (veille, économie de " +
+                    "batterie) : compter un délai, ce n'est pas une horloge.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

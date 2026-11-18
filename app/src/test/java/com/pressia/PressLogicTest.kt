@@ -1360,6 +1360,9 @@ class PressLogicTest {
         // les statistiques effacées réapparaîtraient avec les traces restaurées.
         assertTrue("stats_since doit figurer dans ENTRIES", "stats_since" in names)
         assertTrue(Prefs.ENTRIES.any { it is PrefEntry.LongPref && it.name == "stats_since" })
+        // Réglage exporté : l'intervalle de la synchro de fond doit survivre à une restauration
+        // (le travail planifié, lui, est replanifié au démarrage).
+        assertTrue("background_sync_hours doit figurer dans ENTRIES", "background_sync_hours" in names)
     }
 
     @Test fun `borne basse des stats apres remise a zero`() {
@@ -2125,6 +2128,20 @@ class PressLogicTest {
         assertEquals(listOf("x", "y"), keptIds(setOf("x", "y"), listOf("x")).toList())
         assertEquals(setOf("x"), keptIds(setOf("x"), emptyList()))
         assertEquals(listOf("y"), keptIds(setOf("x", "y"), emptyList(), max = 1).toList())
+    }
+
+    @Test fun `chronometre de lecture, arret et reprise cumules`() {
+        // Le chrono s'arrête quand l'application passe en arrière-plan (Chrome, écran éteint) et
+        // reprend au retour : le total s'additionne, une seule lecture par visite.
+        val t = com.pressia.ui.ReadingTimer()
+        t.resume(1_000)
+        assertEquals(10, t.pause(11_000))
+        // Rien ne tourne : un second arrêt n'écrit rien (évite une écriture pour rien).
+        assertNull(t.pause(20_000))
+        t.resume(20_000)
+        assertEquals(25, t.pause(35_000))
+        // Après une pause, le temps qui passe ne s'ajoute pas tout seul.
+        assertNull(t.pause(90_000))
     }
 
     @Test fun `lecture plus tard du compte, feedly et inoreader seulement`() {

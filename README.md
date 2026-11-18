@@ -31,10 +31,15 @@ images conservés sur l'appareil.
   la page.
 - **Recherche locale** (titre, auteur, ou texte), **doublons** (titre normalisé,
   groupés, « tout sauf le plus récent »), **statistiques de lecture**
-  (ouvertures, temps par flux, activité par jour, passés en lu sans ouvrir).
+  (ouvertures, temps par flux, activité par jour, passés en lu sans ouvrir — le
+  temps ne compte que l'application au premier plan).
 - **Hors-ligne** : file montante des lus/étoiles poussée au retour du réseau,
   images et miniatures téléchargées sous plafond, réglages « Wi-Fi uniquement »,
   quota par flux et durée d'historique.
+- **Synchro en arrière-plan** (option, coupée par défaut) : une passe toutes les
+  X heures (1 à 24), application fermée — mêmes articles, images et « Read
+  later » que le bouton, sans rien afficher. Android décide du moment exact ;
+  « Wi-Fi uniquement » devient une contrainte, la passe attend alors le réseau.
 - **Sauvegarde** : export/import JSON par sections (réglages, stats, comptes,
   favoris et lus, jetons seulement si demandés), OPML pour les flux locaux, et
   copie automatique silencieuse pour la sauvegarde Google du téléphone.
@@ -50,6 +55,7 @@ images conservés sur l'appareil.
 - `data` : `PressRepository` (synchro descendante et montante, images, rétention),
   registre des comptes (`Accounts.kt`), sauvegarde (`Backup.kt`, `AutoBackup.kt`,
   `Opml.kt`), lectures plafonnées (`Bytes.kt`).
+- `data/sync` : passe de fond périodique (`BackgroundSync.kt`, WorkManager).
 - `data/readability` : extraction du corps d'article (Jsoup).
 - `di/Locator.kt` : instanciation partagée du dépôt.
 - `ui` : Compose Material3 autour de `PressVM` (liste, article, abonnements,
@@ -80,7 +86,7 @@ de passe. Un serveur en HTTP simple se saisit avec `http://`.
 ```
 
 Min SDK 26, target/compile 34. Kotlin 2.0, Compose 1.7.8 (BOM 2025.03.01),
-Material3 1.3.2, Room 2.6.1, DataStore 1.1, Coil 2.6 (SVG compris),
+Material3 1.3.2, Room 2.6.1, DataStore 1.1, Coil 2.6 (SVG compris), WorkManager 2.9,
 Retrofit 2.11 / OkHttp 4.12 / kotlinx-serialization 1.7, Jsoup 1.17.
 
 ## Version et journal

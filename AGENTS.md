@@ -921,8 +921,21 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     `global.all`) : le repli comptait plusieurs fois les mêmes non-lus. Il prend `global.all`, à
     défaut la somme des `feed/…` ; noter que le compteur d'un flux est plafonné à 1 000
     (`capped`), donc la somme des flux sous-estime un compte très chargé.
-- **Pas de planificateur de synchro** (le Worker a été supprimé : elle ne tourne qu'app ouverte) :
-  `MainActivity` appelle `vm.syncOnLaunch()` à **chaque `ON_RESUME`**, pas seulement à la création
+- **Un planificateur optionnel, en plus de l'application ouverte** ([`data/sync/BackgroundSync.kt`]) :
+  `BackgroundSyncWorker` (WorkManager) passe le même `syncPipeline()` toutes les X heures quand
+  « Synchronisation en arrière-plan » est réglée (1..24 h ; 0 par défaut = aucune passe
+  application fermée, la clé `background_sync_hours` étant exportée avec les autres réglages).
+  Le travail est replanifié au démarrage (`PressIAApp`) et à chaque `save()` de l'écran Réglages,
+  en `ExistingPeriodicWorkPolicy.UPDATE` ; « Wi-Fi uniquement » y devient une contrainte
+  (`UNMETERED` au lieu de `CONNECTED`), si bien qu'une passe hors Wi-Fi attend le réseau au lieu
+  d'échouer. La fraîcheur est revérifiée dans le worker (`isSyncFresh` avec `hours * 60`) avant
+  toute chose : l'application ouverte a souvent déjà fait le travail, et le verrou partagé est
+  pris **sans attendre** (`tryWithSyncLock`) pour ne pas doubler une synchro manuelle. Rien ne
+  s'affiche : ni bandeau ni message, personne n'étant à l'écran. WorkManager déclenche une
+  première passe à la planification, puis aux échéances suivantes ; Android décide du moment
+  exact (veille, économie de batterie). Ne pas remplacer ce worker par un service ou un
+  `AlarmManager` : WorkManager survit au redémarrage et joint les contraintes réseau.
+- **Le premier plan** : `MainActivity` appelle `vm.syncOnLaunch()` à **chaque `ON_RESUME`**, pas seulement à la création
   de l'activité. Un déclenchement au seul `onCreate` laissait une application rouverte après des
   heures d'arrière-plan (processus vivant) sans aucune synchro, « Dernière synchro » figé à la
   veille malgré un réglage à dix minutes. C'est `syncOnLaunch` qui arbitre : option, sources et
@@ -1185,6 +1198,16 @@ articles et favoris du compte compris).
   `resetStats`) et pose `Prefs.STATS_SINCE`, borne basse appliquée par `statsLowerBound` : elle est
   indispensable au compteur « passés en lu sans ouvrir », déduit de `articles.readAt` (un état
   d'article que la remise à zéro ne touche pas).
+- **Le temps de lecture ne compte que l'application au premier plan** (`ReadingTimer`,
+  `ArticleScreen.kt` ; écrit par `logReading`). Le chronomètre s'arrête sur `ON_STOP` — ouvrir
+  Chrome (onglet intégré, partage, lien), éteindre l'écran, passer à une autre application — et
+  **reprend** sur `ON_RESUME` ; sans cela le temps d'un article lu avec des allers-retours dans le
+  navigateur était compté en entier, y compris les nuits d'écran éteint. Chaque arrêt écrit le
+  total de la visite sous la **même ouverture** (`openedAt`, l'heure d'arrivée sur l'article ;
+  `dao.updateReading` puis insertion si la ligne n'existe pas) : un aller-retour reste **une**
+  lecture, sinon le nombre d'ouvertures des stats doublerait. Le corollaire est voulu : un article
+  rouvert plus tard est une nouvelle visite, donc une seconde lecture. Vérifié à l'écran (15 s
+  d'arrière-plan exclues, 15 s en Chrome exclues, une seule ligne mise à jour).
 - Suppression de masse (compte, flux, remise à zéro des stats) ⇒ `vacuum()` : `VACUUM` puis
   `PRAGMA wal_checkpoint(TRUNCATE)`. Sans le second, le `VACUUM` réécrit la base dans le WAL, le
   fichier principal garde sa taille, le WAL gonfle et « Cache utilisé » **monte** après une

@@ -590,6 +590,13 @@ interface PressDao {
     // --- Stats ---
     @Insert
     suspend fun logReading(e: ReadingEventEntity)
+    /**
+     * Met à jour la durée d'une lecture déjà écrite (même article, même ouverture) : le
+     * chronomètre s'arrête quand l'application passe en arrière-plan et reprend au retour.
+     * Rend 0 quand la ligne n'existe pas encore (premier enregistrement de la visite).
+     */
+    @Query("UPDATE reading_events SET durationSec = :secs, completed = :completed WHERE articleId = :articleId AND openedAt = :openedAt")
+    suspend fun updateReading(articleId: String, openedAt: Long, secs: Int, completed: Boolean): Int
     /** Bornes des lectures enregistrées : [0] = plus ancien, [1] = plus récent. */
     @Query("SELECT IFNULL(MIN(openedAt), 0) FROM reading_events")
     suspend fun firstReadingAt(): Long

@@ -1469,8 +1469,27 @@ class PressRepository(
     suspend fun feedsMarkableIds(feedIds: List<String>): List<String> = withContext(Dispatchers.IO) {
         dao.feedsMarkableIds(feedIds)
     }
-    suspend fun logReading(articleId: String, feedId: String, durationSec: Int) {
-        dao.logReading(ReadingEventEntity(articleId = articleId, feedId = feedId, durationSec = durationSec, completed = durationSec > 15))
+    /**
+     * Enregistre une lecture, ou complète celle en cours.
+     *
+     * Le chronomètre de l'écran article s'arrête quand l'application passe en arrière-plan
+     * (Chrome, écran éteint) et reprend au retour : chaque arrêt écrit le total de la visite sous
+     * la même ouverture ([openedAt], l'heure d'arrivée sur l'article), sinon un aller-retour
+     * compterait deux lectures pour un seul article. Seul le temps au premier plan est compté.
+     */
+    suspend fun logReading(articleId: String, feedId: String, openedAt: Long, durationSec: Int) {
+        val done = dao.updateReading(articleId, openedAt, durationSec, durationSec > 15)
+        if (done == 0) {
+            dao.logReading(
+                ReadingEventEntity(
+                    articleId = articleId,
+                    feedId = feedId,
+                    openedAt = openedAt,
+                    durationSec = durationSec,
+                    completed = durationSec > 15
+                )
+            )
+        }
     }
 
     // ----- Article complet (double-tap) -----

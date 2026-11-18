@@ -47,6 +47,28 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.20",
+        listOf(
+            ChangelogItem(
+                "2026-11-18",
+                "Synchronisation en arrière-plan, sans ouvrir l'application",
+                "- Réglages → « Synchronisation en arrière-plan » : un curseur de 0 (désactivée, " +
+                    "par défaut) à 24 heures, pour une passe automatique application fermée — " +
+                    "mêmes articles, images et « Read later » que le bouton, sans rien à l'écran. " +
+                    "Android décide du moment exact, et la passe saute si une synchronisation " +
+                    "s'est bien finie il y a moins de l'intervalle choisi.\n\n" +
+                    "- « Wi-Fi uniquement » s'applique aussi à ces passes : hors Wi-Fi, elles " +
+                    "attendent le réseau.\n\n" +
+                    "- Le temps de lecture des statistiques ne compte plus que l'application au " +
+                    "premier plan : il s'arrête dès qu'on ouvre Chrome (ou qu'on éteint l'écran, " +
+                    "ou qu'on passe à une autre application) et reprend au retour sur l'article. " +
+                    "Un aller-retour reste une seule lecture, mais son temps — auparavant compté " +
+                    "en entier, navigateur et nuit d'écran éteint compris — n'est plus gonflé.",
+                time = "16:58"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.19",
         listOf(
             ChangelogItem(
