@@ -38,6 +38,9 @@ import com.pressia.data.remote.inoreaderAuthHeader
 import com.pressia.data.remote.inoreaderCookieCandidates
 import com.pressia.data.remote.inoreaderCookieHasSession
 import com.pressia.data.remote.providerUsesSaved
+import com.pressia.data.remote.cleanTitle
+import com.pressia.data.escapeLike
+import com.pressia.data.shouldRestorePref
 import com.pressia.data.remote.newFolderId
 import com.pressia.data.remote.renamedFolderId
 import com.pressia.data.readability.Readability
@@ -1784,9 +1787,12 @@ class PressLogicTest {
         // l'import de la copie automatique : elle ne contient que les dossiers locaux, donc
         // l'importer détachait chaque flux de son dossier, et la date de synchro repassait à
         // « jamais synchronisé » à chaque lancement.
-        assertTrue(com.pressia.data.autoBackupWorthRestoring(subscriptions = 0, starred = 0))
-        assertFalse(com.pressia.data.autoBackupWorthRestoring(subscriptions = 27, starred = 0))
-        assertFalse(com.pressia.data.autoBackupWorthRestoring(subscriptions = 0, starred = 3))
+        assertTrue(com.pressia.data.autoBackupWorthRestoring(0, 0, alreadyWritten = false))
+        assertFalse(com.pressia.data.autoBackupWorthRestoring(27, 0, alreadyWritten = false))
+        assertFalse(com.pressia.data.autoBackupWorthRestoring(0, 3, alreadyWritten = false))
+        // Base vide mais copie déjà écrite sur cet appareil : la bibliothèque a été vidée
+        // exprès (arrêt forcé avant l'écriture de fond), l'ancien fichier ne la ressuscite pas.
+        assertFalse(com.pressia.data.autoBackupWorthRestoring(0, 0, alreadyWritten = true))
     }
 
     @Test fun `copie automatique ne garde que les flux locaux`() {
@@ -2063,6 +2069,22 @@ class PressLogicTest {
         assertEquals("complet", merged.content)
     }
 
+    @Test fun `une lecture encore en file resiste a la descente`() {
+        // La poussée a échoué (quota, réseau) : la ligne « read » attend toujours. La descente
+        // ne doit pas rouvrir l'article avec l'état non lu du serveur.
+        val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T", unread = true)
+        val kept = com.pressia.data.mergeIncomingArticle(
+            incoming, flags(unread = false, readAt = 1234L), keepRead = false, pendingReads = setOf("a")
+        )
+        assertFalse(kept.unread)
+        assertEquals(1234L, kept.readAt)
+        // Sans ligne en attente, l'état du serveur reprend la main : comportement d'avant.
+        val plain = com.pressia.data.mergeIncomingArticle(
+            incoming, flags(unread = false, readAt = 1234L), keepRead = false
+        )
+        assertTrue(plain.unread)
+    }
+
     @Test fun `resync garde etoiles read later et miniatures`() {
         val incoming = com.pressia.data.local.ArticleEntity(id = "a", feedId = "feed", title = "T")
         val kept = com.pressia.data.mergeIncomingArticle(
@@ -2287,5 +2309,102 @@ class PressLogicTest {
         // Le dernier ne descend pas, le premier ne monte pas.
         assertEquals(null, movedFolderOrder(groups, 2, 1))
         assertEquals(null, movedFolderOrder(groups, 0, -1))
+    }
+
+    @Test fun `jokers de like echappes dans la recherche`() {
+        // Une saisie est du texte, pas un motif : « 100% » ne doit pas rendre tout le contenu.
+        assertEquals("100\\%", escapeLike("100%"))
+        assertEquals("a\\_b", escapeLike("a_b"))
+        // La barre inverse est echappee en premier, sinon elle mangerait les echappements suivants.
+        assertEquals("\\\\\\%", escapeLike("\\%"))
+        assertEquals("simple", escapeLike("simple"))
+    }
+
+    @Test fun `restauration des preferences selon jetons et cles locales`() {
+        // Réglage ordinaire : restauré.
+        assertTrue(shouldRestorePref("view_mode", hasTokens = false))
+        // Jeton : seulement si le fichier a été exporté avec.
+        assertFalse(shouldRestorePref("token", hasTokens = false))
+        assertTrue(shouldRestorePref("token", hasTokens = true))
+        // Cache propre à l'appareil : jamais, même avec les jetons.
+        assertFalse(shouldRestorePref(Prefs.LAST_SYNC_AT.name, hasTokens = true))
+    }
+
+    @Test fun `format de sauvegarde non entier refuse`() {
+        // « 1.5 » n'est pas un export de PressIA : arrondi à 1, il serait accepté à tort.
+        val batard = org.json.JSONObject().put("backupVersion", 1.5)
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            com.pressia.data.checkBackupFormat(batard)
+        }
+        assertTrue(e.message!!.contains("1.5"))
+    }
+
+    @Test fun `etat oauth compare a celui emis`() {
+        // Sans etat emis, rien n'est accepte (un retour non sollicite est ignore).
+        assertFalse(OAuth.checkState(null))
+        assertFalse(OAuth.checkState("abc"))
+        val state = OAuth.beginState()
+        assertTrue(OAuth.checkState(state))
+        assertFalse(OAuth.checkState(state + "x"))
+        assertFalse(OAuth.checkState(null))
+    }
+
+    @Test fun `titre de flux nettoye des entites et balises`() {
+        assertEquals("", cleanTitle(null))
+        assertEquals("", cleanTitle("   "))
+        assertEquals("Le Comptoir du Hardware", cleanTitle("Le Comptoir&nbsp;du  Hardware"))
+        assertEquals("Titre simple", cleanTitle("<b>Titre</b> simple"))
+        assertEquals("A & B", cleanTitle("A &amp; B"))
+    }
+
+    @Test fun `atom choisit le lien alternate, pas le self`() {
+        val xml = """<feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+                <title>Entree</title>
+                <link rel="self" href="https://ex.com/feed"/>
+                <link rel="alternate" href="https://ex.com/article"/>
+                <link rel="enclosure" href="https://ex.com/audio.mp3"/>
+            </entry>
+        </feed>"""
+        val arts = LocalRssFetcher.parse(xml, "f")
+        assertEquals(1, arts.size)
+        assertEquals("https://ex.com/article", arts[0].url)
+        // Une entree sans date reste sans date (0) : la dater de maintenant la ferait
+        // passer pour une nouveaute a chaque synchronisation.
+        assertEquals(0L, arts[0].published)
+    }
+
+    @Test fun `restauration ne retient que les preferences sures`() {
+        // La décision est pure (restorablePrefs) : une régression qui laisserait passer un
+        // secret ou une clé de l'appareil casserait ce test, pas la suite entière.
+        val o = org.json.JSONObject(
+            """{"view_mode":"list","token":"secret","last_sync_at":42,"wifi_only":true,
+                "objet":{"a":1},"rien":null}"""
+        )
+        val sans = com.pressia.data.restorablePrefs(o, hasTokens = false)
+        assertEquals("list", sans["view_mode"])
+        assertEquals(true, sans["wifi_only"])
+        assertFalse("token" in sans)          // secret : ignoré sans les jetons
+        assertFalse("last_sync_at" in sans)   // clé propre à l'appareil
+        assertFalse("objet" in sans)          // type inexploitable (sauvegarde abîmée)
+        assertFalse("rien" in sans)
+        // Avec les jetons, le secret revient ; la clé de l'appareil, jamais.
+        val avec = com.pressia.data.restorablePrefs(o, hasTokens = true)
+        assertEquals("secret", avec["token"])
+        assertFalse("last_sync_at" in avec)
+    }
+
+    @Test fun `opml ecarte les caracteres de controle`() {
+        // Un titre porteur d'une entité numérique (&#1;) donnerait un fichier XML 1.0 invalide,
+        // que le lecteur d'en face refuserait en entier.
+        val xml = com.pressia.data.buildOpml(
+            listOf(com.pressia.data.OpmlFeed("https://ex.com/rss", "Titre\u0001 & Cie", null))
+        )
+        assertFalse(xml.contains('\u0001'))
+        assertEquals(
+            "Titre & Cie",
+            org.jsoup.Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser())
+                .selectFirst("outline")?.attr("text")
+        )
     }
 }

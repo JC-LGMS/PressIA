@@ -729,7 +729,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         lockSync()
         feedOp = true
         val ok = try {
-            repo.deleteFeed(feedId) { syncMsg = it }
+            // Sous le verrou : la synchronisation lit les abonnements puis les réécrit en bloc,
+            // un retrait qui se glisse entre les deux serait annulé par la réinsertion.
+            repo.withSyncLock { repo.deleteFeed(feedId) { syncMsg = it } }
         } finally {
             feedOp = false
             unlockSync()
@@ -766,7 +768,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         localFeedAdding = true
         var result = FeedResult(false, "Flux non ajouté.")
         try {
-            when (val added = repo.addFeed(url, folderId, accountId)) {
+            // Sous le verrou : même raison que pour le retrait (les abonnements d'un compte sont
+            // remplacés en bloc à chaque passe).
+            when (val added = repo.withSyncLock { repo.addFeed(url, folderId, accountId) }) {
                 FeedAdd.InvalidUrl ->
                     result = FeedResult(false, "URL de flux invalide (http ou https attendu).")
                 FeedAdd.AlreadyExists ->
@@ -1124,6 +1128,15 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
+        // La liste de recherche ne s'alimente pas du flux principal : sans ce report, l'étoile
+        // y restait celle d'avant le tap (et un second appui ne pouvait plus la retirer).
+        // La base dit ce qui a réellement été posé (étoile locale, ou « Read later » du compte).
+        val a = repo.article(id) ?: return@launch
+        searchResults = searchResults.map {
+            if (it.id == id) {
+                it.copy(starred = a.starred, laterSaved = a.laterSaved, laterProvider = a.laterProvider)
+            } else it
+        }
     }
     /** Article d'un compte dont l'étoile est le « Read later » (Feedly, Inoreader). */
     fun isSavedInAccount(a: ArticleEntity): Boolean {
@@ -1784,6 +1797,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         backfillJob?.cancel()
         backfillJob?.join()
         syncJob?.cancel()
+        // L'annulation ne suffit pas : la passe peut être entre deux écritures. Sans attendre sa
+        // fin, la déconnexion supprimait le compte pendant qu'elle réinscrivait ses articles.
+        syncJob?.join()
         repo.withSyncLock { repo.deleteAccount(acc.id) }
         refreshNow()
         account = repo.accountInfo()

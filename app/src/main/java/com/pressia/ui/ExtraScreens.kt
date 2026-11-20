@@ -899,7 +899,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         SettingBox {
             Text("Seuil de luminosité du mode automatique : $lightThreshold lux")
-            Slider(lightThreshold.toFloat(), { lightThreshold = it.toInt(); save() }, valueRange = 0f..200f, steps = 199)
+            Slider(lightThreshold.toFloat(), { lightThreshold = it.toInt() }, valueRange = 0f..200f, steps = 199, onValueChangeFinished = { save() })
             CurrentLuxText()
             Text(
                 "Avec un capteur de lumière, l'apparence automatique passe en thème sombre quand la " +
@@ -912,7 +912,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         SettingBox {
             Text("Délai de bascule du mode automatique : $lightDelay s")
-            Slider(lightDelay.toFloat(), { lightDelay = it.toInt(); save() }, valueRange = 1f..20f, steps = 18)
+            Slider(lightDelay.toFloat(), { lightDelay = it.toInt() }, valueRange = 1f..20f, steps = 18, onValueChangeFinished = { save() })
             Text(
                 "La lumière doit rester du même côté du seuil pendant ce temps avant que le thème bascule : " +
                     "un nuage, un passage devant le capteur ou une lampe allumée brièvement ne fait donc pas " +
@@ -1193,26 +1193,26 @@ fun SettingsScreen(vm: PressVM) {
         SettingsSection("Tailles de police")
         SettingBox {
             Text("Police des titres de liste : $titleFont sp")
-            Slider(titleFont.toFloat(), { titleFont = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
+            Slider(titleFont.toFloat(), { titleFont = it.toInt() }, valueRange = 8f..24f, steps = 15, onValueChangeFinished = { save() })
         }
         SettingBox {
             Text("Police des dates et heures : $dateFont sp")
-            Slider(dateFont.toFloat(), { dateFont = it.toInt(); save() }, valueRange = 8f..16f, steps = 7)
+            Slider(dateFont.toFloat(), { dateFont = it.toInt() }, valueRange = 8f..16f, steps = 7, onValueChangeFinished = { save() })
         }
         SettingBox {
             Text("Police du titre des articles : $articleTitle sp")
-            Slider(articleTitle.toFloat(), { articleTitle = it.toInt(); save() }, valueRange = 8f..28f, steps = 19)
+            Slider(articleTitle.toFloat(), { articleTitle = it.toInt() }, valueRange = 8f..28f, steps = 19, onValueChangeFinished = { save() })
         }
         SettingBox {
             Text("Police du texte des articles : $fontSize sp")
-            Slider(fontSize.toFloat(), { fontSize = it.toInt(); save() }, valueRange = 8f..24f, steps = 15)
+            Slider(fontSize.toFloat(), { fontSize = it.toInt() }, valueRange = 8f..24f, steps = 15, onValueChangeFinished = { save() })
         }
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         // Taille du texte du menu : sur un drawer très rempli, la taille par défaut ne laisse pas
         // la place de tenir le nom des flux. Le réglage est en pourcentage, donc 100 % ne change rien.
         SettingBox {
             Text("Taille du texte du menu : $drawerScale %")
-            Slider(drawerScale.toFloat(), { drawerScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
+            Slider(drawerScale.toFloat(), { drawerScale = it.toInt() }, valueRange = 70f..140f, steps = 13, onValueChangeFinished = { save() })
             Text(
                 "Concerne les noms de flux et de dossiers du menu latéral. 100 % correspond à la taille actuelle.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1221,7 +1221,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         SettingBox {
             Text("Taille du texte de l'accueil : $homeScale %")
-            Slider(homeScale.toFloat(), { homeScale = it.toInt(); save() }, valueRange = 70f..140f, steps = 13)
+            Slider(homeScale.toFloat(), { homeScale = it.toInt() }, valueRange = 70f..140f, steps = 13, onValueChangeFinished = { save() })
             Text(
                 "Concerne les noms de flux et de dossiers de l'écran Accueil. 100 % correspond à la taille actuelle.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1261,9 +1261,10 @@ fun SettingsScreen(vm: PressVM) {
             // 0 = coupée, 1..24 heures entières (23 crans intermédiaires).
             Slider(
                 backgroundSyncHours.toFloat(),
-                { backgroundSyncHours = it.toInt(); save() },
+                { backgroundSyncHours = it.toInt() },
                 valueRange = 0f..24f,
-                steps = 23
+                steps = 23,
+                onValueChangeFinished = { save() }
             )
             Text(
                 "Application fermée, Android la lance mais décide du moment exact (veille, économie de " +
@@ -1300,7 +1301,7 @@ fun SettingsScreen(vm: PressVM) {
         }
         SettingBox {
             Text("Articles conservés par flux : $maxItems (hors-ligne)")
-            Slider(maxItems.toFloat(), { maxItems = it.toInt(); save() }, valueRange = 100f..10000f, steps = 99)
+            Slider(maxItems.toFloat(), { maxItems = it.toInt() }, valueRange = 100f..10000f, steps = 99, onValueChangeFinished = { save() })
         }
         SettingBox {
             Text(
@@ -1311,7 +1312,7 @@ fun SettingsScreen(vm: PressVM) {
             // fenêtre borne la synchronisation (pages remontées) **et** la rétention — les
             // articles plus vieux partent, favoris toujours gardés. Le quota par flux reste
             // le second garde-fou.
-            Slider(historyMonths.toFloat(), { historyMonths = it.toInt(); save() }, valueRange = 0f..36f, steps = 35)
+            Slider(historyMonths.toFloat(), { historyMonths = it.toInt() }, valueRange = 0f..36f, steps = 35, onValueChangeFinished = { save() })
             Text(
                 "1 mois (défaut) : synchronisation rapide, la fenêtre part directement à Feedly. " +
                     "Les articles plus vieux sont retirés de l'application à chaque synchronisation " +
@@ -1327,7 +1328,7 @@ fun SettingsScreen(vm: PressVM) {
                 else "Fréquence de synchronisation : toutes les $interval min"
             )
             // 73 crans de 10 min sur 0..720 : le défaut de 10 min est sélectionnable au cran près.
-            Slider(interval.toFloat(), { interval = it.toInt(); save() }, valueRange = 0f..720f, steps = 71)
+            Slider(interval.toFloat(), { interval = it.toInt() }, valueRange = 0f..720f, steps = 71, onValueChangeFinished = { save() })
         }
         SettingBox {
             Text("Cache utilisé : $cacheInfo")
@@ -1339,7 +1340,26 @@ fun SettingsScreen(vm: PressVM) {
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button({ scope.launch { clearCache(); toast(ctx, "Cache vidé") } }) { Text("Vider le cache") }
+                var confirmClear by remember { mutableStateOf(false) }
+                Button({ confirmClear = true }) { Text("Vider le cache") }
+                if (confirmClear) AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    title = { Text("Vider le cache ?") },
+                    text = {
+                        Text(
+                            "Les miniatures, les images et les articles complets seront " +
+                                "retéléchargés à la prochaine synchronisation ou à l'ouverture. " +
+                                "Les articles, les favoris et les réglages restent en place."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            confirmClear = false
+                            scope.launch { clearCache(); toast(ctx, "Cache vidé") }
+                        }) { Text("Vider") }
+                    },
+                    dismissButton = { TextButton({ confirmClear = false }) { Text("Annuler") } }
+                )
             }
         }
         SettingsSection("Favicons")
@@ -1480,7 +1500,7 @@ fun BackupScreen(vm: PressVM) {
                 // Une restauration vaut sauvegarde : les réglages d'ici sont ceux du fichier, et
                 // le rappel ne doit pas les signaler comme « changés depuis ».
                 vm.repo.markBackupPoint()
-                backupMsg = "Restauration terminée : ${r.prefs} option(s), ${r.accounts} compte(s), " +
+                backupMsg = "Restauration terminée : ${r.prefs} option(s), ${r.accounts} élément(s) de compte, " +
                     "${r.stats} statistique(s), ${r.read} favori(s)."
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
                 // listes et compte affichés suivent ici même, filtre œil y compris.

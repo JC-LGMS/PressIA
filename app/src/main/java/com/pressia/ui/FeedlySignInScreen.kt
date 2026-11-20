@@ -341,6 +341,9 @@ private fun FeedlySignInView(
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = settings.userAgentString.replace("; wv", "")
+                // Une page distante n'a pas à lire les fichiers de l'appareil.
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
                 CookieManager.getInstance().apply {
                     setAcceptCookie(true)
                     // La connexion traverse plusieurs hôtes Feedly : sans cela les cookies de
@@ -357,14 +360,17 @@ private fun FeedlySignInView(
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val target = request.url.toString()
                         android.util.Log.i("PressIA", "Feedly nav : ${target.replace(Regex("([?&]code=)[^&]*"), "$1<...>")}")
-                        if (!target.startsWith(FEEDLY_REDIRECT_LOGIN)) return false
-                        val code = request.url.getQueryParameter("code")
-                        if (!code.isNullOrBlank()) {
-                            onCode(code)
-                            return true
+                        if (target.startsWith(FEEDLY_REDIRECT_LOGIN)) {
+                            val code = request.url.getQueryParameter("code")
+                            if (!code.isNullOrBlank()) {
+                                onCode(code)
+                                return true
+                            }
+                            request.url.getQueryParameter("error")?.let { onAuthError(it) }
                         }
-                        request.url.getQueryParameter("error")?.let { onAuthError(it) }
-                        return false
+                        // Le reste du web se charge ; un `file://`, `intent://` ou
+                        // `javascript:` venu de la page, non.
+                        return !isWebUrl(target)
                     }
                     override fun onPageFinished(view: WebView, url: String) {
                         android.util.Log.i("PressIA", "Feedly page : ${url.replace(Regex("([?&]code=)[^&]*"), "$1<...>")}")

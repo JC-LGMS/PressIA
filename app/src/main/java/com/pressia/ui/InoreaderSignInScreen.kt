@@ -98,7 +98,6 @@ private fun sessionCookieHeader(): String? {
     val cm = runCatching { CookieManager.getInstance() }.getOrNull() ?: return null
     runCatching { cm.flush() }
     val header = runCatching { cm.getCookie(INOREADER_API_URL) }.getOrNull()
-    android.util.Log.d("PressIA", "Inoreader cookie (API) : ${header?.take(80) ?: "<aucun>"}…")
     return header?.takeIf { it.isNotBlank() }
 }
 
@@ -179,6 +178,7 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
         forgetInoreaderSession()
         var landedAt = 0L
         var lastTry = 0L
+        var failures = 0
         while (!done) {
             delay(1200)
             if (busy) continue
@@ -203,11 +203,16 @@ fun InoreaderSignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> U
                 continue
             }
             landedAt = 0L
-            // Cookie présent : on vérifie, au plus toutes les 4 s (le réseau peut être lent).
+            // Cookie présent : on vérifie, de plus en plus espacé (4 s, 8 s, 16 s) et on
+            // s'arrête après trois refus. Sans cela, un cookie révoqué déclenchait un appel API
+            // toutes les 4 s tant que l'écran restait ouvert : le quota Inoreader y passait, et
+            // les vraies synchros tombaient en 429. Les deux boutons restent pour forcer.
+            if (failures >= 3) break
+            val wait = 4000L shl failures
             val now = System.currentTimeMillis()
-            if (now - lastTry < 4000) continue
+            if (now - lastTry < wait) continue
             lastTry = now
-            tryConnect(inoreaderCookieCandidates(header))
+            if (!tryConnect(inoreaderCookieCandidates(header))) failures++
         }
     }
 
@@ -298,6 +303,9 @@ private fun InoreaderSignInView(
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = settings.userAgentString.replace("; wv", "")
+                // Une page distante n'a pas à lire les fichiers de l'appareil.
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
                 CookieManager.getInstance().apply {
                     setAcceptCookie(true)
                     // La connexion traverse plusieurs hôtes Inoreader (www, apex) : sans cela
@@ -307,12 +315,11 @@ private fun InoreaderSignInView(
                 }
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        // Rien à intercepter : la page de connexion est la page du site.
-                        android.util.Log.i("PressIA", "Inoreader nav : ${request.url}")
-                        return false
+                        // Rien à intercepter : la page de connexion est la page du site. Seul le
+                        // web s'y charge (`file://`, `intent://`, `javascript:` refusés).
+                        return !isWebUrl(request.url.toString())
                     }
                     override fun onPageFinished(view: WebView, url: String) {
-                        android.util.Log.i("PressIA", "Inoreader page : $url")
                         onLoaded()
                         // La connexion par cookie passe parfois par une redirection : on relit
                         // le bac à cookies.

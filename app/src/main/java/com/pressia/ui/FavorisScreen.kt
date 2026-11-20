@@ -60,7 +60,11 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
     var feedScope by remember { mutableStateOf(Scope(label = "Tous les articles")) }
     val fav = FavScope(set, feedScope)
 
-    LaunchedEffect(vm.favSet, vm.accounts) {
+    LaunchedEffect(vm.favSet, vm.accounts, vm.loaded) {
+        // Tant que les comptes ne sont pas chargés, `favSetAvailable` répond « non » pour un
+        // jeu de service : sans ce garde, rouvrir l'application sur Favoris (mort du processus,
+        // rotation) remettait le sélecteur sur « Tous les favoris ».
+        if (!vm.loaded) return@LaunchedEffect
         // Le jeu choisi perd son compte (déconnexion) : retour aux favoris locaux, sinon la
         // liste resterait vide sans explication.
         if (!vm.favSetAvailable(vm.favSet.value)) vm.setFavSet("all")

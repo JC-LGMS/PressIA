@@ -858,7 +858,9 @@ class LocalProvider : FeedProvider {
         val all = results.flatMap { it.articles }
         // Nom du flux (chaîne YouTube, site…) : il remplace l'URL dans les listes.
         val titles = results.mapNotNull { r -> r.title?.takeIf { it.isNotBlank() }?.let { r.feedId to it } }.toMap()
-        return StreamPage(all.sortedByDescending { it.published }.take(max), feedTitles = titles)
+        // Plafond **par flux** seulement (`fetch(max)`) : un `take(max)` global ici triait tous
+        // les flux ensemble et laissait de côté les articles des flux les moins bavards.
+        return StreamPage(all.sortedByDescending { it.published }, feedTitles = titles)
     }
     override suspend fun markRead(token: String?, articleIds: List<String>) {}
     override suspend fun markUnread(token: String?, articleIds: List<String>) {}

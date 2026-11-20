@@ -202,6 +202,10 @@ class MainActivity : ComponentActivity() {
                     // « Navigateur » et « onglet personnalisé » ouvrent tous deux l'article hors de
                     // l'application : il est seulement marqué lu, pas empilé dans l'aperçu interne.
                     if (mode == "external" || mode == "custom") {
+                        // Les voisins posés par l'écran appelant ne serviront pas : l'article ne
+                        // s'ouvre pas dans l'aperçu interne. Les laisser en attente les faisait
+                        // consommer par l'article suivant, qui n'y figurait pas (balayage mort).
+                        vm.takeArticleNeighbours()
                         scope.launch {
                             val a = vm.repo.article(id)
                             val url = a?.url.orEmpty()

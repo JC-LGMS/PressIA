@@ -68,5 +68,8 @@ fun buildOpml(feeds: List<OpmlFeed>, title: String = "PressIA"): String {
 
 /** Échappement XML minimal, `&` d'abord (sinon les autres entités seraient ré-échappées). */
 fun escapeXml(s: String): String = s
+    // Les caractères de contrôle (entité numérique « &#1; » d'un flux abîmé) sont interdits en
+    // XML 1.0 : le fichier exporté serait refusé par le lecteur d'en face.
+    .replace(Regex("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]"), "")
     .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     .replace("\"", "&quot;").replace("'", "&apos;")

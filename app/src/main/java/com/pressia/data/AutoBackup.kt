@@ -2,6 +2,7 @@ package com.pressia.data
 
 import com.pressia.data.local.Prefs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -23,7 +24,19 @@ const val AUTO_BACKUP_NAME = "sauvegarde-auto.json"
  */
 private val AUTO_SECTIONS = listOf(Sections.ACCOUNTS, Sections.READ)
 
+/** Deux passes peuvent se croiser (arrière-plan et fin de synchro) : une seule écrit à la fois. */
+private val autoBackupWrite = kotlinx.coroutines.sync.Mutex()
+
 fun PressRepository.autoBackupFile(): File = File(appCtx.filesDir, AUTO_BACKUP_NAME)
+
+/**
+ * Marqueur « une copie a déjà été écrite sur cet appareil ». Il vit dans `noBackupFilesDir`,
+ * jamais sauvegardé ni transféré : une vraie restauration Google arrive donc **sans** lui (base
+ * absente, copie revenue, marqueur non), tandis qu'une bibliothèque vidée exprès le laisse en
+ * place — c'est ce qui distingue les deux cas.
+ */
+fun PressRepository.autoBackupMarkFile(): File =
+    File(appCtx.noBackupFilesDir, AUTO_BACKUP_NAME + ".ecrit")
 
 /**
  * Réécrit la copie automatique. Appelée quand l'application passe en arrière-plan et à la fin
@@ -34,20 +47,28 @@ fun PressRepository.autoBackupFile(): File = File(appCtx.filesDir, AUTO_BACKUP_N
  * remplacer la précédente, seule source des flux locaux.
  */
 suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
-    runCatching {
-        // Flux locaux seulement : la base exclue de la sauvegarde Google ne contient de toute
-        // façon que les leurs (dossiers locaux), et y mêler ceux des comptes les détacherait de
-        // leurs dossiers au premier réimport.
-        val json = exportJson(AUTO_SECTIONS, localFeedsOnly = true)
-        val target = autoBackupFile()
-        val tmp = File(target.parentFile, target.name + ".tmp")
-        tmp.writeText(json)
-        if (!tmp.renameTo(target)) {
-            tmp.delete()
-            target.writeText(json)
+    autoBackupWrite.withLock {
+        runCatching {
+            // Flux locaux seulement : la base exclue de la sauvegarde Google ne contient de toute
+            // façon que les leurs (dossiers locaux), et y mêler ceux des comptes les détacherait de
+            // leurs dossiers au premier réimport.
+            val json = exportJson(AUTO_SECTIONS, localFeedsOnly = true)
+            val target = autoBackupFile()
+            val tmp = File(target.parentFile, target.name + ".tmp")
+            tmp.writeText(json)
+            // Remplacement atomique : une copie tronquée (arrêt en pleine écriture) ne doit pas
+            // remplacer la précédente, seule source des flux locaux.
+            java.nio.file.Files.move(
+                tmp.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
+            // La base a bien été vue par une écriture : une base vide désormais est un vidage
+            // volontaire, pas une restauration Google (voir `autoBackupMarkFile`).
+            autoBackupMarkFile().createNewFile()
         }
+        Unit
     }
-    Unit
 }
 
 /**
@@ -55,30 +76,33 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
  * première ouverture après une restauration Google (la base n'est pas revenue, ce fichier-là
  * si). Rend vrai si une restauration a eu lieu.
  *
- * La garde est décisive : **rien de local et aucun favori** en base. Dès qu'il y en a, la copie
- * a déjà été réimportée (ou l'appareil n'a pas changé) et on ne touche à rien — sinon une
- * bibliothèque vidée exprès serait ressuscitée au redémarrage. La synchronisation des comptes
- * peut tourner avant sans gêner : elle ne crée ni flux local ni favori PressIA.
+ * Deux gardes, ensemble : **aucun abonnement et aucun favori** en base, et **aucune copie déjà
+ * écrite** sur cet appareil (voir [autoBackupMarkFile]). La seconde ferme le trou de la
+ * première : retirer le dernier flux ou favori puis forcer l'arrêt avant l'écriture de fond
+ * laissait l'ancien fichier en place, et la bibliothèque vidée revenait au lancement suivant.
+ * La synchronisation des comptes peut tourner avant sans gêner : elle ne crée ni flux local ni
+ * favori PressIA.
  *
  * Les articles, eux, n'arrivent qu'avec la synchronisation des flux : favoris et lus sont donc
  * mis en file (`RESTORED_STARRED`, `RESTORED_READ`) et rejoués à leur arrivée, exactement comme
  * pour la restauration manuelle.
- */
-/**
- * La copie automatique ne sert que si **la base est vide** : aucun abonnement et aucun favori.
  *
- * C'est le vrai signal d'une restauration Google (la base n'est pas revenue, le petit fichier
- * si). Le garde précédent — « aucun flux local » — laissait passer une bibliothèque vivante
- * composée d'un seul compte (Feedly) sans favori : le fichier était alors réimporté à **chaque**
- * lancement, et comme il ne contient que les dossiers **locaux**, chaque flux du compte perdait
- * son dossier (`categoryId` remis à zéro) jusqu'à la fin de la synchro suivante. Pur, testé.
+ * Le garde « base vide » refuse aussi une bibliothèque vivante composée d'un seul compte
+ * (Feedly) sans favori : le fichier ne contient que les dossiers **locaux**, et chaque flux du
+ * compte perdait alors son dossier jusqu'à la fin de la synchro suivante. Pur, testé.
  */
-fun autoBackupWorthRestoring(subscriptions: Int, starred: Int): Boolean =
-    subscriptions == 0 && starred == 0
+fun autoBackupWorthRestoring(
+    subscriptions: Int,
+    starred: Int,
+    alreadyWritten: Boolean
+): Boolean = subscriptions == 0 && starred == 0 && !alreadyWritten
 
 suspend fun PressRepository.restoreAutoBackupIfEmpty(): Boolean = withContext(Dispatchers.IO) {
     val dao = db.dao()
-    if (!autoBackupWorthRestoring(dao.subscriptions().size, dao.starredCount())) return@withContext false
+    if (!autoBackupWorthRestoring(
+            dao.subscriptions().size, dao.starredCount(), autoBackupMarkFile().exists()
+        )
+    ) return@withContext false
     val file = autoBackupFile()
     if (!file.exists()) return@withContext false
     val json = runCatching { file.readText() }.getOrNull() ?: return@withContext false

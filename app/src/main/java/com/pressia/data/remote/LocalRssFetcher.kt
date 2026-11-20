@@ -116,6 +116,11 @@ object LocalRssFetcher {
                             ?: return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
                         val xml = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
                         val parsed = parseFeed(xml, feedId)
+                        // Une page HTML servie en 200 n'est pas un flux : sans titre de racine
+                        // ni entrée, c'est l'URL qui est fausse, pas un flux vide.
+                        if (parsed.articles.isEmpty() && parsed.title == null) {
+                            return@withContext LocalFeedFetch(feedId, error = "réponse inattendue (pas un flux RSS/Atom)")
+                        }
                         return@withContext LocalFeedFetch(feedId, parsed.articles.take(max), parsed.title)
                     }
                     error = "HTTP ${resp.code}"
@@ -176,8 +181,15 @@ object LocalRssFetcher {
                     when (c.tagName().lowercase()) {
                         "title" -> title = c.text().trim()
                         "link" -> {
+                            val rel = c.attr("rel").trim().lowercase()
                             val href = c.attr("href").trim()
-                            link = href.ifBlank { c.text().trim() }
+                            val candidate = href.ifBlank { c.text().trim() }
+                            // Atom donne plusieurs `<link>` par entrée (self, enclosure,
+                            // alternate) : la page de l'article est l'`alternate` (ou le lien
+                            // sans `rel`). Le dernier du document gagnait et pointait ailleurs.
+                            if (link.isBlank() && candidate.isNotBlank() &&
+                                (rel.isEmpty() || rel == "alternate")
+                            ) link = candidate
                         }
                         "description", "summary", "content", "content:encoded" -> desc += c.text()
                         "author" -> author = c.selectFirst("name")?.text()?.trim() ?: c.text().trim()
@@ -210,7 +222,8 @@ object LocalRssFetcher {
                         "media:description" -> if (desc.isBlank()) desc = c.text().trim()
                     }
                 }
-                if (!pubKnown) pub = System.currentTimeMillis()
+                // Une entrée sans date reste **sans date** : la dater de maintenant à chaque
+                // synchronisation la faisait passer pour une nouveauté à chaque passe.
                 if (title.isBlank() && link.isBlank()) return@mapNotNull null
                 val image = img
                     ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(desc)?.groupValues?.getOrNull(1)

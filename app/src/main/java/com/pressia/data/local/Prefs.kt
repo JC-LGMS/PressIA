@@ -21,8 +21,6 @@ class Prefs(private val ctx: Context) {
     companion object {
         val PROVIDER = stringPreferencesKey("provider") // "feedly" | "inoreader" | "local" (compte actif)
         val TOKEN = stringPreferencesKey("token")
-        val REFRESH = stringPreferencesKey("refresh")
-        val USER_ID = stringPreferencesKey("user_id")
 
         /**
          * Comptes externes connectés, sérialisés en JSON ([AccountStore.encode]). Plusieurs comptes
@@ -297,7 +295,6 @@ class Prefs(private val ctx: Context) {
         /** Toutes les préférences, typées : sauvegarde / restauration par nom. */
         val ENTRIES: List<PrefEntry> = listOf(
             PrefEntry.Str("provider", PROVIDER), PrefEntry.Str("token", TOKEN),
-            PrefEntry.Str("refresh", REFRESH), PrefEntry.Str("user_id", USER_ID),
             PrefEntry.Str("accounts", ACCOUNTS), PrefEntry.Str("active_account", ACTIVE_ACCOUNT),
             PrefEntry.Str("theme", THEME), PrefEntry.Str("appearance", APPEARANCE),
             PrefEntry.Str("night_theme", NIGHT_THEME),

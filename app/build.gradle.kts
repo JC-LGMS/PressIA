@@ -209,14 +209,12 @@ dependencies {
 
     // Compose Material3
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3:1.3.2")
     // Épinglé : cette bibliothèque n'est plus publiée au-delà de 1.7.8 (elle n'est plus dans le
     // BOM). Ses icônes sont des ImageVector, sans dépendance runtime au reste de Compose.
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.compose.foundation:foundation")
     debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Room (offline)
     implementation("androidx.room:room-runtime:2.6.1")

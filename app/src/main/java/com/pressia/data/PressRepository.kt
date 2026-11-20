@@ -518,8 +518,10 @@ class PressRepository(
             val newUserId = runCatching { p.userId(token) }.getOrNull().orEmpty()
             if (newUserId.isBlank()) return@withContext null          // jeton refusé
             if (account.userId.isNotBlank() && newUserId != account.userId) return@withContext null
-            val accounts = cloudAccounts().toMutableList()
             accountMutex.withLock {
+            // Les deux lectures se font sous le verrou : un renouvellement de jeton concurrent
+            // (même mutex) serait sinon écrasé par la liste lue juste avant.
+            val accounts = cloudAccounts().toMutableList()
             val idx = accounts.indexOfFirst { it.id == accountId }
             if (idx < 0) return@withContext null
             // Le jeton de renouvellement est **conservé** : il appartient au même compte et
@@ -671,8 +673,6 @@ class PressRepository(
                 prefs.set(Prefs.ACTIVE_ACCOUNT, "")
                 prefs.set(Prefs.PROVIDER, LOCAL_PROVIDER)
                 prefs.set(Prefs.TOKEN, "")
-                prefs.set(Prefs.REFRESH, "")
-                prefs.set(Prefs.USER_ID, "")
             }
             prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
         }
@@ -681,18 +681,28 @@ class PressRepository(
         // (même motif que le désabonnement en synchro). Leurs traces de lecture, elles, restent
         // (voir plus bas) : les statistiques ne repartent pas de zéro avec un compte supprimé.
         val feedsOfAccount = dao.subscriptions().filter { it.provider == accountId }.map { it.id }
-        dao.clearArticlesOf(accountId)
-        // Les favoris rattachés au compte partent avec lui : un article d'un autre flux (autre
-        // compte, flux local) gardait sinon le marquage « Read later » du service supprimé et
-        // restait dans les Favoris, sans compte pour le porter.
-        dao.clearLaterOf(providerBase(accountId))
-        dao.moveFeeds(dao.subscriptionsForCategories(dao.categories().filter { it.provider == accountId }.map { it.id }).map { it.id }, null)
-        dao.clearSubscriptionsOf(accountId)
-        dao.clearCategoriesOf(accountId)
-        // Puis les orphelins d'avant (flux retiré sans ses articles, résidu de passe
-        // interrompue) : sans flux, ils pollueraient sinon le global, les non-lus et
-        // les favoris alors qu'il n'y a plus de compte.
-        dao.deleteOrphanArticles()
+        // Six écritures qui doivent aller ensemble : le registre (DataStore) est déjà vidé, donc
+        // une coupure au milieu laisserait des flux et des articles qu'aucun compte ne réclame,
+        // et que plus aucun nettoyage ne reprendrait.
+        db.withTransaction {
+            dao.clearArticlesOf(accountId)
+            // Les favoris rattachés au compte partent avec lui : un article d'un autre flux (autre
+            // compte, flux local) gardait sinon le marquage « Read later » du service supprimé et
+            // restait dans les Favoris, sans compte pour le porter.
+            dao.clearLaterOf(providerBase(accountId))
+            dao.moveFeeds(
+                dao.subscriptionsForCategories(
+                    dao.categories().filter { it.provider == accountId }.map { it.id }
+                ).map { it.id },
+                null
+            )
+            dao.clearSubscriptionsOf(accountId)
+            dao.clearCategoriesOf(accountId)
+            // Puis les orphelins d'avant (flux retiré sans ses articles, résidu de passe
+            // interrompue) : sans flux, ils pollueraient sinon le global, les non-lus et
+            // les favoris alors qu'il n'y a plus de compte.
+            dao.deleteOrphanArticles()
+        }
         // Les traces de lecture et d'extraction **restent** : elles ne servent qu'aux
         // statistiques, qui ne doivent pas repartir de zéro parce qu'un compte est supprimé
         // (au plus leurs lectures s'affichent sous « Flux supprimé »). Seule la file montante
@@ -702,6 +712,15 @@ class PressRepository(
         // Le registre est lu plus bas (`accounts`) : relu ici, hors du verrou, il pourrait avoir
         // changé entre-temps. On reprend donc la liste écrite.
         val remaining = cloudAccounts()
+        // Deux comptes du même service : le `clearLaterOf` ci-dessus a effacé les marques du
+        // survivant aussi (elles sont rangées par service). Son empreinte doit alors partir,
+        // sinon la passe suivante le croit inchangé et ne réimporte jamais son tableau.
+        val twinIds = remaining.filter { it.service == providerBase(accountId) }.map { it.id }.toSet()
+        if (twinIds.isNotEmpty()) hashMutex.withLock {
+            val o = org.json.JSONObject()
+            readLaterHashes().filterKeys { it !in twinIds }.forEach { (k, v) -> o.put(k, v) }
+            prefs.set(Prefs.READLATER_HASHES, o.toString())
+        }
         if (remaining.isNotEmpty() && prefs.data.first()[Prefs.ACTIVE_ACCOUNT].let { it == null || it == accountId }) {
             // Le compte actif est celui qu'on vient de supprimer : `setActiveAccount` réaligne
             // alors les trois préférences d'un coup.
@@ -929,6 +948,12 @@ class PressRepository(
         val name = label.trim().replace(Regex("\\s+"), " ")
         if (name.isEmpty()) return@withContext null
         if (!isLocalProvider(provider)) materializeFolder(provider, name)?.let { return@withContext it }
+        // Même nom : le dossier existant est réutilisé. Deux dossiers homonymes se regroupent en
+        // un dossier « fusionné », que l'application ne sait plus renommer ni supprimer — et
+        // l'appelant, qui ne retrouvait pas l'identifiant rendu, annonçait « Dossier non créé ».
+        dao.categories().firstOrNull {
+            isLocalProvider(it.provider) && it.label.trim().lowercase() == name.lowercase()
+        }?.let { return@withContext it.id }
         val slug = name.lowercase().replace("[^a-z0-9]+".toRegex(), "-").trim('-').ifEmpty { "dossier" }
         var id = ""
         var attempt = 0
@@ -988,8 +1013,9 @@ class PressRepository(
     }
 
     /**
-     * Renomme un dossier. Sur un dossier fusionné, tous ses dossiers locaux sont
-     * renommés ensemble : en renommer un seul le séparerait aussitôt du groupe.
+     * Renomme un dossier. Sur un dossier fusionné, toutes ses composantes sont renommées
+     * ensemble — chez chaque compte d'abord, comme ci-dessous : en renommer une seule le
+     * séparerait aussitôt du groupe.
      *
      * Un dossier de compte est renommé **chez le compte d'abord** : la synchronisation réécrit
      * les libellés avec ce que dit le service, donc un renommage local seul serait défait. Rend
@@ -1001,7 +1027,7 @@ class PressRepository(
         val cats = dao.categories()
         val targets = if (id.startsWith(MERGED_PREFIX)) {
             val key = id.removePrefix(MERGED_PREFIX)
-            cats.filter { isLocalProvider(it.provider) && it.label.trim().lowercase() == key }
+            cats.filter { it.label.trim().lowercase() == key }
         } else cats.filter { it.id == id }
         var ok = true
         targets.forEach { cat ->
@@ -1302,7 +1328,7 @@ class PressRepository(
         unreadOnly: Boolean = false, limit: Int = SEARCH_PAGE, offset: Int = 0
     ): List<ArticleEntity> {
         val (feedIds, catEmpty) = catScope(catId)
-        return dao.search(q, feedId, feedIds, catEmpty, if (withBody) 1 else 0,
+        return dao.search(escapeLike(q), feedId, feedIds, catEmpty, if (withBody) 1 else 0,
             if (unreadOnly) 1 else 0, limit, offset)
     }
 
@@ -1762,7 +1788,9 @@ class PressRepository(
                     page.feedTitles.forEach { (id, title) -> dao.setFeedTitle(id, title) }
                     // keepRead : le flux RSS ne porte aucun état de lecture, tout article déjà connu
                     // garde donc son lu/non-lu local (voir `storeArticles`).
-                    storeArticles(page.articles, keepRead = true)
+                    // Par paquets : sans plafond global, un parc de flux locaux peut rendre des
+                    // milliers d'articles d'un coup (mémoire et transaction).
+                    page.articles.chunked(500).sumOf { storeArticles(it, keepRead = true) }
                 }.onFailure { android.util.Log.e("PressIA", "sync local failed", it) }.getOrDefault(0)
             }
             // Comptes cloud en parallèle : chacun a son jeton et ses propres dossiers, et les
@@ -1914,7 +1942,13 @@ class PressRepository(
         imagesInterrupted = false
         if (!imagesAllowed()) return@withContext 0
         val rows = dao.articlesPendingImages()
-        if (rows.isEmpty()) return@withContext 0
+        // Miniatures annoncées comme téléchargées dont le fichier a disparu (purge, cache vidé
+        // à la main, synchronisation interrompue) : le drapeau seul ne suffit pas, sans ce
+        // contrôle la vignette ne revenait jamais. Relevées même sans article en attente,
+        // sinon la réparation attendait qu'un nouvel article arrive.
+        val lostThumbs = dao.cachedThumbUrls().filter { ThumbStore.cachedFile(ctx, it.imageUrl) == null }
+        val lostThumbUrls = lostThumbs.map { it.imageUrl }
+        if (rows.isEmpty() && lostThumbs.isEmpty()) return@withContext 0
         // URLs attendues, article par article (miniature déclarée puis corps) : relevées une
         // seule fois, elles servent au téléchargement comme au marquage final. Les colonnes
         // lourdes (summary, content) sont relues **par paquets de 200** : charger le HTML de
@@ -1930,16 +1964,12 @@ class PressRepository(
             }
         }
         val byId = rows.associateBy { it.id }
-        // Miniatures annoncées comme téléchargées dont le fichier a disparu (purge, cache vidé
-        // à la main, synchronisation interrompue) : le drapeau seul ne suffit pas, sans ce
-        // contrôle la vignette ne revenait jamais.
-        val lostThumbs = dao.cachedThumbUrls().filter { ThumbStore.cachedFile(ctx, it) == null }
-        val thumbs = (rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } } + lostThumbs).toHashSet()
+        val thumbs = (rows.mapNotNull { r -> r.imageUrl?.trim()?.takeIf { it.startsWith("http") } } + lostThumbUrls).toHashSet()
         // Ordre = priorité : la requête rend les articles les plus récents d'abord, et pour
         // chacun sa miniature puis les images de son corps. Deux tas (toutes les miniatures,
         // puis tous les corps) reléguaient les images du dernier article derrière celles de la
         // veille, alors que six téléchargements seulement tournent à la fois.
-        val work = pendingImageWork(perArticle, lostThumbs, thumbs)
+        val work = pendingImageWork(perArticle, lostThumbUrls, thumbs)
         if (work.isEmpty()) {
             // Articles sans image : marqués tout de suite, sinon leur HTML serait relu à chaque
             // synchronisation sans rien à faire.
@@ -1995,12 +2025,19 @@ class PressRepository(
         // synchro n'en donne que le nombre, la modale « Voir le détail » les nomme — la
         // synchronisation, elle, reste réussie.
         val failed = work.indices.mapNotNull { i -> done[i]?.let { work[i].first to it } }.toMap()
-        imageFailures = perArticle.flatMap { (id, urls) ->
+        // Une miniature perdue, retéléchargée en échec, n'appartient à aucun article de la file
+        // (son article est marqué « images là ») : ses échecs se nomment par la ligne de la base.
+        val lostFailures = lostThumbs.mapNotNull { t ->
+            failed[t.imageUrl]?.let {
+                FailedImage(t.feedTitle.ifBlank { t.feedId }, t.title.ifBlank { t.imageUrl }, t.imageUrl, it)
+            }
+        }
+        imageFailures = (perArticle.flatMap { (id, urls) ->
             val row = byId[id] ?: return@flatMap emptyList()
             val feed = row.feedTitle.ifBlank { row.feedId }
             val title = row.title.ifBlank { row.url }
             urls.mapNotNull { url -> failed[url]?.let { FailedImage(feed, title, url, it) } }
-        }.distinctBy { it.url }
+        } + lostFailures).distinctBy { it.url }
         done.count { it == null }
     }
 
@@ -2437,6 +2474,7 @@ class PressRepository(
                 // sinon la réinsertion le remettrait à zéro et l'ordre saisi disparaîtrait.
                 val current = dao.subscriptions()
                 val ranks = current.associate { it.id to it.sortOrder }
+                val owners = current.associateBy { it.id }
                 val gone = removedFeeds(
                     current.filter { sameAccount(it.provider, account.id) }.map { it.id }.toSet(),
                     subs.map { it.id }.toSet()
@@ -2445,7 +2483,18 @@ class PressRepository(
                 // le compte sans abonnements (et leurs articles sans flux).
                 db.withTransaction {
                     dao.clearSubscriptionsOf(account.id)
-                    dao.upsertSubscriptions(subs.map { s -> s.copy(sortOrder = ranks[s.id] ?: 0) })
+                    dao.upsertSubscriptions(subs.map { s ->
+                        // Même flux suivi par deux comptes du même service : l'identifiant distant
+                        // est le même, il n'y a qu'une ligne. Le premier propriétaire le reste —
+                        // le réécrire à chaque passe faisait changer la mention du compte sous le
+                        // flux et renvoyait le désabonnement au seul dernier synchronisé.
+                        val owner = owners[s.id]?.takeIf { !sameAccount(it.provider, account.id) }
+                        s.copy(
+                            sortOrder = ranks[s.id] ?: 0,
+                            provider = owner?.provider ?: s.provider,
+                            categoryId = owner?.categoryId ?: s.categoryId
+                        )
+                    })
                 }
                 // Flux désabonnés côté compte : leurs articles partent avec eux (sinon orphelins
                 // visibles partout : global, non-lus, favoris), avec leurs HTML extraits
@@ -2753,6 +2802,8 @@ class PressRepository(
         var missingStreak = 0
         var continuation: String? = null
         var authFailed = false
+        // Lus une fois pour toute la pagination : la file ne change pas pendant la passe.
+        val pendingReads = dao.pendingReadIds().toSet()
         while (seen < backfillSafetyCap) {
             val page = runCatching { p.stream(account.token, null, categoryId, pageSize, continuation, newerThanMs) }
                 .onFailure {
@@ -2774,12 +2825,20 @@ class PressRepository(
             }
             missingStreak = 0
             if (cutoff > 0) {
-                val oldest = page.articles.minOf { publishedMs(it.published) }
-                if (oldest in 1 until cutoff) break
+                // La page est triée du plus récent au plus ancien : on ne s'arrête que si son
+                // article **le plus récent** est déjà hors fenêtre (page entièrement plus
+                // vieille). Avec la date la plus ancienne, une page qui traversait la borne
+                // était jetée en entier, articles dans la fenêtre compris.
+                val newest = page.articles.maxOf { publishedMs(it.published) }
+                if (newest in 1 until cutoff) break
             }
             val known = mine.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             val fresh = withinHistory(mine, cutoff, known)
-            added += storeArticles(capByQuota(fresh, counts, known, keep), keepReadBeforeMs = cutoffFor(p.id))
+            added += storeArticles(
+                capByQuota(fresh, counts, known, keep),
+                keepReadBeforeMs = cutoffFor(p.id),
+                pendingReads = pendingReads
+            )
             seen += page.articles.size
             if (feedSaturated(counts[feedId] ?: 0, keep, mine.any { it.id in known })) break
             if (!advanced) break
@@ -2874,8 +2933,8 @@ class PressRepository(
             // Pages triées du plus récent au plus ancien : une page entièrement plus vieille
             // que la fenêtre termine (même motif que la réconciliation).
             if (cutoff > 0) {
-                val oldest = page.articles.minOf { publishedMs(it.published) }
-                if (oldest in 1 until cutoff) break
+                val newest = page.articles.maxOf { publishedMs(it.published) }
+                if (newest in 1 until cutoff) break
             }
             val known = page.articles.map { it.id }.chunked(500).flatMap { dao.existingIds(it) }.toSet()
             // Hors favoris : les lignes plus vieilles que la fenêtre sautent (sauf déjà
@@ -2914,7 +2973,8 @@ class PressRepository(
     private suspend fun storeArticles(
         articles: List<ArticleEntity>,
         keepRead: Boolean = false,
-        keepReadBeforeMs: Long? = null
+        keepReadBeforeMs: Long? = null,
+        pendingReads: Set<String>? = null
     ): Int {
         if (articles.isEmpty()) return 0
         val known = HashSet<String>()
@@ -2939,7 +2999,13 @@ class PressRepository(
         val capped = tagged.map { a ->
             a.copy(summary = capArticleHtml(a.summary), content = capArticleHtml(a.content))
         }
-        val merged = capped.map { a -> mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs) }
+        // Lectures encore dans la file montante : la descente ne doit pas les défaire (voir
+        // mergeIncomingArticle). Un appelant qui écrit en boucle (paginations) la lit une fois
+        // et la passe ; sinon une requête par écriture.
+        val pending = pendingReads ?: dao.pendingReadIds().toSet()
+        val merged = capped.map { a ->
+            mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs, pending)
+        }
         val fresh = merged.count { it.id !in known }
         dao.upsertArticles(merged)
         return fresh
@@ -3028,13 +3094,28 @@ class PressRepository(
                             // abouti : pas de scope, endpoint refusé) : on ne touche à rien —
                             // ni tableau, ni quitus de session (le drapeau expiré éventuel
                             // posé par la passe articles doit survivre).
-                            if (idSet != null) storeReadLaterHash(account.id, savedHash(account, emptySet()))
+                            if (idSet != null) {
+                                // Tableau vidé chez le compte : les marques locales partent avec
+                                // lui, sinon elles y restaient à vie (l'empreinte du vide fait
+                                // sauter toutes les passes suivantes).
+                                dao.subscriptions().filter { sameAccount(it.provider, account.id) }
+                                    .map { it.id }.takeIf { it.isNotEmpty() }
+                                    ?.let { dao.clearLater(it) }
+                                // Et les articles de flux plus abonnés du tout, que le tableau
+                                // garde par nature (voir `clearLaterOrphans`).
+                                dao.clearLaterOrphans(providerFor(account.provider).id)
+                                storeReadLaterHash(account.id, savedHash(account, emptySet()))
+                            }
                             return@runCatching 0
                         }
                         // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
                         // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
                         val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
                         if (feeds.isNotEmpty()) dao.clearLater(feeds)
+                        // Les articles de flux qu'on ne suit plus (le tableau en garde par
+                        // nature) : sans cette passe, un article retiré chez le service y
+                        // resterait marqué à vie.
+                        dao.clearLaterOrphans(providerFor(account.provider).id)
                         // Dernier mot au compteur (Int) : les rattrapages ci-dessous sont des
                         // instructions, le bloc doit toujours s'évaluer en nombre d'articles.
                         val n = storeArticles(
@@ -3590,7 +3671,9 @@ class PressRepository(
                 val url = faviconUrlFor(sub.iconUrl, sub.siteUrl, sub.url, sub.id, direct, resolved[sub.id])
                     ?: return@count false
                 // Même clé que le préchargement et la purge (voir `purgeImages`).
-                runCatching { cache.openSnapshot(url) == null }.getOrDefault(false)
+                runCatching {
+                    cache.openSnapshot(url)?.let { it.close(); false } ?: true
+                }.getOrDefault(false)
             }
         }
 
@@ -3987,14 +4070,26 @@ class PressRepository(
             val accounts = cloudAccounts()
             val account = accounts.firstOrNull { it.id == sub.provider }
             if (account != null) {
+                // Une seule ligne d'abonnement peut représenter plusieurs comptes du même
+                // service (l'identifiant distant est le même). Le flux est retiré de **tous**
+                // ceux qui le suivent : sinon la passe suivante du second le réinscrit et le
+                // désabonnement ne tient pas, alors que l'application n'a qu'une ligne à montrer.
+                val owners = accounts.filter { it.provider == account.provider }
+                val targets = if (owners.size <= 1) owners else owners.filter { acc ->
+                    runCatching {
+                        providerFor(acc.provider).subscriptions(acc.token).any { it.id == feedId }
+                    }.getOrDefault(false)
+                }
                 onStep?.invoke("Retrait du flux chez " + feedAccountLabel(account.id, accounts) + "…")
-                try {
-                    providerFor(account.provider).removeSubscription(account.token, feedId)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.w("PressIA", "désabonnement refusé par ${account.provider} : ${e.message}")
-                    return@withContext false
+                targets.forEach { acc ->
+                    try {
+                        providerFor(acc.provider).removeSubscription(acc.token, feedId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("PressIA", "désabonnement refusé par ${acc.provider} : ${e.message}")
+                        return@withContext false
+                    }
                 }
             }
         }
@@ -4150,10 +4245,14 @@ fun mergeIncomingArticle(
     incoming: ArticleEntity,
     prev: ArticleFlags?,
     keepRead: Boolean,
-    keepReadBeforeMs: Long? = null
+    keepReadBeforeMs: Long? = null,
+    pendingReads: Set<String> = emptySet()
 ): ArticleEntity {
     if (prev == null) return incoming
-    val keepLocalRead = keepRead || beyondAutoRead(incoming.published, keepReadBeforeMs)
+    // Lecture encore dans la file montante : la descente ne doit pas la défaire (le serveur ne
+    // l'a pas encore reçue). Sinon un envoi raté (quota, réseau) rouvrait les articles lus.
+    val keepLocalRead = keepRead || beyondAutoRead(incoming.published, keepReadBeforeMs) ||
+        incoming.id in pendingReads
     return incoming.copy(
         starred = prev.starred,
         laterSaved = prev.laterSaved || incoming.laterSaved,
@@ -4324,6 +4423,14 @@ fun fmtDuration(sec: Int): String {
         else -> "${s} s"
     }
 }
+
+/**
+ * Échappe les jokers de `LIKE` d'une saisie de recherche : sans cela un `%` tapé par
+ * l'utilisateur rendait tout le contenu (`_` un caractère quelconque). L'échappement vit dans
+ * [PressDao.search] (`ESCAPE '\'`) ; la barre inverse doit donc être échappée en premier.
+ */
+fun escapeLike(q: String): String =
+    q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 fun buildDatabase(ctx: Context): PressDatabase =
     Room.databaseBuilder(ctx, PressDatabase::class.java, "pressia.db")

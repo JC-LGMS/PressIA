@@ -309,6 +309,14 @@ interface PressDao {
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
+    /**
+     * Oublie le « Read later » d'un service pour les articles des flux qui ne sont plus abonnés
+     * du tout. Le tableau garde justement des articles de flux qu'on ne suit pas : sans cette
+     * passe, un article retiré chez le service y restait marqué à vie (`clearLater` ne voit que
+     * les flux encore abonnés). Les flux d'un autre compte, eux, restent dans `subscriptions`.
+     */
+    @Query("UPDATE articles SET laterSaved = 0, laterProvider = '' WHERE laterProvider = :provider AND feedId NOT IN (SELECT id FROM subscriptions)")
+    suspend fun clearLaterOrphans(provider: String)
     /** Oublie le marquage « Read later » d'un service supprimé (compte retiré) : sans cela les
      *  articles d'un autre flux gardaient le marquage et restaient dans les Favoris. */
     @Query("UPDATE articles SET laterSaved = 0, laterProvider = '' WHERE laterProvider = :provider")
@@ -430,8 +438,8 @@ interface PressDao {
      * synchronisation interrompue). La comparaison avec le disque est faite par l'appelant —
      * une image déjà là n'est jamais retéléchargée.
      */
-    @Query("SELECT DISTINCT imageUrl FROM articles WHERE imageCached = 1 AND imageUrl IS NOT NULL AND imageUrl != ''")
-    suspend fun cachedThumbUrls(): List<String>
+    @Query("SELECT imageUrl, feedId, feedTitle, title FROM articles WHERE imageCached = 1 AND imageUrl IS NOT NULL AND imageUrl != '' GROUP BY imageUrl")
+    suspend fun cachedThumbUrls(): List<CachedThumb>
     /**
      * Remplace l'URL d'un flux local par le nom qu'il annonce (nom de la chaîne YouTube).
      *
@@ -532,7 +540,7 @@ interface PressDao {
      * **Paginée** (`limit`/`offset`) : l'écran charge 200 résultats puis la tranche suivante au
      * défilement ; un `LIMIT 200` fixe laissait les résultats plus anciens inatteignables.
      */
-    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' OR content LIKE '%' || :q || '%'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' ESCAPE '\\' OR author LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' ESCAPE '\\' OR content LIKE '%' || :q || '%' ESCAPE '\\'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun search(
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
         onlyUnread: Int, limit: Int, offset: Int
@@ -702,6 +710,16 @@ data class DuplicateRow(
     val title: String = "",
     val imageUrl: String?,
     val url: String
+)
+/**
+ * Miniature annoncée comme téléchargée (drapeau `imageCached`), avec de quoi nommer son
+ * propriétaire si le fichier a disparu du disque et que le retéléchargement échoue.
+ */
+data class CachedThumb(
+    val imageUrl: String,
+    val feedId: String = "",
+    val feedTitle: String = "",
+    val title: String = ""
 )
 /** Médias d'un article relus par paquet pour la passe miniatures (voir [PressDao.mediaOfIds]). */
 data class ArticleMediaById(val id: String, val imageUrl: String?, val url: String, val summary: String?, val content: String?)

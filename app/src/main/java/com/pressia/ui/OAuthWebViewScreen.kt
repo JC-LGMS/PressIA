@@ -185,14 +185,22 @@ private fun WebLoginView(url: String, redirectBase: String, onRedirect: (String)
             WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                // Une page distante n'a pas à lire les fichiers de l'appareil.
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val u = request.url.toString()
-                        return onRedirect(u)
+                        if (onRedirect(u)) return true
+                        // Seul le web se charge ici : ni `file://`, ni `intent://`, ni
+                        // `javascript:` venus d'une page distante (les retours OAuth, eux, sont
+                        // interceptés par `onRedirect` juste au-dessus).
+                        return !isWebUrl(u)
                     }
                     @Suppress("DEPRECATION")
                     override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                        return onRedirect(url)
+                        if (onRedirect(url)) return true
+                        return !isWebUrl(url)
                     }
                 }
                 onView(this)
@@ -217,3 +225,11 @@ private fun WebLoginView(url: String, redirectBase: String, onRedirect: (String)
         }
     )
 }
+
+/**
+ * Seul le web se charge dans les WebView de connexion : une page distante qui renvoie un
+ * `file://`, un `intent://` ou un `javascript:` n'a rien à y faire. Les retours OAuth
+ * (`pressia://oauth`) sont interceptés **avant** cet appel, dans chaque `onRedirect`.
+ */
+internal fun isWebUrl(url: String): Boolean =
+    url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)

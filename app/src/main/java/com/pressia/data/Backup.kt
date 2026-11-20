@@ -48,7 +48,16 @@ const val BACKUP_VERSION = 1
  * celle qui a écrit le fichier (`appVersionName`, mis à l'export) et celle qui le refuse.
  */
 fun checkBackupFormat(root: JSONObject) {
-    val format = root.optInt("backupVersion", 1)
+    // Un format non entier (« 1.5 », « 2 » en texte) ne vient pas d'un export de PressIA :
+    // `optInt` l'arrondissait et laissait passer une sauvegarde que cette version ne sait pas lire.
+    val raw = root.opt("backupVersion")
+    val format = if (raw == null || raw == JSONObject.NULL) 1 else {
+        require(raw is Number && raw.toDouble() == raw.toInt().toDouble()) {
+            "sauvegarde de format illisible ($raw) ; cette version-ci " +
+                "(${BuildConfig.VERSION_NAME}) ne sait pas la lire"
+        }
+        (raw as Number).toInt()
+    }
     require(format <= BACKUP_VERSION) {
         val author = root.optString("appVersionName").takeIf { it.isNotBlank() } ?: "inconnue"
         "sauvegarde de la version $author (format $format) ; cette version-ci " +
@@ -106,6 +115,33 @@ val NON_EXPORTED_PREFS = setOf(
     Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name,
     Prefs.BACKUP_CHECKPOINT.name, Prefs.BACKUP_CHECKPOINT_HASH.name, Prefs.BACKUP_NUDGE_AT.name
 )
+
+/**
+ * Une préférence du fichier peut-elle être appliquée ? Les clés propres à l'appareil n'en
+ * reviennent jamais ; un secret seulement si le fichier a été exporté avec les jetons.
+ */
+fun shouldRestorePref(key: String, hasTokens: Boolean): Boolean =
+    key !in NON_EXPORTED_PREFS && (hasTokens || key !in SECRET_PREFS)
+
+/**
+ * Valeurs de préférences réellement applicables, tirées de la section « prefs » d'un fichier :
+ * les clés propres à l'appareil et les secrets écartés (voir [shouldRestorePref]), comme les
+ * valeurs d'un type inexploitable (objet, tableau, `null` — sauvegarde abîmée). Pure et testée :
+ * c'est la règle qui protège les réglages et les jetons d'une restauration partielle.
+ */
+fun restorablePrefs(prefsJson: JSONObject?, hasTokens: Boolean): Map<String, Any> {
+    if (prefsJson == null) return emptyMap()
+    val out = LinkedHashMap<String, Any>()
+    val keys = prefsJson.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        val v = prefsJson.get(key)
+        if (v !is Boolean && v !is Number && v !is String) continue
+        if (!shouldRestorePref(key, hasTokens)) continue
+        out[key] = v
+    }
+    return out
+}
 
 /** Article lu d'un flux local à rejouer après restauration (voir `RESTORED_READ`). */
 data class RestoredRead(val feedId: String, val id: String, val readAt: Long?)
@@ -293,25 +329,15 @@ suspend fun PressRepository.restaurationJson(
     val hasTokens = root.optBoolean("tokens", false)
     var report = ImportReport()
 
-    root.optJSONObject(Sections.PREFS)?.let { o ->
-        if (Sections.PREFS in sections) {
-            var n = 0
-            val keys = o.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val v = o.get(key)
-                // Seuls booléen, nombre et texte sont des valeurs de préférence exploitables :
-                // un objet, un tableau ou `null` vient d'une sauvegarde abimée et est ignoré.
-                if (v !is Boolean && v !is Number && v !is String) continue
-                // Sans « jetons », on n'écrase jamais un secret déjà présent sur l'appareil.
-                if (!hasTokens && key in SECRET_PREFS) continue
-                if (key in NON_EXPORTED_PREFS) continue
-                // `setByName` renvoie faux pour une clé inconnue ou un type incohérent : elle
-                // n'est alors pas comptée, et le rapport ne surestime pas la restauration.
-                if (prefs.setByName(key, v)) n++
-            }
-            report = report.copy(prefs = n)
-        }
+    if (Sections.PREFS in sections) {
+        // La décision (clés de l'appareil, secrets, types inexploitables) est pure et testée ;
+        // ici on ne fait plus qu'appliquer.
+        val values = restorablePrefs(root.optJSONObject(Sections.PREFS), hasTokens)
+        var n = 0
+        // `setByName` renvoie faux pour une clé inconnue ou un type incohérent : elle n'est
+        // alors pas comptée, et le rapport ne surestime pas la restauration.
+        values.forEach { (key, v) -> if (prefs.setByName(key, v)) n++ }
+        report = report.copy(prefs = n)
     }
 
     root.optJSONObject(Sections.ACCOUNTS)?.let { o ->

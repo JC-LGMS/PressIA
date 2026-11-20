@@ -141,6 +141,8 @@ fun ArticleScreen(
     // Barre de sélection du texte : celle du système (copier, tout sélectionner) complétée par
     // « Rechercher sur Internet » et « Traduire ».
     val textToolbar = remember { ArticleTextToolbar() }
+    // L'arme « l'appui suivant retire la sélection » ne survit pas à un changement d'article.
+    LaunchedEffect(articleId) { textToolbar.clearArmed = false }
 
     // Voisins du balayage horizontal (ordre du plus récent au plus ancien) : la liste de l'écran
     // qui a ouvert l'article — celle des favoris quand on vient des Favoris, sinon celle du flux
@@ -205,6 +207,9 @@ fun ArticleScreen(
         loadingFull = true
         try {
             val res = vm.repo.ensureFull(a.id)
+            // Un balayage a pu changer d'article pendant l'extraction : ce résultat-là ne doit
+            // pas écraser l'écran (on y verrait le titre et le corps de A sous l'article B).
+            if (a.id != articleId) return
             // La base a pu changer (extraction enregistrée, cache vérolé purgé) : c'est elle qui
             // dit quelle version du texte s'affiche.
             val fresh = vm.repo.article(a.id) ?: a
@@ -266,8 +271,11 @@ fun ArticleScreen(
         val openedAt = System.currentTimeMillis()
         clock.resume(openedAt)
         fun save() {
-            val secs = clock.pause(System.currentTimeMillis()) ?: return
+            // Rien à enregistrer tant que l'article affiché n'est pas celui de cet effet :
+            // sinon le temps du voisin qui charge encore était crédité à l'article précédent.
             val cur = article ?: return
+            if (cur.id != articleId) return
+            val secs = clock.pause(System.currentTimeMillis()) ?: return
             vm.logReading(cur.id, cur.feedId, openedAt, secs)
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -584,7 +592,14 @@ fun ArticleScreen(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            val blocks = remember(html, article?.url) { articleBlocks(html.orEmpty(), article?.url.orEmpty()) }
+            // Découpage jsoup hors du fil principal : un article complet fait jusqu'à 300 000
+            // caractères, et il bloquait l'affichage à l'ouverture, puis une seconde fois quand
+            // l'extraction remplaçait le texte.
+            val blocks by produceState(emptyList<ABlock>(), html, article?.url) {
+                value = withContext(Dispatchers.Default) {
+                    articleBlocks(html.orEmpty(), article?.url.orEmpty())
+                }
+            }
             // Image principale du flux (mise en cache hors-ligne), masquée si l'extrait RSS affiche
             // déjà cette image (doublon) ou en mode complet (images de la page extraite).
             //
@@ -600,36 +615,40 @@ fun ArticleScreen(
                 ArticleImage(heroUrl, onOpen = { viewerUrl = heroUrl },
                     onDoubleTap = { fireArticleAction(doubleTap) })
             }
-            blocks.forEach { b ->
-                when (b) {
-                    // Les liens du paragraphe sont dans le texte (annotations de lien) : la phrase
-                    // reste d'un seul tenant, le lien ne passe plus à la ligne.
-                    is ABlock.T -> ArticleTextBlock(b, MaterialTheme.colorScheme.primary, fontSize)
-                    is ABlock.Table -> ArticleTable(b, fontSize)
-                    is ABlock.I -> ArticleImage(b.url, onOpen = { viewerUrl = b.url },
-                        onDoubleTap = { fireArticleAction(doubleTap) })
-                    is ABlock.L -> Text(
-                        text = b.text,
-                        fontSize = fontSize.sp,
-                        lineHeight = (fontSize + 6).sp,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline
-                        ),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { openUrl(ctx, b.url) },
-                                onDoubleClick = { fireArticleAction(doubleTap) }
-                            )
-                    )
-                    is ABlock.V -> VideoPlayer(
-                        url = b.url,
-                        poster = b.poster,
-                        embed = b.embed,
-                        modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
-                            .playerGesture(inPlayer)
-                    )
+            // Bloc indexé par article : sans clé, Compose réutilisait l'emplacement d'une vidéo
+            // d'un article à l'autre (lecteur resté monté sur le suivant).
+            blocks.forEachIndexed { index, b ->
+                androidx.compose.runtime.key(articleId, index) {
+                    when (b) {
+                        // Les liens du paragraphe sont dans le texte (annotations de lien) : la phrase
+                        // reste d'un seul tenant, le lien ne passe plus à la ligne.
+                        is ABlock.T -> ArticleTextBlock(b, MaterialTheme.colorScheme.primary, fontSize)
+                        is ABlock.Table -> ArticleTable(b, fontSize)
+                        is ABlock.I -> ArticleImage(b.url, onOpen = { viewerUrl = b.url },
+                            onDoubleTap = { fireArticleAction(doubleTap) })
+                        is ABlock.L -> Text(
+                            text = b.text,
+                            fontSize = fontSize.sp,
+                            lineHeight = (fontSize + 6).sp,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = MaterialTheme.colorScheme.primary,
+                                textDecoration = TextDecoration.Underline
+                            ),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { openUrl(ctx, b.url) },
+                                    onDoubleClick = { fireArticleAction(doubleTap) }
+                                )
+                        )
+                        is ABlock.V -> VideoPlayer(
+                            url = b.url,
+                            poster = b.poster,
+                            embed = b.embed,
+                            modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+                                .playerGesture(inPlayer)
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -853,6 +872,12 @@ internal class ArticleTextToolbar : TextToolbar {
         // showMenu d'un texte voisin — le menu disparaissait aussitôt. Un masquage demandé par
         // l'utilisateur (appui à côté, Retour, action) arrive bien plus tard.
         if (android.os.SystemClock.uptimeMillis() - shownAt < 250) return
+        dismiss()
+    }
+
+    /** Fermeture demandée par l'utilisateur (Retour, appui à côté) : le garde-fou de [hide] ne
+     *  s'applique pas, sinon un Retour juste après l'appui restait sans effet. */
+    fun dismiss() {
         dismissedRect = menu?.rect
         dismissedAt = android.os.SystemClock.uptimeMillis()
         menu = null
@@ -866,7 +891,7 @@ internal class ArticleTextToolbar : TextToolbar {
 @Composable
 internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.Context) {
     val menu = toolbar.menu ?: return
-    androidx.activity.compose.BackHandler { toolbar.hide() }
+    androidx.activity.compose.BackHandler { toolbar.dismiss() }
     val density = androidx.compose.ui.platform.LocalDensity.current
     // Origine de la zone dans la fenêtre : `menu.rect` est en coordonnées de fenêtre.
     var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }

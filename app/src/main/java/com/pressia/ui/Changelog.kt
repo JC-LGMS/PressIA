@@ -47,6 +47,48 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.21",
+        listOf(
+            ChangelogItem(
+                "2026-11-21",
+                "Audit : sécurité des connexions, données des comptes et confort de lecture",
+                "- Connexion : plus de cookie de session Inoreader dans les journaux et en-tête du " +
+                    "compte masqué ; les pages de connexion ne chargent que du web (ni fichier, ni " +
+                    "intent, ni javascript:), le retour OAuth fonctionne comme avant.\n\n" +
+                "- Recherche : « % » et « _ » sont cherchés comme du texte ; l'étoile s'affiche et " +
+                    "se retire dans les résultats.\n\n" +
+                "- Flux locaux : une entrée sans date reste sans date, Atom retient le lien " +
+                    "« alternate », une page HTML répondant 200 est signalée comme flux invalide, " +
+                    "et les articles sont écrits par paquets (plus de plafond global entre flux).\n\n" +
+                "- Historique : la pagination ne jette plus la page qui traverse la fenêtre — un " +
+                    "flux Inoreader ou FreshRSS pouvait arriver vide.\n\n" +
+                "- « À lire plus tard » : un tableau vidé chez le compte retire les marques " +
+                    "locales, y compris pour les flux qu'on ne suit plus ; supprimer un compte " +
+                    "n'efface plus celles du compte jumeau du même service.\n\n" +
+                "- Abonnements : un flux suivi par deux comptes du même service garde un " +
+                    "propriétaire stable et se désabonne chez tous ceux qui le suivent ; ajout et " +
+                    "retrait passent sous le verrou de synchronisation.\n\n" +
+                "- Lecture hors-ligne : une poussée ratée (quota, réseau) ne fait plus rouvrir les " +
+                    "articles lus à la descente suivante.\n\n" +
+                "- Article : chronomètre crédité au bon article, blocs vidéo propres à chaque " +
+                    "article, une extraction terminée pendant un balayage n'écrase plus l'écran, " +
+                    "découpage du texte hors du fil principal.\n\n" +
+                "- Dossiers : renommer un dossier fusionné agit vraiment ; créer un nom existant le " +
+                    "réutilise ; déconnexion nettoyée en une transaction, synchro en cours attendue.\n\n" +
+                "- Confort : Favoris garde son jeu au démarrage, voisins de balayage corrects, " +
+                    "« Vider le cache » confirmé, curseurs des Réglages enregistrés au relâchement, " +
+                    "sonde Inoreader espacée et bornée.\n\n" +
+                "- Sauvegardes : copie automatique sous verrou et anti-résurrection, format non " +
+                    "entier refusé, préférences de l'appareil jamais restaurées, décision de " +
+                    "restauration testée ; miniatures perdues nommées ; OPML sans caractères de " +
+                    "contrôle.\n\n" +
+                "- Build : vrai wrapper Gradle, deux dépendances inutilisées et deux préférences " +
+                    "mortes retirées.",
+                time = "00:47"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.20",
         listOf(
             ChangelogItem(

@@ -119,10 +119,11 @@ fun InoreaderIdsDialog(
                     )
                     SelectionContainer {
                         Text(
-                            when (cred) {
-                                is InoreaderAuth.WebCookie -> "Cookie: " + cred.cookie
-                                is InoreaderAuth.OAuth -> "Authorization: GoogleLogin auth=" + cred.token
-                                null -> "…"
+                            when {
+                                cred == null -> "…"
+                                !showToken -> "masqué (bouton œil pour afficher)"
+                                cred is InoreaderAuth.WebCookie -> "Cookie: " + cred.cookie
+                                else -> "Authorization: GoogleLogin auth=" + (cred as InoreaderAuth.OAuth).token
                             },
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
