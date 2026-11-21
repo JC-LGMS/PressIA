@@ -47,6 +47,32 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.22",
+        listOf(
+            ChangelogItem(
+                "2026-11-22",
+                "Session expirée annoncée tôt, et comptes à égalité",
+                "- Session expirée : avec un seul compte connecté, le bandeau le signale dès le " +
+                    "début de la synchronisation (et dès le refus reçu, s'il tombe en route) au " +
+                    "lieu d'attendre le message final ; le raccourci « Reconnecter » est là tout " +
+                    "de suite. Le bandeau ne se referme plus tout seul : il reste tant que la " +
+                    "session n'est pas rétablie, et revient sur les écrans de contenu s'il a été " +
+                    "fermé pour ouvrir la page de connexion.\n\n" +
+                "- Plusieurs comptes : l'annonce attend la fin de la synchronisation des autres " +
+                    "(leurs étapes défilent dans le même bandeau), puis reste affichée de la même " +
+                    "façon.\n\n" +
+                "- Comptes à égalité : plus de « compte actif » ni de bouton radio dans l'écran " +
+                    "Comptes — chaque compte affiche son nombre de flux et tous sont synchronisés " +
+                    "à chaque passe. La phrase « le compte actif est celui qui est synchronisé en " +
+                    "premier » disparaît (elle était fausse : les comptes partent en parallèle). " +
+                    "Le réglage interne `active_account` et le code mort qui l'accompagnait sont " +
+                    "retirés ; le repli historique provider/token reste tenu par le premier " +
+                    "compte.",
+                time = "00:12"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.21",
         listOf(
             ChangelogItem(

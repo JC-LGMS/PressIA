@@ -19,16 +19,15 @@ sealed class PrefEntry(val name: String) {
 /** Réglages PressIA (miroir des prefs de Press + ajouts). */
 class Prefs(private val ctx: Context) {
     companion object {
-        val PROVIDER = stringPreferencesKey("provider") // "feedly" | "inoreader" | "local" (compte actif)
+        val PROVIDER = stringPreferencesKey("provider") // repli historique : 1er compte du registre
         val TOKEN = stringPreferencesKey("token")
 
         /**
          * Comptes externes connectés, sérialisés en JSON ([AccountStore.encode]). Plusieurs comptes
          * du même service sont acceptés : chacun a son propre jeton, ses propres dossiers et ses
-         * propres abonnements. [ACTIVE_ACCOUNT] désigne celui qui sert aux opérations courantes.
+         * propres abonnements. Tous sont synchronisés ; il n'y a plus de « compte actif ».
          */
         val ACCOUNTS = stringPreferencesKey("accounts")
-        val ACTIVE_ACCOUNT = stringPreferencesKey("active_account")
         val THEME = stringPreferencesKey("theme") // "system"|"light"|"dark"|"amoled" (legacy, remplacé par APPEARANCE/NIGHT_THEME)
         /** Apparence choisie dans le drawer : "auto" | "light" (jour) | "night" (nuit). */
         val APPEARANCE = stringPreferencesKey("appearance")
@@ -295,7 +294,7 @@ class Prefs(private val ctx: Context) {
         /** Toutes les préférences, typées : sauvegarde / restauration par nom. */
         val ENTRIES: List<PrefEntry> = listOf(
             PrefEntry.Str("provider", PROVIDER), PrefEntry.Str("token", TOKEN),
-            PrefEntry.Str("accounts", ACCOUNTS), PrefEntry.Str("active_account", ACTIVE_ACCOUNT),
+            PrefEntry.Str("accounts", ACCOUNTS),
             PrefEntry.Str("theme", THEME), PrefEntry.Str("appearance", APPEARANCE),
             PrefEntry.Str("night_theme", NIGHT_THEME),
             PrefEntry.IntPref("light_threshold", LIGHT_THRESHOLD),

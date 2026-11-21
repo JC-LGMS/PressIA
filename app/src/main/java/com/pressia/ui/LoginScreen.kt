@@ -79,12 +79,8 @@ fun LoginScreen(
     val accounts = vm.accounts
     /** Compte Inoreader connecté : c'est lui qui porte l'en-tête d'authentification (AUTH). */
     val inoAccount = accounts.firstOrNull { it.service == "inoreader" }
-    val activeId by vm.activeAccountId.collectAsState()
     // Comptes à la session expirée : avertis avec réinvite (boutons de connexion existants).
     val expired by vm.expiredAccounts.collectAsState()
-    // [AccountInfo.provider] porte l'identifiant du compte actif : c'est le repli quand la
-    // préférence n'a pas encore été lue, pour que la ligne du compte actif soit cochée d'emblée.
-    val active = activeId ?: vm.account?.provider
 
     LaunchedEffect(Unit) {
         val d = vm.repo.prefs.data.first()
@@ -293,38 +289,9 @@ fun LoginScreen(
                 AccountRow(
                     account = acc,
                     feeds = vm.subs.count { it.provider == acc.id },
-                    active = acc.id == active,
                     expired = acc.id in expired,
-                    onSelect = { vm.useAccount(acc); toast(ctx, "Compte ${acc.label} actif") },
                     onRemove = { removing = acc }
                 )
-            }
-            Text(
-                "Le compte actif est celui qui est synchronisé en premier. Les autres restent " +
-                    "connectés et conservent leurs propres dossiers et abonnements.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        // Feed RSS local seul : aucun compte connecté.
-        if (accounts.isEmpty()) {
-            HorizontalDivider()
-            vm.account?.let { info ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.RssFeed, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            if (isLocalProvider(info.provider)) "Flux RSS locaux uniquement" else info.label,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            "${info.feeds} flux", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
             }
         }
 
@@ -566,31 +533,29 @@ fun LoginScreen(
     }
 }
 
-/** Ligne d'un compte connecté : coché si actif, avec son nombre de flux et sa suppression. */
+/** Ligne d'un compte connecté : son nombre de flux et sa suppression. */
 @Composable
 private fun AccountRow(
     account: CloudAccount,
     feeds: Int,
-    active: Boolean,
     expired: Boolean,
-    onSelect: () -> Unit,
     onRemove: () -> Unit
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = !active, onClick = onSelect)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RadioButton(active, onClick = { if (!active) onSelect() })
+        Icon(Icons.Filled.RssFeed, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 if (account.name.isNotBlank()) "${account.label} · ${account.name}" else account.label,
                 style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Text(
-                "$feeds flux${if (active) " · compte actif" else ""}",
+                "$feeds flux",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

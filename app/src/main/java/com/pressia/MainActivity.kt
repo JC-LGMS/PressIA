@@ -406,19 +406,17 @@ class MainActivity : ComponentActivity() {
                         }
                         // Sinon : le bandeau persistant est déjà affiché, le slot suit
                         // msg en direct.
+                    } else if (vm.expiredAccounts.value.isNotEmpty() && msg == EXPIRED_SESSION_MSG) {
+                        // Session expirée : le bandeau ne se ferme plus tout seul, le raccourci
+                        // « Reconnecter » reste tant qu'on n'a pas reconnecté (l'effet suivant le
+                        // referme une fois le compte rétabli). Les autres messages, eux, gardent
+                        // leur durée ordinaire.
+                        if (bannerJob == null) launchBanner()
                     } else if (bannerJob != null) {
                         // Fin de synchro : le bandeau reste ouvert, seul le texte passe au
-                        // message final — aucune fermeture/réouverture intermédiaire.
-                        // Une session expirée laisse plus de temps : le raccourci
-                        // « Reconnecter » ne doit pas disparaître sous le doigt ; le bouton
+                        // message final — aucune fermeture/réouverture intermédiaire. Le bouton
                         // « Voir le détail » n'a que les 5 s du bandeau ordinaire.
-                        delay(
-                            when {
-                                vm.expiredAccounts.value.isNotEmpty() -> 12_000
-                                vm.syncMsg == vm.detailMsg -> 5_000
-                                else -> 4_000
-                            }
-                        )
+                        delay(if (vm.syncMsg == vm.detailMsg) 5_000 else 4_000)
                         snackbarHostState.currentSnackbarData?.dismiss()
                         bannerJob = null
                         if (vm.syncMsg == msg) vm.syncMsg = null
@@ -429,6 +427,23 @@ class MainActivity : ComponentActivity() {
                             vm.syncMsg = null
                         }
                     }
+                }
+                // Reconnexion faite (plus aucun compte en 401) : le bandeau persistant se referme.
+                LaunchedEffect(expiredIds) {
+                    if (expiredIds.isEmpty() && !vm.syncing && vm.syncMsg == EXPIRED_SESSION_MSG) {
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        bannerJob = null
+                        vm.syncMsg = null
+                    }
+                }
+                // Session expirée : le bandeau revient sur les écrans de contenu tant que rien
+                // n'a été reconnecté (il a pu être refermé pour ouvrir la page de connexion, ou
+                // balayé). Pendant une synchro ce sont ses étapes qui parlent, et les écrans
+                // utilitaires (connexion comprise) gardent leur place.
+                LaunchedEffect(current, expiredIds) {
+                    if (expiredIds.isNotEmpty() && !vm.syncing && vm.syncMsg == null &&
+                        current !in UTILITY_ROUTES
+                    ) vm.syncMsg = EXPIRED_SESSION_MSG
                 }
 
                 Box(Modifier.fillMaxSize()) {

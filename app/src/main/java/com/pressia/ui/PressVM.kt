@@ -270,8 +270,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     suspend fun onLeftArticle() {
         if (prefs.data.first()[Prefs.READABILITY_STICKY] != true) readabilityOn = false
     }
-    /** Infos du compte connecté (écran Comptes). */
-    var account by mutableStateOf<com.pressia.data.AccountInfo?>(null)
     /** Compteurs de non-lus par flux (feedId → count), pour l'écran Accueil et le drawer. */
     var unreads by mutableStateOf<Map<String, Int>>(emptyMap())
     /** Non-lus agrégés par dossier affiché (drawer). */
@@ -311,6 +309,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             else -> "system"
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "system")
+    /**
+     * Service du premier compte du registre, « local » quand il n'y en a aucun : c'est le miroir
+     * historique tenu par `PressRepository.mirrorLegacyAccount`. Sert à vider la file montante
+     * quand le dernier compte disparaît (plus personne à qui pousser ses actions).
+     */
     val provider: StateFlow<String> = prefs.flow(Prefs.PROVIDER, "local").stateIn(viewModelScope, SharingStarted.Eagerly, "local")
     val accent: StateFlow<String> = prefs.flow(Prefs.ACCENT, "red").stateIn(viewModelScope, SharingStarted.Eagerly, "red")
     val bg: StateFlow<String> = prefs.flow(Prefs.BG, "default").stateIn(viewModelScope, SharingStarted.Eagerly, "default")
@@ -397,10 +400,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val homeScale: StateFlow<Int> = prefs.flow(Prefs.HOME_TEXT_SCALE, 100).stateIn(viewModelScope, SharingStarted.Eagerly, 100)
     /** Synchronisation automatique au lancement de l'application. */
     val syncOnLaunch: StateFlow<Boolean> = prefs.flow(Prefs.SYNC_ON_LAUNCH, true).stateIn(viewModelScope, SharingStarted.Eagerly, true)
-    /** Identifiant du compte actif, null en RSS local — sert à cocher le compte dans l'écran Comptes. */
-    val activeAccountId: StateFlow<String?> = prefs.flow(Prefs.ACTIVE_ACCOUNT, "")
-        .map { it.ifBlank { null } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Filtre « non-lus seuls » du périmètre courant : chaque flux rouvre avec son dernier
@@ -436,7 +435,28 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // `finally` du dépôt) sont ignorés : sans cela l'écran rouvert plus tard dans le
         // même processus rejouait la dernière étape en bandeau.
         viewModelScope.launch {
-            repo.syncStep.collect { if (it != null && !feedOp) syncMsg = it }
+            repo.syncStep.collect { step ->
+                if (step == null || feedOp) return@collect
+                // Compte unique à la session expirée : l'étape en cours ne doit pas masquer le
+                // message (ni le raccourci « Reconnecter »), qui vaut pour toute la passe.
+                syncMsg = if (accounts.size == 1 && expiredAccounts.value.isNotEmpty()) {
+                    EXPIRED_SESSION_MSG
+                } else step
+            }
+        }
+        // Session expirée : avec un seul compte, le bandeau le dit **dès** que la passe commence
+        // (ou dès le 401 reçu), sans attendre le message final ; il reste ensuite affiché tant
+        // que la reconnexion n'a pas eu lieu. Avec plusieurs comptes, les autres continuent de
+        // défiler dans le même bandeau : on garde l'annonce pour la fin de leur synchro.
+        viewModelScope.launch {
+            expiredAccounts.collect { expired ->
+                if (expired.isEmpty()) {
+                    // Session rétablie (ou compte retiré) : le message persistant s'efface.
+                    if (!syncing && syncMsg == EXPIRED_SESSION_MSG) syncMsg = null
+                } else if (syncing && accounts.size == 1) {
+                    syncMsg = EXPIRED_SESSION_MSG
+                }
+            }
         }
         // Contenu stocké modifié en cours de route (abonnements approvisionnés, fin de passe
         // articles ou « Read later ») : l'accueil et les compteurs suivent sans attendre la
@@ -449,7 +469,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             collapsedFolders = prefs.flow(Prefs.COLLAPSED_FOLDERS, "").first()
                 .split(',').map { it.trim() }.filter { it.isNotBlank() }.toSet()
         }
-        // Bascule vers le RSS local : plus rien à pousser, on vide la file.
+        // Dernier compte retiré : plus rien à pousser, on vide la file.
         // `drop(1)` : l'état initial de `provider` est « local » tant que la préférence n'est
         // pas lue. Sans ce filtre, la file était vidée à *chaque* création du ViewModel — donc
         // à chaque démarrage : les actions en attente (marquage groupé, lecture hors-ligne)
@@ -737,8 +757,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             unlockSync()
         }
         refreshNow()
-        // Le compteur de l'écran Comptes (`AccountInfo.feeds`) ne suit pas `refreshNow`.
-        account = repo.accountInfo()
         syncMsg = if (ok) "Flux désabonné." else "Désabonnement refusé par $label."
     }
 
@@ -805,8 +823,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             }
         } finally {
             refreshNow()
-            // Voir deleteFeed : le compteur Comptes ne suit pas `refreshNow`.
-            account = repo.accountInfo()
             localFeedAdding = false
             done(result)
         }
@@ -1400,7 +1416,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun loadDups() = viewModelScope.launch { loadDupsNow() }
     fun loadAccount() = viewModelScope.launch {
         repo.migrateLegacyAccount()
-        account = repo.accountInfo()
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
     }
@@ -1744,7 +1759,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             val connected = repo.addAccount(service, token, name, refreshToken)
             val reconnected = connected.id in known
             refreshNow()
-            account = repo.accountInfo()
             lockSync()
             try {
                 syncMsg = try {
@@ -1785,11 +1799,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             onDone(null)
         }
 
-    fun useAccount(acc: com.pressia.data.CloudAccount) = viewModelScope.launch {
-        repo.setActiveAccount(acc.id)
-        refreshNow()
-        account = repo.accountInfo()
-    }
     fun disconnectAccount(acc: com.pressia.data.CloudAccount) = viewModelScope.launch {
         // Stoppe tout travail en cours (synchro, approvisionnement) puis supprime sous verrou :
         // sinon leurs écritures resurrectent des articles après le ménage — compteur, listes
@@ -1802,6 +1811,5 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         syncJob?.join()
         repo.withSyncLock { repo.deleteAccount(acc.id) }
         refreshNow()
-        account = repo.accountInfo()
     }
 }

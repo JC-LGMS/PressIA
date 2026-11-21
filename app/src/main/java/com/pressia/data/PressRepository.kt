@@ -529,8 +529,8 @@ class PressRepository(
             // plus, le renouvellement échouera sans dommage — l'ancien jeton reste en place.
             accounts[idx] = accounts[idx].copy(token = token, userId = newUserId)
             prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
-            // Le miroir historique (TOKEN/PROVIDER) suit le compte actif.
-            if (prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == accountId) setActiveAccount(accountId)
+            // Le miroir historique (TOKEN/PROVIDER) suit le premier compte du registre.
+            mirrorLegacyAccount(accounts)
             }
             runCatching { p.profile(token) }.getOrNull()?.takeIf { it.isNotBlank() }
         }
@@ -564,7 +564,6 @@ class PressRepository(
         if (isLocalProvider(provider)) return@withLock
         val account = CloudAccount(accountIdOf(provider, token), provider, token)
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(listOf(account)))
-        prefs.set(Prefs.ACTIVE_ACCOUNT, account.id)
     }
 
     /**
@@ -598,7 +597,7 @@ class PressRepository(
         accounts = AccountStore.refreshToken(accounts, service, token, name, userId, refreshToken)
         val account = accounts.first { it.token == token && it.service == svc }
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
-        setActiveAccount(account.id)
+        mirrorLegacyAccount(accounts)
         // Une reconnexion du même service lève l'alerte des anciens jetons : l'utilisateur a
         // déjà agi, inutile de continuer à lui demander.
         clearExpiredOfService(service)
@@ -640,7 +639,8 @@ class PressRepository(
             refreshToken = tokens.refresh
         )
         prefs.set(Prefs.ACCOUNTS, AccountStore.encode(accounts))
-        if (prefs.data.first()[Prefs.ACTIVE_ACCOUNT] == account.id) setActiveAccount(account.id)
+        // Le miroir historique (PROVIDER/TOKEN) suit le premier compte du registre.
+        mirrorLegacyAccount(accounts)
         }
         android.util.Log.i("PressIA", "Inoreader : jeton d'accès renouvelé pour ${account.id}")
         tokens.access
@@ -670,7 +670,6 @@ class PressRepository(
             // ils s'effacent **avant** lui, sinon une coupure entre les deux ferait
             // réapparaître le compte supprimé.
             if (accounts.isEmpty()) {
-                prefs.set(Prefs.ACTIVE_ACCOUNT, "")
                 prefs.set(Prefs.PROVIDER, LOCAL_PROVIDER)
                 prefs.set(Prefs.TOKEN, "")
             }
@@ -721,11 +720,9 @@ class PressRepository(
             readLaterHashes().filterKeys { it !in twinIds }.forEach { (k, v) -> o.put(k, v) }
             prefs.set(Prefs.READLATER_HASHES, o.toString())
         }
-        if (remaining.isNotEmpty() && prefs.data.first()[Prefs.ACTIVE_ACCOUNT].let { it == null || it == accountId }) {
-            // Le compte actif est celui qu'on vient de supprimer : `setActiveAccount` réaligne
-            // alors les trois préférences d'un coup.
-            setActiveAccount(remaining.first().id)
-        }
+        // Le miroir historique (PROVIDER/TOKEN) repasse au premier compte restant, s'il en
+        // reste : sans cela il désignerait un compte supprimé.
+        if (remaining.isNotEmpty()) mirrorLegacyAccount(remaining)
         // Fichiers en dernier (lent, tuable sans casse) : ne restent au pire que des orphelins.
         // Coil d'abord (favicons, plein format) : testé, il gardait ~2 Mo après déconnexion.
         runCatching { coil.Coil.imageLoader(ctx).diskCache?.clear() }
@@ -786,24 +783,18 @@ class PressRepository(
         }
     }
 
-    /** Compte servant aux opérations courantes (le premier connecté si aucun n'est désigné). */
-    suspend fun activeAccount(): CloudAccount? {        val accounts = cloudAccounts()
-        if (accounts.isEmpty()) return null
-        val wanted = prefs.data.first()[Prefs.ACTIVE_ACCOUNT]
-        return accounts.firstOrNull { it.id == wanted } ?: accounts.first()
-    }
-
-    /** Bascule le compte actif, en tenant à jour les préférences historiques. */
-    suspend fun setActiveAccount(accountId: String) {
-        val account = cloudAccounts().firstOrNull { it.id == accountId }
-        if (account == null) {
-            prefs.set(Prefs.ACTIVE_ACCOUNT, "")
-            prefs.set(Prefs.PROVIDER, LOCAL_PROVIDER)
-            return
-        }
-        prefs.set(Prefs.ACTIVE_ACCOUNT, account.id)
-        prefs.set(Prefs.PROVIDER, account.provider)
-        prefs.set(Prefs.TOKEN, account.token)
+    /**
+     * Recopie le premier compte du registre dans les préférences historiques [Prefs.PROVIDER] /
+     * [Prefs.TOKEN] : c'est le repli de [cloudAccounts] quand le registre est vide (installation
+     * d'avant le multi-compte). Il n'y a plus de « compte actif » : le registre fait foi, et
+     * **tous** les comptes sont synchronisés.
+     */
+    private suspend fun mirrorLegacyAccount(accounts: List<CloudAccount>? = null) {
+        val list = accounts
+            ?: AccountStore.parse(prefs.data.first()[Prefs.ACCOUNTS])
+        val first = list.firstOrNull()
+        prefs.set(Prefs.PROVIDER, first?.provider ?: LOCAL_PROVIDER)
+        prefs.set(Prefs.TOKEN, first?.token.orEmpty())
     }
 
     /** Provider d'un service donné (« feedly », « inoreader », « freshrss », « local »). */
@@ -815,13 +806,6 @@ class PressRepository(
     }
 
     /** Provider du compte actif, ou le fournisseur RSS local quand aucun compte n'est connecté. */
-    suspend fun provider(): FeedProvider {
-        val account = activeAccount() ?: return local.also { it.feeds = dao.subscriptions() }
-        return providerFor(account.provider)
-    }
-
-    /** Jeton du compte actif. */
-    suspend fun token(): String? = activeAccount()?.token ?: prefs.data.first()[Prefs.TOKEN]
     suspend fun maxItems(): Int = prefs.data.first()[Prefs.MAX_ITEMS] ?: 1000
 
     /**
@@ -838,9 +822,6 @@ class PressRepository(
      * l'atteigne — il s'agit d'un garde-fou, pas d'une limite de conception.
      */
     private val backfillSafetyCap = 20000
-    /** Vrai si aucun compte n'est connecté : la file de sync n'a alors aucun sens. */
-    suspend fun isLocal(): Boolean = activeAccount() == null
-
     // ----- Lecture locale -----
     suspend fun categories() = dao.categories()
     suspend fun subscriptions(catId: String? = null) =
@@ -1336,7 +1317,8 @@ class PressRepository(
     suspend fun setRead(id: String, unread: Boolean) = withContext(Dispatchers.IO) {
         val a = dao.article(id) ?: return@withContext
         dao.setRead(id, unread, if (!unread) System.currentTimeMillis() else null)
-        if (!isLocal()) {
+        // Sans aucun compte connecté, la file montante n'a aucun sens : l'état reste local.
+        if (cloudAccounts().isNotEmpty()) {
             dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (unread) "unread" else "read"))
             // Fusionnée avec la passe en cours : lire vingt articles d'affilée ne fait plus
             // vingt allers-retours sérialisés (voir `schedulePush`).
@@ -1405,7 +1387,7 @@ class PressRepository(
      * façon de ne pas perdre le marquage sur un compte qui ignore les marqueurs de masse.
      */
     private suspend fun bulkMarkAllReadAvailable(feedIds: List<String>): Boolean {
-        if (isLocal()) return false
+        if (cloudAccounts().isEmpty()) return false
         val services = if (feedIds.isEmpty()) cloudAccounts().map { it.service }
         else feedIds.mapNotNull { dao.subscription(it)?.provider }.map { providerBase(it) }
         return services.isNotEmpty() && services.distinct().all { providerFor(it).bulkMarkAllRead }
@@ -1422,7 +1404,7 @@ class PressRepository(
         if (ids.isEmpty()) return@withContext
         val now = System.currentTimeMillis()
         ids.chunked(500).forEach { dao.markIdsRead(it, now) }
-        if (!isLocal()) {
+        if (cloudAccounts().isNotEmpty()) {
             val rows = ids.chunked(500).flatMap { chunk ->
                 val feeds = dao.feedOfIds(chunk).associate { it.id to it.feedId }
                 chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "read") }
@@ -1439,7 +1421,7 @@ class PressRepository(
     suspend fun markArticlesUnread(ids: List<String>) = withContext(Dispatchers.IO) {
         if (ids.isEmpty()) return@withContext
         ids.chunked(500).forEach { dao.markIdsUnread(it) }
-        if (!isLocal()) {
+        if (cloudAccounts().isNotEmpty()) {
             val rows = ids.chunked(500).flatMap { chunk ->
                 val feeds = dao.feedOfIds(chunk).associate { it.id to it.feedId }
                 chunk.map { SyncActionEntity(articleId = it, feedId = feeds[it].orEmpty(), kind = "unread") }
@@ -3879,16 +3861,6 @@ class PressRepository(
     }
 
     // ----- Compte -----
-    /** Infos du compte connecté (aucun appel réseau si hors-ligne : on retombe sur le statut local). */
-    suspend fun accountInfo(): AccountInfo {
-        val acc = activeAccount()
-            ?: return AccountInfo(LOCAL_PROVIDER, "Flux RSS locaux", null, localFeeds().size)
-        val fetched = runCatching { providerFor(acc.provider).profile(acc.token) }.getOrNull().orEmpty()
-        val name = acc.name.ifBlank { fetched }.trim().ifBlank { null }
-        val feeds = dao.subscriptions().count { sameAccount(it.provider, acc.id) }
-        return AccountInfo(acc.id, "${serviceLabel(acc.service)} · compte actif", name, feeds)
-    }
-
     /** Flux RSS saisis localement (provider « local » uniquement). */
     suspend fun localFeeds(): List<SubscriptionEntity> =
         dao.subscriptions().filter { isLocalProvider(it.provider) }.sortedBy { it.title.lowercase() }
@@ -4302,14 +4274,6 @@ fun imageFailureNote(count: Int, interrupted: Boolean): String? = when {
 /** Image qu'une passe de synchronisation n'a pas pu récupérer : d'où elle vient, son adresse
  * exacte et la cause courte de l'échec — de quoi remplir le détail du bandeau de fin de synchro. */
 data class FailedImage(val feed: String, val title: String, val url: String, val cause: String)
-
-data class AccountInfo(
-    val provider: String,
-    val label: String,
-    /** Nom / e-mail du compte côté cloud (null si l'API ne l'a pas donné). */
-    val user: String?,
-    val feeds: Int
-)
 
 data class ReadingStats(
     /** Articles ouverts au moins une fois. */

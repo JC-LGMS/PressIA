@@ -1333,7 +1333,7 @@ class PressLogicTest {
         assertFalse("last_sync_at ne doit pas être réimportable", "last_sync_at" in names)
         // Les trois OAuth / comptes que l'écran de connexion renseigne doivent rester exportables
         // (leur secret est filtré séparément, leur identifiant public est destiné à être partagé).
-        listOf("inoreader_app_id", "feedly_client_id", "accounts", "active_account").forEach {
+        listOf("inoreader_app_id", "feedly_client_id", "accounts").forEach {
             assertTrue("$it doit figurer dans ENTRIES", it in names)
         }
         // Réglage exporté : l'historique remonté doit survivre à une restauration.

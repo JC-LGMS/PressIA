@@ -756,6 +756,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   « réseau indisponible », « HTTP 500 ») alimente `finishSync` (« Synchronisation incomplète :
   Inoreader (délai dépassé) »). Sans cela, un compte en échec annonçait « Synchronisation
   terminée » comme une réussite.
+- **Session expirée : annoncée au bon moment, et elle reste.** Avec **un seul** compte cloud,
+  le bandeau affiche « Session expirée : reconnectez le compte » dès le début de la passe (le
+  collecteur de `syncStep` force le message) ou dès le 401 reçu en route (collecteur
+  d'`expiredAccounts`) ; avec **plusieurs** comptes, leurs étapes continuent de défiler et
+  l'annonce attend `finishSync`. Dans les deux cas le bandeau ne se referme plus tout seul
+  (plus de 12 s) : il tient tant que la session n'est pas rétablie, et revient sur les écrans de
+  contenu s'il a été fermé pour ouvrir la page de connexion (`LaunchedEffect(current,
+  expiredIds)`). C'est le retour à zéro d'`expiredAccounts` qui le ferme.
 - **Le registre des comptes est sous `accountMutex`** : `addAccount`, `renewInoreaderToken`,
   `replaceAccountToken`, `deleteAccount` et `migrateLegacyAccount` font tous
   `cloudAccounts()` → mutation → `prefs.set(ACCOUNTS)` ; deux séquences simultanées perdaient la
@@ -993,7 +1001,7 @@ les autres (chaque point a coûté un bug quand il manquait).
    retour remonte tout l'empilement), une entrée dans `LoginScreen`, `expiredReconnectRoute`
    (`SessionExpired.kt`) pour le raccourci « Reconnecter », et
    `PressVM.connectAccount(service, token, name, refreshToken)` →
-   `PressRepository.addAccount` (profil, `userId`, fusion du compte existant, compte actif).
+   `PressRepository.addAccount` (profil, `userId`, fusion du compte existant).
    - **OAuth** : `OAuth.fooAuthUrl` / `fooToken` / `fooRefresh` (`data/remote/OAuth.kt`), retour
      `pressia://oauth` (`MainActivity` + manifeste), `CloudAccount.refreshToken` pour la durée, et
      le champ `renewToken` du fournisseur câblé par le dépôt (bloc `init` de `PressRepository`,
