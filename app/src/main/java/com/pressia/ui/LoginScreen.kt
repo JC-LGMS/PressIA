@@ -509,10 +509,11 @@ fun LoginScreen(
                     // Publication immédiate : l'API Inoreader exige ces en-têtes sur chaque
                     // appel, y compris la synchronisation qui suit.
                     vm.repo.refreshInoreaderAppAuth()
-                    inoAppId = if (appId == BuildConfig.INOREADER_APP_ID) "" else appId
-                        .ifBlank { BuildConfig.INOREADER_APP_ID }
-                    inoAppKey = if (appKey == BuildConfig.INOREADER_APP_KEY) "" else appKey
-                        .ifBlank { BuildConfig.INOREADER_APP_KEY }
+                    // Le miroir affiche toujours la valeur **effective** : les préférences
+                    // stockent "" pour une valeur par défaut, mais rouvrir la boîte doit montrer
+                    // l'identifiant réellement utilisé, pas des champs vides.
+                    inoAppId = appId.ifBlank { BuildConfig.INOREADER_APP_ID }
+                    inoAppKey = appKey.ifBlank { BuildConfig.INOREADER_APP_KEY }
                     // L'AUTH (jeton de session) n'est remplacé que s'il a changé **et** que
                     // le service l'accepte pour ce compte — sinon l'ancien est conservé.
                     val acc = inoAccount

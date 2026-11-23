@@ -24,6 +24,9 @@ images conservés sur l'appareil.
 - **Lecture** : quatre vues (liste, carte, magazine, compacte), quatre tailles de
   police, thème clair/sombre/AMOLED et apparence automatique selon la lumière
   ambiante. Un article ouvert est conservé hors-ligne (extrait du flux, images).
+- **Sélection** : le texte d'un article se sélectionne (appui long) et le menu
+  propose « Rechercher dans l'application » (bibliothèque locale, dans le flux de
+  l'article), « Rechercher sur Internet » ou « Traduire ».
 - **Article complet** : extraction Readability maison (Jsoup) au double-tap,
   conservée en base et préservée par les resynchronisations.
 - **Vidéos** : YouTube lu dans l'article (lecteur intégré, plein écran de
@@ -41,8 +44,9 @@ images conservés sur l'appareil.
   later » que le bouton, sans rien afficher. Android décide du moment exact ;
   « Wi-Fi uniquement » devient une contrainte, la passe attend alors le réseau.
 - **Sauvegarde** : export/import JSON par sections (réglages, stats, comptes,
-  favoris et lus, jetons seulement si demandés), OPML pour les flux locaux, et
-  copie automatique silencieuse pour la sauvegarde Google du téléphone.
+  favoris et lus, jetons seulement si demandés), import plafonné à 20 Mo, OPML
+  pour les flux locaux (charset du fichier respecté), et copie automatique
+  silencieuse pour la sauvegarde Google du téléphone.
 
 ## Structure
 

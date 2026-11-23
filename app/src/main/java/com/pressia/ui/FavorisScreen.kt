@@ -70,7 +70,9 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
         if (!vm.favSetAvailable(vm.favSet.value)) vm.setFavSet("all")
     }
     val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
-    val articles by live.collectAsState(initial = emptyList())
+    // `null` tant que la première émission n'est pas arrivée : sinon la carte « aucun favori »
+    // s'affiche un instant à chaque ouverture ou changement de jeu (même garde que StreamScreen).
+    val articlesFlow by live.collectAsState(initial = null)
 
     val feed = vm.subs.firstOrNull { it.id == feedScope.feedId }
     Scaffold(
@@ -144,7 +146,9 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                     )
                 }
             }
+            val articles = articlesFlow
             when {
+                articles == null -> Box(Modifier.fillMaxSize())
                 articles.isEmpty() && vm.loaded && !vm.syncing -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         when (set) {
@@ -165,8 +169,10 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
                     // Favoris et « Read later » : le bouton « bas » va toujours tout en bas
                     // directement, sans arrêt à la fin des non-lus.
                     stopAtUnread = false, onSearch = onSearch,
-                    // Bas de liste : page suivante, comme la liste du périmètre.
-                    onEndReached = { vm.loadMoreStream(articles.size) })
+                    // Bas de liste : page suivante, comme la liste du périmètre. Compteur de
+                    // pagination **propre aux favoris** : défiler ici n'agrandit plus la liste
+                    // du flux principal.
+                    onEndReached = { vm.loadMoreStream(articles.size, fav = true) })
             }
         }
     }

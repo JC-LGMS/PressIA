@@ -44,7 +44,7 @@ object Instapaper {
                 .post(FormBody.Builder().build())
                 .build()
             client.newCall(req).execute().use { it.code == 200 }
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             false
         }
     }
@@ -71,7 +71,7 @@ object Instapaper {
                         else -> AddResult.ServerError
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                 AddResult.NetworkError
             }
         }

@@ -208,6 +208,14 @@ interface PressDao {
     /** Ne retire que les flux d'un compte : les flux des autres comptes doivent survivre à sa synchronisation. */
     @Query("DELETE FROM subscriptions WHERE provider = :provider")
     suspend fun clearSubscriptionsOf(provider: String)
+    /**
+     * Réaffecte les flux d'un compte à un autre compte du **même service** (compte supprimé
+     * dont le jumeau suit encore ces flux) : effacer la ligne effacerait aussi leurs articles
+     * et leurs étoiles locales. La synchronisation du survivant retirera les flux qu'il ne
+     * suit pas.
+     */
+    @Query("UPDATE subscriptions SET provider = :to WHERE provider = :from")
+    suspend fun reassignSubscriptions(from: String, to: String)
     /** Retire un seul flux (désabonnement d'un flux local). */
     @Query("DELETE FROM subscriptions WHERE id = :feedId")
     suspend fun deleteSubscription(feedId: String)
@@ -248,10 +256,11 @@ interface PressDao {
      * être mis en favori sur l'appareil puis enregistré depuis un autre — d'où « tous ».
      */
     /**
-     * Même périmètre que [streamFlow], mais **sans les colonnes lourdes** : les identifiants
-     * seuls, dans l'ordre d'affichage. La liste de balayage de l'écran article n'a besoin que de
-     * cela ; `SELECT *` y chargeait 2000 articles complets, HTML compris, pour n'en garder que
-     * les identifiants.
+     * Même périmètre que [streamFlow] pour le **flux principal seulement** (pas de jeu de
+     * favoris : un écran à liste propre fournit la sienne via `openArticleWith`), mais **sans les
+     * colonnes lourdes** : les identifiants seuls, dans l'ordre d'affichage. La liste de balayage
+     * de l'écran article n'a besoin que de cela ; `SELECT *` y chargeait 2000 articles complets,
+     * HTML compris, pour n'en garder que les identifiants.
      */
     @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
@@ -594,6 +603,12 @@ interface PressDao {
     /** Toute la file lu/non-lu, réduite (voir `undoneReadRows`). */
     @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread')")
     suspend fun pendingReadUnread(): List<QueuedAction>
+    /**
+     * File lu/non-lu depuis une borne : un « unread » plus ancien que la page poussée ne peut
+     * pas la défaire (voir `undoneReadRows`), inutile de relire toute la file à chaque page.
+     */
+    @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread') AND createdAt >= :since")
+    suspend fun pendingReadUnreadSince(since: Long): List<QueuedAction>
     /** Un marquage de masse attend d'être poussé ? (toute la file, même remarque.) */
     @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead'")
     suspend fun pendingMarkAllCount(): Int

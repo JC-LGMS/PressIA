@@ -75,6 +75,11 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
             // La base a bien été vue par une écriture : une base vide désormais est un vidage
             // volontaire, pas une restauration Google (voir `autoBackupMarkFile`).
             autoBackupMarkFile().createNewFile()
+        }.onFailure {
+            // La copie automatique est la seule sauvegarde des flux locaux : un échec répété
+            // laisserait une version périmée sans que personne ne le sache. Un simple log,
+            // jamais une exception : une passe de fond ne doit pas casser la synchro.
+            android.util.Log.w("PressIA", "copie automatique non écrite : ${it.message}")
         }
         Unit
     }

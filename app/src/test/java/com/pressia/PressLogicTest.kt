@@ -3,6 +3,11 @@ package com.pressia
 import com.pressia.data.favScopeArg
 import com.pressia.data.isSyncFresh
 import com.pressia.data.readCapped
+import com.pressia.data.chunkByHtmlSize
+import com.pressia.data.toSubscriptionList
+import com.pressia.ui.imageExtension
+import com.pressia.ui.scopeEntries
+import com.pressia.ui.sessionFrom
 import com.pressia.data.movedFeedOrder
 import com.pressia.data.movedFolderOrder
 import com.pressia.ui.parseArticleActions
@@ -1139,9 +1144,10 @@ class PressLogicTest {
     }
     @Test fun `sections de sauvegarde et secrets`() {
         assertEquals(listOf("prefs", "stats", "accounts", "read"), com.pressia.data.Sections.ALL)
-        // Les secrets ne sont jamais exportés implicitement
+        // Les secrets ne sont jamais exportés implicitement. Le jeton de renouvellement vit dans
+        // le JSON « accounts » (lui aussi secret), pas dans une préférence « refresh ».
         assertTrue("token" in com.pressia.data.SECRET_PREFS)
-        assertTrue("refresh" in com.pressia.data.SECRET_PREFS)
+        assertTrue("accounts" in com.pressia.data.SECRET_PREFS)
         assertTrue("feedly_client_secret" in com.pressia.data.SECRET_PREFS)
         assertFalse("theme" in com.pressia.data.SECRET_PREFS)
     }
@@ -2409,5 +2415,67 @@ class PressLogicTest {
             org.jsoup.Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser())
                 .selectFirst("outline")?.attr("text")
         )
+    }
+
+    // ----- Garde-fous des corrections d'audit -----
+
+    @Test fun `paquets de html bornes par la taille`() {
+        // Un article énorme occupe son paquet, même seul (jamais coupé).
+        assertEquals(listOf(listOf("a")), chunkByHtmlSize(listOf("a" to 300_000)))
+        // Deux petits tiennent ensemble.
+        assertEquals(listOf(listOf("a", "b")), chunkByHtmlSize(listOf("a" to 100, "b" to 100)))
+        // Le dépassement du budget ouvre un nouveau paquet.
+        assertEquals(
+            listOf(listOf("a"), listOf("b")),
+            chunkByHtmlSize(listOf("a" to 200_000, "b" to 100_000))
+        )
+        assertTrue(chunkByHtmlSize(emptyList()).isEmpty())
+    }
+
+    @Test fun `choix de portee suit l ordre de l accueil`() {
+        val f1 = com.pressia.data.PressRepository.Folder("d1", "Dossier A", listOf("d1"), listOf("local"))
+        val f2 = com.pressia.data.PressRepository.Folder("d2", "Dossier B", listOf("d2"), listOf("local"))
+        val e1 = com.pressia.data.local.SubscriptionEntity("u1", "Flux 1", categoryId = "d1", sortOrder = 2)
+        val e2 = com.pressia.data.local.SubscriptionEntity("u2", "Flux 2", categoryId = "d1", sortOrder = 1)
+        val orphan = com.pressia.data.local.SubscriptionEntity("u3", "Sans dossier", categoryId = null)
+        val entries = scopeEntries(listOf(f1, f2), listOf(e1, e2, orphan))
+        // Dossiers dans l'ordre, chacun suivi de ses flux triés, puis les flux sans dossier.
+        assertEquals(
+            listOf("d1", "u2", "u1", "d2", "u3"),
+            entries.map { it.scope.categoryId ?: it.scope.feedId }
+        )
+    }
+
+    @Test fun `extension de l image copiee d apres ses octets`() {
+        assertEquals("png", imageExtension(byteArrayOf(0x89.toByte(), 0, 0, 0, 0, 0, 0, 0, 0)))
+        assertEquals("gif", imageExtension(byteArrayOf('G'.code.toByte(), 0, 0, 0, 0, 0, 0, 0, 0)))
+        val webp = ByteArray(13).also { it[0] = 'R'.code.toByte(); it[8] = 'W'.code.toByte() }
+        assertEquals("webp", imageExtension(webp))
+        assertEquals("jpg", imageExtension(byteArrayOf(0xFF.toByte(), 0xD8.toByte())))
+    }
+
+    @Test fun `jeton feedly seulement plausible`() {
+        val token = "a".repeat(50)
+        assertEquals(token, sessionFrom("feedly.authed=$token"))
+        // Un drapeau court n'est pas un jeton ; un en-tête collé avec espaces non plus.
+        assertNull(sessionFrom("feedly.authed=1"))
+        assertNull(sessionFrom("feedly.authed=" + "a b".repeat(30)))
+        assertEquals(token, sessionFrom("autre=1; feedly.session=\"$token\""))
+        assertNull(sessionFrom(null))
+    }
+
+    @Test fun `abonnements d une sauvegarde tolere champs absents`() {
+        val arr = org.json.JSONArray()
+            .put(org.json.JSONObject().put("id", "u1").put("title", "T"))
+            .put(org.json.JSONObject().put("id", "u2").put("title", "T2").put("categoryId", "null"))
+            .put(org.json.JSONObject.NULL)
+        val subs = arr.toSubscriptionList()
+        assertEquals(2, subs.size)
+        // Champs absents : défauts de l'entité, pas d'exception.
+        assertEquals("local", subs[0].provider)
+        assertNull(subs[0].categoryId)
+        assertEquals(0, subs[0].sortOrder)
+        // La chaîne « null » d'anciennes versions vaut absence de dossier.
+        assertNull(subs[1].categoryId)
     }
 }

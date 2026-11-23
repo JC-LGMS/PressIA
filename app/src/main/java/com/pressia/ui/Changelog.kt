@@ -47,6 +47,44 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.24",
+        listOf(
+            ChangelogItem(
+                "2026-11-24",
+                "Audit : comptes, imports, synchronisation et recherche de sélection",
+                "- Article : le menu de sélection du texte propose « Rechercher dans " +
+                    "l'application » — la bibliothèque locale, dans le flux de l'article, lancée " +
+                    "aussitôt.\n\n" +
+                "- Comptes : supprimer un compte ne détruit plus un flux partagé avec un autre " +
+                    "compte du même service (articles et étoiles locales conservés) et seules les " +
+                    "images des articles supprimés quittent le cache — les autres flux gardent " +
+                    "leurs images hors-ligne. Un compte reconnecté retrouve son tableau « Read " +
+                    "later », et un jeton appartenant déjà à un autre compte du service est refusé " +
+                    "même si l'identifiant stocké était vide.\n\n" +
+                "- Sauvegarde : l'import lit le fichier choisi sous plafond (20 Mo, hors du fil " +
+                    "principal) — un mauvais fichier ne ferme plus l'application ; l'OPML respecte " +
+                    "le charset déclaré par le fichier ; la réparation d'un flux local se fait dans " +
+                    "une transaction et l'échec d'écriture de la copie automatique est journalisé.\n\n" +
+                "- Synchronisation : une continuation cyclique (serveur auto-hébergé) ne fait plus " +
+                    "boucler « tout marquer lu » ni la réconciliation ; un tableau « Read later » " +
+                    "tronqué par le plafond de pages n'est plus annoncé complet ; le total " +
+                    "Inoreader ne compte plus les dossiers en double ; la poussée de la file relit " +
+                    "une page au lieu de toute la file et interroge la base une fois par flux.\n\n" +
+                "- Interface : Favoris a son propre compteur de pagination (défiler les favoris ne " +
+                    "charge plus le flux principal en entier), une seule vidéo peut jouer à la fois, " +
+                    "les identifiants Inoreader s'affichent réellement après enregistrement, le " +
+                    "corps d'article ne se recompose plus à chaque image de balayage, et les barres " +
+                    "de défilement passent toutes par le même dessin (le doublon est supprimé).\n\n" +
+                "- Réglages : un DataStore corrompu est remplacé au lieu de faire planter chaque " +
+                    "lancement ; la sonde Feedly espace et arrête ses essais ; la replanification de " +
+                    "la synchro de fond et Instapaper ne perdent plus une annulation en silence.\n\n" +
+                "- Tests : paquets de HTML, ordre des choix de portée, extension d'image copiée, " +
+                    "jeton Feedly plausible, import d'abonnements tolérant.",
+                time = "00:53"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.23",
         listOf(
             ChangelogItem(

@@ -17,12 +17,19 @@ class PressIAApp : Application() {
         // Synchro de fond : replanifiée à chaque démarrage (une sauvegarde restaurée réinstalle
         // le réglage sans le travail, et l'échéance doit survivre aux mises à jour).
         CoroutineScope(Dispatchers.IO).launch {
-            val p = Prefs(this@PressIAApp)
-            BackgroundSyncWorker.schedule(
-                this@PressIAApp,
-                p.data.first()[Prefs.BACKGROUND_SYNC_HOURS] ?: 0,
-                p.data.first()[Prefs.WIFI_ONLY] ?: true
-            )
+            // Un échec (DataStore illisible) resterait sinon invisible : personne n'attend ce
+            // scope, ni bandeau ni log — on ne saurait pas que la synchro de fond n'est plus
+            // planifiée.
+            runCatching {
+                val p = Prefs(this@PressIAApp)
+                BackgroundSyncWorker.schedule(
+                    this@PressIAApp,
+                    p.data.first()[Prefs.BACKGROUND_SYNC_HOURS] ?: 0,
+                    p.data.first()[Prefs.WIFI_ONLY] ?: true
+                )
+            }.onFailure {
+                android.util.Log.w("PressIA", "synchro de fond non replanifiée : ${it.message}")
+            }
         }
         Coil.setImageLoader {
             ImageLoader.Builder(this)

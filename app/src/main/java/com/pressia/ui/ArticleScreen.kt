@@ -535,8 +535,13 @@ fun ArticleScreen(
                 }
         ) {
             // Le titre ouvre l'article d'origine dans le navigateur externe.
+            // Nettoyé une seule fois par titre : `cleanTitle` (jsoup) était rejoué à chaque
+            // image de balayage, avec tout le corps de l'article.
+            val displayTitle = remember(article?.title) {
+                com.pressia.data.remote.cleanTitle(article?.title).ifBlank { article?.title ?: "" }
+            }
             Text(
-                com.pressia.data.remote.cleanTitle(article?.title).ifBlank { article?.title ?: "" },
+                displayTitle,
                 fontSize = titleSp.sp,
                 lineHeight = (titleSp + 4).sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -621,13 +626,21 @@ fun ArticleScreen(
             // d'écran) : le gain est un aller-retour réseau en moins à chaque ouverture, la
             // contrepartie une image haute agrandie au pincement.
             val heroUrl = article?.imageUrl?.takeIf { it.startsWith("http") }
-            val heroDuplicate = heroUrl != null && blocks.any { it is ABlock.I && isSameImage(it.url, heroUrl) }
+            // Recalculé seulement quand l'image ou les blocs changent, pas à chaque image de
+            // balayage (chaque test `isSameImage` nettoie deux URL par regex).
+            val heroDuplicate = remember(heroUrl, blocks) {
+                heroUrl != null && blocks.any { it is ABlock.I && isSameImage(it.url, heroUrl) }
+            }
             if (heroUrl != null && !fullMode && !heroDuplicate) {
                 ArticleImage(heroUrl, onOpen = { viewerUrl = heroUrl },
                     onDoubleTap = { fireArticleAction(doubleTap) })
             }
             // Bloc indexé par article : sans clé, Compose réutilisait l'emplacement d'une vidéo
             // d'un article à l'autre (lecteur resté monté sur le suivant).
+            //
+            // Une seule vidéo à l'écran : lancer la suivante met la précédente en pause (deux
+            // lecteurs jouaient leur son en même temps dans un article à plusieurs vidéos).
+            var playingVideo by remember(articleId) { mutableStateOf<String?>(null) }
             blocks.forEachIndexed { index, b ->
                 androidx.compose.runtime.key(articleId, index) {
                     when (b) {
@@ -656,6 +669,8 @@ fun ArticleScreen(
                             url = b.url,
                             poster = b.poster,
                             embed = b.embed,
+                            playing = playingVideo == b.url,
+                            onPlay = { playingVideo = b.url },
                             modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
                                 .playerGesture(inPlayer)
                         )
@@ -766,7 +781,15 @@ fun ArticleScreen(
         }
         }
         // En dernier : le menu de sélection passe devant tout le reste de l'écran.
-        SelectionActions(textToolbar, ctx)
+        SelectionActions(textToolbar, ctx, onSearchInApp = { text ->
+            // Recherche locale avec le texte sélectionné, sur le périmètre du flux de l'article
+            // (même portée que l'action « Recherche ») et lancée aussitôt.
+            vm.searchQuery = text
+            article?.let {
+                onSearch(Scope(feedId = it.feedId, label = prettyFeedTitle(feedName ?: it.feedTitle)))
+            }
+            vm.runSearch()
+        })
     }
     viewerUrl?.let { ImageViewer(it) { viewerUrl = null } }
 }
@@ -900,7 +923,11 @@ internal class ArticleTextToolbar : TextToolbar {
  *  `Popup`) : ici, un appui à côté le ferme **et** Retour aussi — le `Popup` focusable ne
  *  recevait ni l'un ni l'autre (constaté sur l'émulateur). */
 @Composable
-internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.Context) {
+internal fun SelectionActions(
+    toolbar: ArticleTextToolbar,
+    ctx: android.content.Context,
+    onSearchInApp: ((String) -> Unit)? = null
+) {
     val menu = toolbar.menu ?: return
     androidx.activity.compose.BackHandler { toolbar.dismiss() }
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -957,6 +984,14 @@ internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.
                 }
                 menu.onCut?.let { cut ->
                     SelectionAction("Couper") { cut(); toolbar.dismiss() }
+                }
+                // Recherche dans la bibliothèque locale avec le texte sélectionné (écran article
+                // seulement : les pages À propos et journal n'ont pas de périmètre à offrir).
+                if (onSearchInApp != null) {
+                    SelectionAction("Rechercher dans l'application") {
+                        selectionText(ctx, menu.onCopy)?.let { onSearchInApp(it) }
+                        toolbar.dismiss()
+                    }
                 }
                 SelectionAction("Rechercher sur Internet") {
                     selectionText(ctx, menu.onCopy)?.let {
@@ -1190,8 +1225,8 @@ private suspend fun shareUri(ctx: android.content.Context, url: String): android
     }
 
 /** Extension du fichier copié, d'après les premiers octets (la description posée sur le
- *  presse-papiers annonce, elle, le type `image` en général). */
-private fun imageExtension(b: ByteArray): String = when {
+ *  presse-papiers annonce, elle, le type `image` en général). Interne pour être testée. */
+internal fun imageExtension(b: ByteArray): String = when {
     b.size > 8 && b[0] == 0x89.toByte() -> "png"
     b.size > 8 && b[0] == 'G'.code.toByte() -> "gif"
     b.size > 12 && b[0] == 'R'.code.toByte() && b[8] == 'W'.code.toByte() -> "webp"
@@ -2066,14 +2101,16 @@ fun openCustomTab(ctx: android.content.Context, url: String, color: Int? = null)
  *
  * **Un seul pattern pour les deux** : l'affiche occupe le bloc, et c'est son tap qui crée le
  * lecteur ([android.widget.VideoView], ou [YoutubePlayer] — donc la WebView). Une vidéo jamais
- * lancée ne compose rien et ne charge rien ; `playing` est le seul état, il n'y en a pas un par
- * lecteur.
+ * lancée ne compose rien et ne charge rien ; l'état « en lecture » est tenu par l'écran article
+ * ([playing] / [onPlay]) — il n'y en a qu'un pour tous les lecteurs de l'article.
  */
 @Composable
 fun VideoPlayer(
     url: String,
     poster: String?,
     embed: Boolean = false,
+    playing: Boolean,
+    onPlay: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -2081,8 +2118,7 @@ fun VideoPlayer(
     var videoView by remember { mutableStateOf<android.widget.VideoView?>(null) }
     // **Rien ne se lit ni ne se charge avant un appui** : l'affiche occupe le bloc, et c'est elle
     // qui crée le lecteur — `VideoView` pour un fichier média, `YoutubePlayer` (donc la WebView et
-    // la page d'intégration) pour une vidéo YouTube. Un seul état pour les deux cas.
-    val playing = remember { mutableStateOf(false) }
+    // la page d'intégration) pour une vidéo YouTube. L'état est passé par l'appelant.
 
     // Intégration YouTube : lue dans l'application, via la WebView d'intégration.
     val youtubeId = remember(url) { if (embed) youtubeVideoId(url) else null }
@@ -2100,15 +2136,15 @@ fun VideoPlayer(
     val onTap: () -> Unit = if (youtubeId == null && embed) {
         { openUrl(context, url) }
     } else {
-        { playing.value = true }
+        { onPlay() }
     }
 
     Column(modifier = modifier) {
-        if (youtubeId != null && playing.value) {
+        if (youtubeId != null && playing) {
             // Lecteur YouTube : composé **seulement** à l'appui — une intégration que personne ne
             // regarde n'est ni composée ni chargée.
             YoutubePlayer(videoId = youtubeId, title = title, poster = poster)
-        } else if (!playing.value) {
+        } else if (!playing) {
             // Affiche (poster) : tap pour lancer la lecture ou ouvrir la vidéo.
             VideoPoster(
                 poster = poster,
@@ -2158,7 +2194,7 @@ fun VideoPlayer(
         }
         // Le titre ouvre la vidéo dans YouTube ; sous le lecteur une fois lancé (il y partage la
         // ligne avec le bouton plein écran, voir [YoutubePlayer]).
-        if (watchUrl != null && !playing.value) {
+        if (watchUrl != null && !playing) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 YoutubeTitleRow(title, watchUrl, modifier = Modifier.weight(1f))
             }
@@ -2704,7 +2740,10 @@ fun YoutubePlayer(
             // plein écran — c'est ce qui laissait le bouton dans le mauvais sens en permanence.
             val entered = wv != null && screen.enter(context, rootView, wv) { fullscreen = false }
             if (!entered) {
+                // Rien à déplacer (vue détachée) : ne pas basculer quand même en paysage ni
+                // cacher les barres — on voyait sinon un aller-retour d'un frame.
                 fullscreen = false
+                return@LaunchedEffect
             } else {
                 wv.evaluateJavascript(
                     "document.documentElement.classList.add('pressia-full');" +

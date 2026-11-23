@@ -50,7 +50,7 @@ object InstapaperWeb {
         .build()
 
     data class Folder(val id: Long, val title: String)
-    data class Tag(val id: Long, val name: String, val count: Int = 0, val slug: String = "")
+    data class Tag(val id: Long, val name: String, val count: Int = 0)
     data class Session(val folders: List<Folder>, val tags: List<Tag>, val formKey: String?)
     data class Saved(val bookmarkId: Long, val folders: List<Folder>, val tags: List<Tag>)
 
@@ -69,7 +69,7 @@ object InstapaperWeb {
     fun cookieHeader(): String =
         try {
             CookieManager.getInstance()?.getCookie(BASE).orEmpty()
-        } catch (_: Exception) { "" }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
     /** Persiste les cookies de session reçus (`Set-Cookie`) dans la WebView. */
     fun storeCookies(url: String, headers: okhttp3.Headers) {
@@ -77,7 +77,7 @@ object InstapaperWeb {
             val cm = CookieManager.getInstance() ?: return
             headers.values("Set-Cookie").forEach { cm.setCookie(url, it) }
             cm.flush()
-        } catch (_: Exception) { /* session web indisponible, les appels échoueront en Expired */ }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* session web indisponible, les appels échoueront en Expired */ }
     }
 
     /** Clé anti-CSRF : cookie `form_key` en priorité, sinon champ de `user_session` (camel ou snake). */
@@ -127,12 +127,12 @@ object InstapaperWeb {
                 val o = arr.optJSONObject(i) ?: continue
                 val id = o.optLong("id")
                 val name = o.optString("name")
-                if (id != 0L && name.isNotBlank()) tags += Tag(id, name, o.optInt("count"), o.optString("slug"))
+                if (id != 0L && name.isNotBlank()) tags += Tag(id, name, o.optInt("count"))
             }
         }
         val key = u.optString("formKey").ifBlank { u.optString("form_key") }.ifBlank { null }
         Session(folders, tags.sortedByDescending { it.count }, key)
-        } catch (_: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     /** Parse la réponse texte de `post_v6` → id + dossiers + tags proposés, ou null si illisible. */
@@ -156,11 +156,11 @@ object InstapaperWeb {
                 val t = arr.optJSONObject(i) ?: continue
                 val tid = t.optLong("id")
                 val name = t.optString("name")
-                if (tid != 0L && name.isNotBlank()) tags += Tag(tid, name, t.optInt("count"), t.optString("slug"))
+                if (tid != 0L && name.isNotBlank()) tags += Tag(tid, name, t.optInt("count"))
             }
         }
         Saved(id, folders, tags.sortedByDescending { it.count })
-        } catch (_: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     // ----- Réseau : session web (cookies WebView) -----
@@ -176,7 +176,7 @@ object InstapaperWeb {
      */
     suspend fun session(): Session? = try {
         fetchSession()
-    } catch (_: Exception) { null }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
 
     /** Même chose en laissant passer les pannes réseau (pour ne pas les confondre avec un refus). */
     suspend fun fetchSession(): Session? = withContext(Dispatchers.IO) {
@@ -224,7 +224,6 @@ object InstapaperWeb {
             val req = Request.Builder()
                 .url("$BASE/bookmarklet/post_v6")
                 .header("Cookie", cookieHeader())
-                .header("Content-Type", "application/x-www-form-urlencoded")
                 .post(saveBody(url, title).toRequestBody("application/x-www-form-urlencoded".toMediaType()))
                 .build()
             client.newCall(req).execute().use {
@@ -239,7 +238,7 @@ object InstapaperWeb {
                     else -> Pair(SendResult.ServerError, null)
                 }
             }
-        } catch (_: Exception) { Pair(SendResult.NetworkError, null) }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { Pair(SendResult.NetworkError, null) }
     }
 
     /** Range le marque-page dans un dossier (`GET /move/{id}/to/{folder}`, comme l'extension). */
@@ -247,7 +246,7 @@ object InstapaperWeb {
         try {
             val req = authed("/move/$bookmarkId/to/$folderId").get().build()
             client.newCall(req).execute().use { it.code in 200..399 }
-        } catch (_: Exception) { false }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
     }
 
     /**
@@ -267,7 +266,7 @@ object InstapaperWeb {
                     .post(json.toRequestBody(JSON))
                     .build()
                 client.newCall(req).execute().use { it.code in 200..299 }
-            } catch (_: Exception) { false }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
         }
     }
 
@@ -305,9 +304,9 @@ object InstapaperWeb {
                     val f = if (o.has("folder")) o.getJSONObject("folder") else o
                     Folder(f.optLong("id"), f.optString("title").ifBlank { "(sans nom)" })
                         .takeIf { fd -> fd.id != 0L }
-                } catch (_: Exception) { null }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
             }
-        } catch (_: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     /** Déconnecte côté web : jette les cookies Instapaper de la WebView. */
@@ -321,6 +320,6 @@ object InstapaperWeb {
                 n.takeIf { s -> s.isNotBlank() }?.let { name -> "$name=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.instapaper.com" }
             }.forEach { cm.setCookie(BASE, it) }
             cm.flush()
-        } catch (_: Exception) { /* tant pis, la session mourra côté serveur */ }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* tant pis, la session mourra côté serveur */ }
     }
 }

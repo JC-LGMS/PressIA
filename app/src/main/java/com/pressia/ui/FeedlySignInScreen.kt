@@ -61,7 +61,7 @@ private fun plausibleToken(value: String?): String? {
 }
 
 /** Extrait le jeton de session Feedly d'un en-tête de cookies, quel que soit son ordre. */
-private fun sessionFrom(cookieHeader: String?): String? = cookieHeader
+internal fun sessionFrom(cookieHeader: String?): String? = cookieHeader
     ?.split(";")
     ?.map { it.trim() }
     ?.firstOrNull { c -> FEEDLY_SESSION_COOKIES.any { c.startsWith("$it=") } }
@@ -229,6 +229,11 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
         var lastToken = ""
         var lastTry = 0L
         var landedAt = 0L
+        // Jeton visible mais refusé : on réessaie de plus en plus espacé (5 s, 10 s, 20 s) et on
+        // s'arrête après trois refus. Sans cela, un jeton périmé resté dans la page déclenchait
+        // un appel API toutes les 5 s tant que l'écran restait ouvert — même correctif que la
+        // sonde Inoreader.
+        var failures = 0
         while (!done) {
             delay(1200)
             if (busy) continue
@@ -249,11 +254,12 @@ fun FeedlySignInScreen(vm: PressVM, onBack: () -> Unit, onDone: (String) -> Unit
                 continue
             }
             landedAt = 0L
-            // Même jeton refusé : on réessaie au plus toutes les 5 s (le réseau peut revenir).
+            if (failures >= 3) break
+            val wait = 5000L shl failures
             val now = System.currentTimeMillis()
-            if (token == lastToken && now - lastTry < 5000) continue
+            if (token == lastToken && now - lastTry < wait) continue
             lastToken = token; lastTry = now
-            tryConnect(token)
+            if (!tryConnect(token)) failures++
         }
     }
 

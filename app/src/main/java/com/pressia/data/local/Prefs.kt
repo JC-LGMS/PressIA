@@ -1,12 +1,19 @@
 package com.pressia.data.local
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-private val Context.ds by preferencesDataStore("pressia")
+private val Context.ds by preferencesDataStore(
+    name = "pressia",
+    // Un fichier tronqué ferait lever chaque lecture au démarrage : l'application ne
+    // démarrerait plus, et « effacer les données » serait la seule sortie. On le remplace par
+    // des préférences vides ; la copie automatique restaure comptes et favoris au lancement.
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 /** Entrée de préférence typée : permet la sauvegarde / restauration par nom. */
 sealed class PrefEntry(val name: String) {

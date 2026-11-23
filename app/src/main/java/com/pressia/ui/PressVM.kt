@@ -614,23 +614,29 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun streamList(onlyUnread: Boolean, fav: FavScope? = null): Flow<List<ArticleEntity>> {
         val s = fav?.scope ?: scope
         val kind = if (fav == null) "" else fav.set
-        return combine(keepIds, streamLimit) { keep, limit -> keep to limit }
-            .flatMapLatest { (keep, limit) ->
-                repo.streamFlow(s.feedId, s.categoryId, onlyUnread, kind, keep, limit)
+        // Compteurs distincts : défiler les Favoris agrandissait la limite de la liste du flux
+        // principal, qui rechargeait alors des centaines de lignes d'un coup au retour.
+        val limit = if (fav == null) streamLimit else favLimit
+        return combine(keepIds, limit) { keep, l -> keep to l }
+            .flatMapLatest { (keep, l) ->
+                repo.streamFlow(s.feedId, s.categoryId, onlyUnread, kind, keep, l)
             }
     }
 
     /** Dernière page demandée : chaque bas de liste en ajoute une (voir [loadMoreStream]). */
     private val streamLimit = MutableStateFlow(STREAM_PAGE)
+    /** Compteur de pagination propre aux Favoris (voir [streamList]). */
+    private val favLimit = MutableStateFlow(STREAM_PAGE)
 
     /**
      * Bas de liste atteint : demande une page de plus. [shown] compte les articles déjà arrivés ;
      * plus court que la page demandée, c'est qu'il n'y a plus rien à charger — ce qui ignore
      * aussi les appels tardifs, avant que la page demandée n'ait été reçue.
      */
-    fun loadMoreStream(shown: Int) {
-        if (shown < streamLimit.value) return
-        streamLimit.value += STREAM_PAGE
+    fun loadMoreStream(shown: Int, fav: Boolean = false) {
+        val limit = if (fav) favLimit else streamLimit
+        if (shown < limit.value) return
+        limit.value += STREAM_PAGE
     }
 
     /**
@@ -644,6 +650,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     /** Changement de périmètre ou de filtre : la liste repart de la première page. */
     private fun resetStreamPages() {
         streamLimit.value = STREAM_PAGE
+        favLimit.value = STREAM_PAGE
     }
 
     /** Verrouille / déverrouille l'indicateur (toujours appariés, en `finally`). */

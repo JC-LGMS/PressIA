@@ -44,6 +44,7 @@ import android.hardware.SensorManager
 import kotlin.math.roundToInt
 import com.pressia.data.FailedImage
 import com.pressia.data.FeedSort
+import com.pressia.data.MAX_BACKUP_BYTES
 import com.pressia.data.MAX_OPML_BYTES
 import com.pressia.data.Sections
 import com.pressia.data.StatsPeriod
@@ -57,9 +58,11 @@ import com.pressia.data.local.Prefs
 import com.pressia.data.readCapped
 import com.pressia.data.sortFeeds
 import com.pressia.ui.theme.toHex
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Recherche avec portée explicite : la portée est affichée en permanence et élargissable à la
@@ -1494,8 +1497,12 @@ fun BackupScreen(vm: PressVM) {
     ) { uri ->
         if (uri != null) scope.launch {
             try {
-                val json = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: throw Exception("fichier illisible")
+                // Fichier choisi par l'utilisateur : lecture plafonnée (un mauvais fichier ne
+                // doit ni remplir la mémoire ni bloquer le fil principal), comme l'OPML.
+                val json = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)?.use { readCapped(it, MAX_BACKUP_BYTES) }
+                }?.toString(Charsets.UTF_8)
+                    ?: throw Exception("fichier illisible ou plus de 20 Mo")
                 val r = vm.repo.importJson(json, importSel, importReplace)
                 // Une restauration vaut sauvegarde : les réglages d'ici sont ceux du fichier, et
                 // le rappel ne doit pas les signaler comme « changés depuis ».
@@ -1540,7 +1547,9 @@ fun BackupScreen(vm: PressVM) {
                 val bytes = ctx.contentResolver.openInputStream(uri)
                     ?.use { readCapped(it, MAX_OPML_BYTES) }
                     ?: throw Exception("fichier illisible ou plus de 2 Mo")
-                val r = vm.repo.importOpml(bytes.toString(Charsets.UTF_8))
+                // Le charset déclaré par le fichier fait foi (vieux exports en ISO-8859-1),
+                // comme pour les flux RSS.
+                val r = vm.repo.importOpml(com.pressia.data.remote.LocalRssFetcher.decodeFeed(bytes, null))
                 backupMsg = "OPML : ${r.added} flux ajouté(s), ${r.folders} dossier(s) créé(s)" +
                     (if (r.existing > 0) ", ${r.existing} déjà abonné(s)" else "") +
                     (if (r.invalid > 0) ", ${r.invalid} refusé(s)" else "") + "."
@@ -1833,7 +1842,7 @@ fun SyncDetailDialog(
                             }
                         }
                     }
-                    LazyScrollbar(
+                    LazyListPositionIndicator(
                         listState,
                         Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 2.dp)
                     )
@@ -1860,31 +1869,6 @@ private fun SectionTitle(text: String) {
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-    )
-}
-
-/**
- * Indicateur de défilement vertical d'une liste — Compose n'en fournit pas. La hauteur du
- * curseur suit la part visible, sa position le premier élément affiché ; masqué quand tout tient.
- */
-@Composable
-private fun LazyScrollbar(state: androidx.compose.foundation.lazy.LazyListState, modifier: Modifier = Modifier) {
-    ScrollBar(
-        fraction = {
-            val info = state.layoutInfo
-            if (info.totalItemsCount <= 0) 0f
-            else info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
-        },
-        progress = {
-            val info = state.layoutInfo
-            val visible = info.visibleItemsInfo
-            if (visible.isEmpty() || info.totalItemsCount <= visible.size) 0f
-            else (visible.first().index.toFloat() /
-                (info.totalItemsCount - visible.size).coerceAtLeast(1)).coerceIn(0f, 1f)
-        },
-        modifier = modifier.width(4.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-        minThumb = 24.dp
     )
 }
 

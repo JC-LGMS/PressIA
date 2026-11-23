@@ -39,6 +39,10 @@ object Sections {
  */
 const val BACKUP_VERSION = 1
 
+/** Plafond de lecture d'un fichier de sauvegarde (même garde que l'OPML) : un fichier choisi
+ *  par erreur ne doit pas tenir en mémoire ni bloquer le fil principal. */
+const val MAX_BACKUP_BYTES = 20 * 1024 * 1024
+
 /**
  * Refuse un fichier écrit par un format plus récent que celui que cette version sait lire : sans
  * ce refus, une application plus ancienne restaurerait **silencieusement en moins** (sections et
@@ -97,7 +101,7 @@ fun backupReminderDue(now: Long, nudgeAt: Long, settingsChanged: Boolean, hasDat
  * Préférences tenant un secret (mots de passe d'API) : jamais exportées / restaurées
  * automatiquement, seulement si l'utilisateur coche explicitement les jetons.
  */
-val SECRET_PREFS = setOf("token", "refresh", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key", "instapaper_pass")
+val SECRET_PREFS = setOf("token", "accounts", "feedly_client_id", "feedly_client_secret", "inoreader_app_key", "instapaper_pass")
 
 /**
  * Préférences qui ne sont pas des réglages et ne doivent donc jamais sortir : la file
@@ -508,7 +512,6 @@ fun backupSubscriptionsFor(
 private fun jsonValue(v: Any?): Any = when (v) {
     null -> JSONObject.NULL
     is Boolean, is Int, is Long, is Float, is Double, is String -> v
-    is Set<*> -> JSONArray(v.map { jsonValue(it) })
     else -> v.toString()
 }
 
@@ -525,7 +528,9 @@ private fun JSONArray.toCategoryList(): List<CategoryEntity> = (0 until length()
     }
 }
 
-private fun JSONArray.toSubscriptionList(): List<SubscriptionEntity> = (0 until length()).mapNotNull { i ->
+/** Convertit la section « abonnements » d'un fichier de sauvegarde. Interne pour être testée
+ *  en JVM (tolérance aux champs absents, renommés ou mal typés). */
+internal fun JSONArray.toSubscriptionList(): List<SubscriptionEntity> = (0 until length()).mapNotNull { i ->
     optJSONObject(i)?.let {
         SubscriptionEntity(
             id = it.optString("id"),

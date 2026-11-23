@@ -896,80 +896,76 @@ fun ScrollJumpOverlay(onTop: () -> Unit, onBottom: () -> Unit, modifier: Modifie
 }
 
 /**
- * Fin curseur de position verticale, au bord droit : le haut du curseur dit où l'on est
- * dans la liste, sa hauteur dit quelle part est visible. Masqué quand tout tient à l'écran.
+ * Curseur de position pour une colonne défilante : même dessin que [ScrollBar] (les deux familles
+ * d'indicateurs n'en font plus qu'une). Hauteur de fenêtre relevée à la composition ; l'état de
+ * défilement est lu en phase de dessin, donc un défilement ne recompose pas la page.
  */
 @Composable
-private fun PositionTrack(topFrac: Float, thumbFrac: Float, modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier.width(4.dp).padding(vertical = 8.dp)) {
-        val trackH = maxHeight
-        Box(
-            Modifier.fillMaxSize()
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
-        )
-        Box(
-            Modifier.fillMaxWidth()
-                .offset(y = trackH * topFrac)
-                .fillMaxHeight(thumbFrac)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
-        )
-    }
-}
-
-/** Curseur de position pour une colonne défilante : masqué quand tout tient à l'écran. */
-@Composable
 fun ColumnPositionIndicator(state: ScrollState, modifier: Modifier = Modifier) {
-    val max = state.maxValue
-    if (max <= 0) return
-    // Un seul BoxWithConstraints, comme les listes : un BoxWithConstraints imbriqué avec un
-    // fillMaxSize prenait tout l'écran au lieu de 4 dp.
     BoxWithConstraints(modifier.width(4.dp).padding(vertical = 8.dp)) {
-        val viewportPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-        val contentPx = viewportPx + max
-        val thumb = (viewportPx / contentPx).coerceIn(0.06f, 1f)
-        val top = (state.value / contentPx).coerceIn(0f, 1f - thumb)
-        val trackH = maxHeight
-        Box(
-            Modifier.fillMaxSize()
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
-        )
-        Box(
-            Modifier.fillMaxWidth()
-                .offset(y = trackH * top)
-                .fillMaxHeight(thumb)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
+        val viewportPx = with(LocalDensity.current) { maxHeight.toPx() }.coerceAtLeast(1f)
+        ScrollBar(
+            fraction = { viewportPx / (viewportPx + state.maxValue.coerceAtLeast(0)) },
+            progress = { if (state.maxValue <= 0) 0f else state.value.toFloat() / state.maxValue },
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.primary,
+            track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
         )
     }
 }
 
-/** Curseur de position pour une [LazyColumn] : suit l'index et le décalage du 1er visible. */
+/** Curseur de position pour une [LazyColumn] : part visible et avancement du premier élément. */
 @Composable
 fun LazyListPositionIndicator(state: LazyListState, modifier: Modifier = Modifier) {
-    val total = state.layoutInfo.totalItemsCount
-    val visible = state.layoutInfo.visibleItemsInfo.size
-    if (total <= visible || total <= 0 || visible <= 0) return
-    val firstSize = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.coerceAtLeast(1) ?: 1
-    val frac = (state.firstVisibleItemScrollOffset.toFloat() / firstSize).coerceIn(0f, 1f)
-    val thumb = (visible.toFloat() / total).coerceIn(0.06f, 1f)
-    val top = ((state.firstVisibleItemIndex + frac) / total).coerceIn(0f, 1f - thumb)
-    PositionTrack(top, thumb, modifier)
+    ScrollBar(
+        fraction = {
+            val info = state.layoutInfo
+            if (info.totalItemsCount <= 0) 1f
+            else info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+        },
+        progress = {
+            val info = state.layoutInfo
+            val visible = info.visibleItemsInfo.size
+            if (visible <= 0 || info.totalItemsCount <= visible) 0f
+            else {
+                val first = info.visibleItemsInfo.first()
+                val frac = (state.firstVisibleItemScrollOffset.toFloat() /
+                    first.size.coerceAtLeast(1)).coerceIn(0f, 1f)
+                ((state.firstVisibleItemIndex + frac) /
+                    (info.totalItemsCount - visible).coerceAtLeast(1)).coerceIn(0f, 1f)
+            }
+        },
+        modifier = modifier.width(4.dp).padding(vertical = 8.dp),
+        color = MaterialTheme.colorScheme.primary,
+        track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+    )
 }
 
-/** Curseur de position pour une grille magazine. */
+/** Curseur de position pour une grille magazine : même calcul, sur la hauteur du premier élément. */
 @Composable
 fun LazyGridPositionIndicator(state: LazyGridState, modifier: Modifier = Modifier) {
-    val total = state.layoutInfo.totalItemsCount
-    val visible = state.layoutInfo.visibleItemsInfo.size
-    if (total <= visible || total <= 0 || visible <= 0) return
-    val firstH = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.height?.coerceAtLeast(1) ?: 1
-    val frac = (state.firstVisibleItemScrollOffset.toFloat() / firstH).coerceIn(0f, 1f)
-    val thumb = (visible.toFloat() / total).coerceIn(0.06f, 1f)
-    val top = ((state.firstVisibleItemIndex + frac) / total).coerceIn(0f, 1f - thumb)
-    PositionTrack(top, thumb, modifier)
+    ScrollBar(
+        fraction = {
+            val info = state.layoutInfo
+            if (info.totalItemsCount <= 0) 1f
+            else info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+        },
+        progress = {
+            val info = state.layoutInfo
+            val visible = info.visibleItemsInfo.size
+            if (visible <= 0 || info.totalItemsCount <= visible) 0f
+            else {
+                val first = info.visibleItemsInfo.first()
+                val frac = (state.firstVisibleItemScrollOffset.toFloat() /
+                    first.size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                ((state.firstVisibleItemIndex + frac) /
+                    (info.totalItemsCount - visible).coerceAtLeast(1)).coerceIn(0f, 1f)
+            }
+        },
+        modifier = modifier.width(4.dp).padding(vertical = 8.dp),
+        color = MaterialTheme.colorScheme.primary,
+        track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+    )
 }
 
 /**

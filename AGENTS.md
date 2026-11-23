@@ -20,24 +20,25 @@ aucun `res/layout`, aucun ViewHolder/Adapter, aucun `viewBinding`. Les 4 vues ar
 
 ## Chaîne d'outils (machine-specific)
 
-`gradle` **n'est pas dans le PATH** et `gradlew.bat` n'est qu'un stub (`gradle %*`) : il n'y a ni
-`gradle-wrapper.jar` ni distribution dans `~/.gradle/wrapper/dists`. Le `README.md` dit
-`./gradlew`, **ça ne marche pas sur cette machine**. Utiliser les copies présentes dans le dossier
-tools temporaire :
+`gradle` **n'est pas dans le PATH**, mais le wrapper est **réel** depuis le commit `6fdc785` :
+`gradlew.bat`, `gradle-wrapper.jar` et `gradle-wrapper.properties` sont dans le dépôt, et
+`./gradlew` (comme le dit le `README.md`) marche — il télécharge la distribution 8.7 au premier
+appel. Un JDK 17 doit être dans `JAVA_HOME`. Sur cette machine la distribution **8.10.2** est déjà
+présente (`~\.gradle\wrapper\dists\gradle-8.10.2-bin\<haché>\gradle-8.10.2\bin\gradle.bat`) et
+suffit avec AGP 8.5.2 : l'appeler directement évite le téléchargement. Les copies du dossier
+temporaire ne servent plus que de secours :
 
 | Outil | Chemin |
 |---|---|
 | JDK 17 | `%LOCALAPPDATA%\Temp\opencode\tools\jdk-17.0.21+9` (la copie `jdk-17.0.20.1+1` n'a plus `javac`, KSP échoue : « does not provide the required capabilities: [JAVA_COMPILER] ») |
-| Gradle 8.7 | `%LOCALAPPDATA%\Temp\opencode\tools\gradle-8.7\bin\gradle.bat` |
+| Gradle | `.\gradlew.bat` (wrapper, 8.7) — ou la distribution 8.10.2 déjà présente (voir plus bas) |
 | Android SDK | `%LOCALAPPDATA%\Android\Sdk` (cf. `local.properties`) |
 | adb | `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe` |
 | emulator | `%LOCALAPPDATA%\Android\Sdk\emulator\emulator.exe` (AVD **Pixel_10**) |
 
-Ces outils sont hors du dépôt : s'ils disparaissent, les retélécharger (le ZIP de Gradle 8.7 est
-normalement déjà dans le même dossier). **Le dossier temporaire est vidé de temps à autre** (constaté
-le 31/10 : seul le JDK restait). Avant de retélécharger Gradle, regarder ce qu'il y a déjà dans le
-dépôt de distributions : `~\.gradle\wrapper\dists\gradle-8.10.2-bin\<haché>\gradle-8.10.2\bin\gradle.bat`
-— une distribution complète y fonctionne avec AGP 8.5.2.
+Le SDK, `adb` et l'émulateur restent hors du dépôt. **Le dossier temporaire est vidé de temps à
+autre** (constaté le 31/10 : seul le JDK restait) : plus rien d'indispensable n'y vit côté Gradle,
+la distribution 8.10.2 du dépôt de distributions fait le travail (voir ci-dessous).
 
 **Le JDK aussi peut être amputé** (constaté le 15/11 : `jlink.exe` puis `jmod.exe` avaient disparu,
 et `:app:compileDebugJavaWithJavac` échouait sur `JdkImageTransform` — « jlink executable … does not
@@ -58,7 +59,7 @@ Préambule PowerShell avant tout appel Gradle :
 ```powershell
 $env:JAVA_HOME = "$env:LOCALAPPDATA\Temp\opencode\tools\jdk-17.0.21+9"
 $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-$g = "$env:LOCALAPPDATA\Temp\opencode\tools\gradle-8.7\bin\gradle.bat"
+$g = ".\gradlew.bat"   # vrai wrapper ; hors ligne, préférer la distribution 8.10.2 (voir plus bas)
 $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 ```
 
@@ -248,8 +249,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `PressRepository.repairLocalFeeds` (début de `syncDown`) remplace une ligne sale par sa version
   propre : la ligne et ses articles sont supprimés **sur l'identifiant exact** (SQLite compare les
   octets, NUL inclus — Room préserve le NUL dans le binding, il n'y a pas de troncature), puis le
-  flux est réenregistré. Sans cette réparation, un flux sale et son jumeau propre donnaient
-  **deux fois les mêmes articles**.
+  flux est réenregistré **dans une transaction** (une coupure entre les deux perdait le flux) ;
+  une ligne propre homonyme déjà présente n'est pas écrasée. Sans cette réparation, un flux sale
+  et son jumeau propre donnaient **deux fois les mêmes articles**.
 - `LocalProvider` ne doit interroger que les flux `provider = "local"` : les abonnements d'un
   compte portent une URL interne (`feed/…`) que le lecteur local ne sait pas interroger (il
   essayait, échouait, et le signalait à chaque synchro).
@@ -349,11 +351,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `SelectionContainer` (appui long, poignées, « Copier / Tout sélectionner »). Le balayage
   horizontal d'article continue de fonctionner : c'est le geste immédiat, la sélection demandant
   un appui long.
-  Les deux actions de lecture — « Rechercher sur Internet » et « Traduire » — viennent d'un
-  `TextToolbar` propre à l'écran (`ArticleTextToolbar`, posé dans `LocalTextToolbar` autour du
-  `SelectionContainer`) : Compose 1.7 ne livre pas le texte sélectionné à la barre, si bien que
-  chaque action **copie** la sélection (même rappel que « Copier ») puis relit le presse-papiers
-  (`selectionText`). Ne pas chercher une API de sélection à la place : il n'y en a pas dans cette
+  Les trois actions de lecture — « Rechercher dans l'application », « Rechercher sur Internet » et
+  « Traduire » — viennent d'un `TextToolbar` propre à l'écran (`ArticleTextToolbar`, posé dans
+  `LocalTextToolbar` autour du `SelectionContainer`) : Compose 1.7 ne livre pas le texte
+  sélectionné à la barre, si bien que chaque action **copie** la sélection (même rappel que
+  « Copier ») puis relit le presse-papiers (`selectionText`). La recherche **dans l'application**
+  (écran article seulement, pas les pages À propos/journal) pose la portée du flux de l'article
+  (`onSearch(Scope(feedId = …))`), écrit le texte dans `vm.searchQuery` et lance `vm.runSearch()`
+  aussitôt. Ne pas chercher une API de sélection à la place : il n'y en a pas dans cette
   version ; monter de Compose la rendrait disponible (`TextToolbarState`).
   **Le menu est dessiné dans la fenêtre de l'écran, pas en `Popup`** (`SelectionActions`) : un
   `Popup` focusable n'y recevait ni l'appui à côté ni Retour (constaté sur l'émulateur). Il se pose
@@ -740,6 +745,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   réconciliation) : lecture-modification-écriture, donc **jamais sans verrou** (`expiredMutex`,
   `hashMutex`). Les comptes se synchronisent en parallèle : sans lui, deux écritures qui se
   chevauchent perdent la première (préférence disparue).
+- **Un DataStore corrompu est remplacé** (`ReplaceFileCorruptionHandler { emptyPreferences() }`,
+  `Prefs.kt`) : un fichier tronqué faisait lever chaque lecture au démarrage — plantage en boucle,
+  sans autre sortie que « effacer les données » (qui emporte aussi les jetons). La copie
+  automatique restaure comptes et favoris au lancement suivant.
 - File montante : `pendingSync()` est une **page** (`LIMIT 100`), pas la file. Tout code qui
   raisonne sur « les actions en attente » doit passer par une requête dédiée (`pendingReadIds`,
   `pendingMarkAllCount`, `pendingSavedIds`, `pendingUnsavedIds`) ; `pushQueue` enchaîne les pages
@@ -749,7 +758,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   pousse à **tous** les comptes cloud (branche « markAllRead », cibles données par
   `markAllReadTargets`, fonction pure testée), le premier ne servant qu'à porter le groupe
   (`accountFor`) : la rattacher au seul premier laissait les articles des autres non lus côté
-  serveur, rouverts par la réconciliation suivante.
+  serveur, rouverts par la réconciliation suivante. `pendingReadUnreadSince` borne le relevé des
+  lectures annulées au haut de page, et `pushPage` mémoïse le compte par flux : une page de 100
+  lignes d'un même flux faisait 100 requêtes identiques.
 - `pushQueue` passe par `pushMutex` — pas `syncMutex`, non réentrant, que `syncPipeline` détient
   déjà quand il appelle la file. Sans ce verrou, deux appels qui se chevauchent (lecture d'un
   article et pipeline, par exemple) relisaient la même page avant qu'elle ne se vide et poussaient
@@ -789,6 +800,13 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `cloudAccounts()` → mutation → `prefs.set(ACCOUNTS)` ; deux séquences simultanées perdaient la
   première (compte ajouté pendant un renouvellement). `deleteAccount` efface `PROVIDER`/`TOKEN`
   **avant** `ACCOUNTS` (le repli de `cloudAccounts` les relit quand le registre est vide).
+  Supprimer un compte **réaffecte au jumeau** les flux qu'il suit encore : deux comptes du même
+  service partagent une seule ligne `subscriptions`, possédée par le premier synchronisé, et
+  l'effacer emportait les articles et les étoiles **locales** de l'autre (`reassignSubscriptions`,
+  même règle dans la branche « désabonné côté serveur » ; la passe du survivant retire les flux
+  qu'il ne suit pas). Le cache Coil n'est plus vidé en entier : seules les images des articles
+  supprimés sont purgées (même motif que `purgeFeed`), les autres flux gardent leurs images
+  hors-ligne.
 - **Marquage groupé article par article : barre de progression en bas** (`BulkProgress`,
   `PressRepository.bulkProgress`). À partir de `PUSH_BAR_MIN` = 10 lignes,
   `markArticlesRead` / `markArticlesUnread` passent par `pushWithProgress`, qui publie
@@ -878,7 +896,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   un article d'un flux encore abonné (autre compte du même service, flux local) **garde** son
   marquage ; seuls les articles dont le flux n'est plus abonné le perdent. Les articles qui n'étaient là que pour ce
   tableau s'en vont ensuite avec `deleteOrphanArticles`. L'étoile PressIA, elle, reste : c'est un
-  état local, sans compte.
+  état local, sans compte. L'**empreinte** du compte supprimé part aussi : reconnecté avec le même
+  jeton (même identifiant), l'ancienne empreinte aurait fait sauter l'import de son tableau
+  « Read later » — liste vide jusqu'au moindre changement côté serveur.
 - **Feedly (31 jours) et Inoreader (30) marquent lu tout seul au-delà de leur fenêtre** : leur
   état lu/non-lu ne dit plus ce que
   l'utilisateur a lu passé ce délai. `autoReadAgeMs` rend `FEEDLY_AUTO_READ_AGE_MS` ou
@@ -1318,6 +1338,9 @@ articles et favoris du compte compris).
   courante). Un fichier sans champ vaut la version 1. Le numéro ne s'incrémente que pour un
   changement **incompatible** — tant que le format ne fait que s'ajouter, l'ancien import lit le
   reste.
+  L'import **lit le fichier choisi sous plafond** (`MAX_BACKUP_BYTES`, 20 Mo) et **hors du fil
+  principal** : un mauvais fichier (vidéo renommée, export d'une autre application) ne remplit plus
+  la mémoire ni ne ferme l'application.
 - **OPML (écran Sauvegarde/Restauration, `data/Opml.kt`)** : import et export des **flux locaux**
   seulement, dossiers compris. Les abonnements d'un compte appartiennent au service, qui sait déjà
   les exporter ; les réimporter ici créerait des flux locaux en double. `parseOpml` retient tout
@@ -1328,7 +1351,9 @@ articles et favoris du compte compris).
   (`feed/https://…`, la clé en sort identique), donc réimporter l'export d'un service connecté ne
   crée aucun doublon — puis crée les dossiers par `localMirror` et range par `moveFeedsToFolder` ;
   le titre du fichier est gardé. `buildOpml` échappe les valeurs (`&` d'abord), et la lecture est
-  plafonnée (`MAX_OPML_BYTES`, 2 Mo).
+  plafonnée (`MAX_OPML_BYTES`, 2 Mo) ; le décodage passe par `LocalRssFetcher.decodeFeed` (BOM,
+  puis prologue `<?xml encoding=…?>`, puis UTF-8) : un export ISO-8859-1 importe avec ses vrais
+  noms au lieu de mojibake.
 - **Rappel de sauvegarde, au plus une fois par mois** (`backupReminderDue`, `Backup.kt` ; modale
   « Pense à sauvegarder » de `MainActivity`, posée par `PressVM.maybeRemindBackup` au retour au
   premier plan) : il paraît quand des réglages ont changé depuis la **référence** (dernier export

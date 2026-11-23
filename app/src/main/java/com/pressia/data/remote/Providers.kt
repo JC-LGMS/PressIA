@@ -273,15 +273,19 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             var cont: String? = null
             val seen = HashSet<String>()
             var pages = 0
+            var complete = false
             while (pages++ < LATER_MAX_PAGES) {
                 val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = cont)
-                if (page.ids.isEmpty()) break
+                if (page.ids.isEmpty()) { complete = true; break }
                 ids += page.ids
                 val next = page.continuation
-                if (next.isNullOrBlank() || !seen.add(next)) break
+                if (next.isNullOrBlank()) { complete = true; break }
+                if (!seen.add(next)) break
                 cont = next
             }
-            IdSet(ids, true)
+            // Plafond de pages ou continuation cyclique : la liste est partielle, `complete`
+            // reste faux et l'appelant redescend tout (voir le contrat de `readLaterIds`).
+            IdSet(ids, complete)
         }.getOrNull()
     }
     /**
@@ -368,6 +372,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     private suspend fun unreadIdsViaContents(token: String?, streamId: String, maxIds: Int): UnreadSet {
         val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
         val ids = HashSet<String>()
+        val seen = HashSet<String>()
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
@@ -377,7 +382,8 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             val oldest = s.items.minOf { publishedMs(it.published) }
             val next = s.continuation
             // Page entièrement hors fenêtre (dates renseignées) : les suivantes sont plus vieilles.
-            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || next == cont) { complete = true; break }
+            // Une continuation déjà vue (serveur cyclique) ferait boucler : on s'arrête.
+            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || !seen.add(next)) { complete = true; break }
             cont = next
         }
         return UnreadSet(ids, complete)
@@ -628,6 +634,7 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
     /** IDs non lus d'un flux, pagination suivie jusqu'à épuisement (aucun plafond). */
     private suspend fun unreadIdsOf(token: String?, stream: String): List<String> {
         val ids = ArrayList<String>()
+        val seen = HashSet<String>()
         var cont: String? = null
         do {
             val page = call(token) { h ->
@@ -635,7 +642,9 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
             }
             ids += page.itemRefs.map { it.id }
             val next = page.continuation
-            cont = if (next.isNullOrBlank() || next == cont) null else next
+            // Une continuation déjà vue (serveur cyclique, cas d'un FreshRSS auto-hébergé)
+            // ferait boucler ici pour toujours : on s'arrête.
+            cont = if (next.isNullOrBlank() || !seen.add(next)) null else next
         } while (cont != null)
         return ids
     }
@@ -697,7 +706,11 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         runCatching { call(token) { h -> apiFor(token).userInfo(h) }.userId?.takeIf { it.isNotBlank() } }.getOrNull().orEmpty()
     /** Total des non-lus en un appel (`unread-count`), pour le détecteur de changement. */
     override suspend fun unreadTotal(token: String?): Int? = runCatching {
-        call(token) { h -> apiFor(token).unreadCount(h) }.unreadcounts.sumOf { it.count }
+        // Seuls les flux comptent : la réponse inclut aussi les dossiers, qui doublent les
+        // flux (même règle que côté Feedly).
+        call(token) { h -> apiFor(token).unreadCount(h) }.unreadcounts
+            .filter { it.id.startsWith("feed/") }
+            .sumOf { it.count }
     }.getOrNull()
     /** Non-lus par flux (`unread-count` donne aussi le détail par flux). */
     override suspend fun unreadCountsByFeed(token: String?): Map<String, Int>? = runCatching {
@@ -729,15 +742,19 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         var cont: String? = null
         val seen = HashSet<String>()
         var pages = 0
+        var complete = false
         while (pages++ < LATER_MAX_PAGES) {
             val page = call(token) { h -> apiFor(token).itemsIds(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
-            if (page.itemRefs.isEmpty()) break
+            if (page.itemRefs.isEmpty()) { complete = true; break }
             page.itemRefs.mapTo(ids) { it.id }
             val next = page.continuation
-            if (next.isNullOrBlank() || !seen.add(next)) break
+            if (next.isNullOrBlank()) { complete = true; break }
+            if (!seen.add(next)) break
             cont = next
         }
-        IdSet(ids, true)
+        // Plafond de pages ou continuation cyclique : la liste est partielle, `complete` reste
+        // faux et l'appelant redescend tout (voir le contrat de `readLaterIds`).
+        IdSet(ids, complete)
     }.getOrNull()
     /**
      * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus
@@ -747,6 +764,7 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
         val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
         val ids = HashSet<String>()
+        val seen = HashSet<String>()
         var cont: String? = null
         var complete = false
         while (ids.size < maxIds) {
@@ -757,7 +775,8 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
                 .forEach { ids += it.id }
             val oldest = s.items.minOf { publishedMs(it.published) }
             val next = s.continuation
-            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || next == cont) { complete = true; break }
+            // Continuation déjà vue (serveur cyclique) : on s'arrête au lieu de boucler.
+            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || !seen.add(next)) { complete = true; break }
             cont = next
         }
         return UnreadSet(ids, complete)
