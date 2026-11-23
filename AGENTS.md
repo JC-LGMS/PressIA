@@ -79,7 +79,7 @@ APK produits (nommage personnalisé dans `build.gradle.kts`) :
 - `app/build/outputs/apk/debug/PressIA-<version>-debug-<date>.apk`
 - `app/build/outputs/apk/release/PressIA-<version>-release-<date>.apk`
 
-Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assemble*`) qui s'exécute après l'assemblage. Exemple : `PressIA-1.0.49-debug-20261108.apk`.
+Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assemble*`) qui s'exécute après l'assemblage. Elle porte un `onlyIf` : `finalizedBy` s'exécute **aussi après un échec**, et l'APK de la compilation précédente était alors recopié sous le numéro de la version cassée. Exemple : `PressIA-1.0.49-debug-20261108.apk`.
 
 ## Version et journal des modifications
 
@@ -276,6 +276,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   filtre la miniature devient une URL de lecteur, non téléchargable.
 - **Date : la première trouvée l'emporte.** `published` (publication) passe avant `updated`
   (modification) dans l'ordre du document → c'est la date de publication qui est retenue.
+- **Encodage : le charset déclaré par le flux fait foi.** `decodeFeed` essaie le BOM, puis
+  l'en-tête HTTP, puis la déclaration `<?xml encoding=…>`, puis UTF-8. Beaucoup de serveurs
+  annoncent `text/xml` **sans** charset : convertir en UTF-8 avant Jsoup affichait tout le flux
+  en mojibake. Readability passe désormais les octets à Jsoup (`Jsoup.parse(InputStream, …)`),
+  qui lit aussi le `<meta charset>`.
+- **Une entrée malformée n'emporte plus le flux.** Chaque item de `LocalRssFetcher.parse` est
+  parsé sous `runCatching` ; une exception isolée l'ignore au lieu de rendre `emptyList()` pour
+  tout le flux (l'écran annonçait alors « pas un flux RSS »).
 - **Un flux local vide doit se dire** : `LocalFeedResult` (VM) distingue « URL refusée », « flux
   synchronisé (n articles) » et « flux ajouté mais aucun article reçu » ; l'échec HTTP est
   journalisé (`flux local <id> : HTTP 404`). La suppression d'un flux local est décrite plus bas
@@ -704,7 +712,10 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     égal à la valeur par défaut est stocké **vide** : la valeur par défaut reste ainsi vivante.
     `PressRepository.replaceAccountToken` remplace le jeton **en place** — le compte garde son
     `id`, donc ses dossiers, ses abonnements et ses articles — et **refuse** un jeton que le
-    service n'accepte pas ou qui appartient à un autre utilisateur.
+    service n'accepte pas ou qui appartient à un autre utilisateur. Une fois le jeton validé, il
+    **lève aussi le drapeau « session expirée »** du compte, et vide le jeton de renouvellement
+    quand le nouveau jeton est un cookie web (un renouvellement OAuth écraserait sinon le jeton
+    collé par l'utilisateur).
   - **Renouvellement du jeton OAuth** : le jeton d'accès expire vite (de l'ordre de l'heure chez
     Inoreader). `OAuth.inoreaderTokens` récupère les **deux** jetons (accès + renouvellement) ; le
     second accompagne le compte dans le registre (`CloudAccount.refreshToken`, sérialisé avec le
@@ -714,7 +725,14 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
     `PressRepository.renewInoreaderToken` fait le renouvellement (il est le seul à savoir où lire
     et réécrire le jeton de renouvellement) et **conserve l'identité du compte** : ses dossiers et
     ses articles suivent. Un `CancellationException` n'est **jamais** confondu avec un jeton à
-    renouveler.
+    renouveler. Le renouvellement tient `renewMutex` sur **toute** la séquence (lecture, appel
+    réseau, écriture) et garde le jeton neuf dix minutes pour les 401 parallèles : sans cela, les
+    quatre appels lancés par `syncAccount` renouvelaient chacun avec le même jeton de
+    rafraîchissement, et le premier invalidait les suivants.
+  - **Identifiants d'application au démarrage du worker** : `BackgroundSyncWorker` appelle
+    `refreshInoreaderAppAuth()` avant sa passe. Un processus lancé uniquement par WorkManager ne
+    crée pas `PressVM` (qui le fait à sa construction) : sans cet appel, les identifiants saisis
+    par l'utilisateur étaient ignorés et Inoreader répondait 403, donc « session expirée ».
   - **Le jeton CSRF (`api.token`) vaut pour la session** : `InoreaderProvider.tag` le demande une
     fois par lot (`markRead` / `markUnread`), pas par article — sinon chaque article coûtait deux
     requêtes (GET token + POST edit-tag).
@@ -755,7 +773,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
 - **Un compte en échec est nommé** : `failuresByAccount` (libellé → cause : « délai dépassé »,
   « réseau indisponible », « HTTP 500 ») alimente `finishSync` (« Synchronisation incomplète :
   Inoreader (délai dépassé) »). Sans cela, un compte en échec annonçait « Synchronisation
-  terminée » comme une réussite.
+  terminée » comme une réussite. `LAST_SYNC_AT` n'avance que si `failuresByAccount` est **vide**
+  (dans `syncPipeline` comme dans `initialSync`) : sinon le `Result.retry()` du worker relisait
+  une date fraîche, jugeait la passe à jour et ne réessayait rien.
 - **Session expirée : annoncée au bon moment, et elle reste.** Avec **un seul** compte cloud,
   le bandeau affiche « Session expirée : reconnectez le compte » dès le début de la passe (le
   collecteur de `syncStep` force le message) ou dès le 401 reçu en route (collecteur
@@ -838,7 +858,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `user/-/state/com.google/starred` — le flux qu'elle désigne s'intitule « Read later » (vérifié
   en direct ; le flux `saved`, lui, est le « Reading List » des pages web enregistrées, autre
   chose). `InoreaderProvider.markSaved` / `markUnsaved` la posent et la retirent par `edit-tag`,
-  et `readLater` / `readLaterIds` la redescendent comme `tag/global.saved` chez Feedly.
+  et `readLater` / `readLaterIds` la redescendent comme `tag/global.saved` chez Feedly. Les quatre
+  boucles de pagination sont plafonnées (`LATER_MAX_PAGES`, 200) et suivent les continuations déjà
+  vues : une réponse cyclique ne bloque plus la synchronisation.
   `providerUsesSaved` (pure, testée) dit quels services suivent ce chemin : `setStarred` et
   `PressVM.starState` s'y réfèrent — ne pas remettre « feedly » en dur. Les favoris des flux
   locaux restent locaux. Chez **FreshRSS**, la même étiquette `starred` est sa liste de
@@ -852,10 +874,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `mergeIncomingArticle` ; l'empreinte du tableau (`savedHash`) porte le **service**, ce qui force
   une réimportation unique après la migration 8→9 (sans elle, un tableau « inchangé » ne se
   réattribuait jamais).
-  **Supprimer le compte efface ce marquage** (`deleteAccount` → `clearLaterOf(providerBase(id))`) :
-  un article d'un flux encore abonné (autre compte, flux local) gardait sinon le drapeau du
-  service supprimé — visible dans « Tous les favoris » alors que le jeu du service avait disparu
-  du sélecteur (`favSetAvailable`, faute de compte). Les articles qui n'étaient là que pour ce
+  **Supprimer le compte efface ce marquage** (`deleteAccount` → `clearLaterOrphans(providerBase(id))`) :
+  un article d'un flux encore abonné (autre compte du même service, flux local) **garde** son
+  marquage ; seuls les articles dont le flux n'est plus abonné le perdent. Les articles qui n'étaient là que pour ce
   tableau s'en vont ensuite avec `deleteOrphanArticles`. L'étoile PressIA, elle, reste : c'est un
   état local, sans compte.
 - **Feedly (31 jours) et Inoreader (30) marquent lu tout seul au-delà de leur fenêtre** : leur
@@ -933,8 +954,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   `BackgroundSyncWorker` (WorkManager) passe le même `syncPipeline()` toutes les X heures quand
   « Synchronisation en arrière-plan » est réglée (1..24 h ; 0 par défaut = aucune passe
   application fermée, la clé `background_sync_hours` étant exportée avec les autres réglages).
-  Le travail est replanifié au démarrage (`PressIAApp`) et à chaque `save()` de l'écran Réglages,
-  en `ExistingPeriodicWorkPolicy.UPDATE` ; « Wi-Fi uniquement » y devient une contrainte
+  Le travail est replanifié au démarrage (`PressIAApp`), à chaque `save()` de l'écran Réglages
+  **et après un import de sauvegarde** (sinon un réglage restauré restait inopérant jusqu'au
+  prochain lancement), en `ExistingPeriodicWorkPolicy.UPDATE` ; « Wi-Fi uniquement » y devient une contrainte
   (`UNMETERED` au lieu de `CONNECTED`), si bien qu'une passe hors Wi-Fi attend le réseau au lieu
   d'échouer. La fraîcheur est revérifiée dans le worker (`isSyncFresh` avec `hours * 60`) avant
   toute chose : l'application ouverte a souvent déjà fait le travail, et le verrou partagé est
@@ -955,8 +977,9 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   (`syncJob?.join()` — la date n'est reculée qu'à la fin, sinon elle repartait aussitôt). Fréquence
   « manuelle » (0) : la boucle veille toujours (une fois par minute), sans quoi repasser à une
   fréquence depuis Réglages ne redémarrerait jamais la minuterie — aucun `ON_RESUME` sur cet écran.
-  `attemptedAt` (mémoire) évite de retenter chaque minute une synchro en échec, `LAST_SYNC_AT`
-  n'avançant qu'en cas de succès.
+  L'attente est **bornée à une minute** même quand l'échéance est à douze heures : un changement de
+  fréquence s'applique donc sans attendre la fin de l'ancien délai. `attemptedAt` (mémoire) évite
+  de retenter chaque minute une synchro en échec, `LAST_SYNC_AT` n'avançant qu'en cas de succès.
 
 ## Ajouter un agrégateur (fournisseur cloud)
 
@@ -1006,7 +1029,9 @@ les autres (chaque point a coûté un bug quand il manquait).
      `pressia://oauth` (`MainActivity` + manifeste), `CloudAccount.refreshToken` pour la durée, et
      le champ `renewToken` du fournisseur câblé par le dépôt (bloc `init` de `PressRepository`,
      `renewInoreaderToken` sert de modèle : il garde l'identité du compte, donc dossiers et
-     articles).
+     articles). Le service visé par le retour est validé par `OAuth.oauthService` (pur, testé) :
+     seuls `feedly` et `inoreader` sont acceptés, un chemin forgé par une autre application est
+     refusé avant tout échange de code.
 6. **Clés du service** : `Prefs` (`INOREADER_APP_ID`…), `Prefs.ENTRIES` (export/import) et
    `SECRET_PREFS` (`Backup.kt`) pour tout ce qui est secret ; étendre le test « entrées de
    préférences ». Si l'API les exige à chaque appel, les publier dans un objet lu par
@@ -1088,9 +1113,13 @@ articles et favoris du compte compris).
   `pruneArticles()`, `deleteUnsavedOrphanArticles()` retire les articles sans flux — **sans**
   les favoris ni le « Read later » (le tableau d'un compte contient des articles de flux qu'on
   ne suit pas ; `deleteOrphanArticles`, lui, les emporte et ne sert qu'à la déconnexion).
-- **Les colonnes lourdes se lisent par paquets** : la passe images ne charge plus le HTML de toute
-  la file (`articlesPendingImages` = colonnes légères, puis `mediaOfIds` par 200) ; l'écran
-  Doublons demande une projection (`DuplicateRow`) sans `content`/`summary` ; les listes
+- **Les colonnes lourdes se lisent par paquets dimensionnés par leur taille**, pas par un
+  nombre fixe : `chunkByHtmlSize` (PressRepository) découpe selon
+  `LENGTH(content)+LENGTH(summary)` pour la passe images (`articlesPendingImages` porte
+  `htmlSize`), la suppression d'un flux (`articleHtmlSizesOfFeed`) et la préservation Readability
+  (`flagsOf` ne lit plus `content` ; `extractedContentOf` le relit par 3). Un paquet fixe de 200
+  ou 500 corps de 300 Ko dépassait la fenêtre de curseur (~2 Mo) et faisait échouer la requête.
+  L'écran Doublons demande une projection (`DuplicateRow`) sans `content`/`summary` ; les listes
   d'identifiants envoyées en `IN` sont découpées par 500 (`existingIds`, `setLaterProvider`,
   `markLaterSaved`/`unmarkLaterSaved`, `dequeueAll`, restauration des favoris/lus) — au-delà,
   SQLite refuse la requête sur les anciens Android.
@@ -1193,7 +1222,8 @@ articles et favoris du compte compris).
   synchro effaçait ces dates et « passés en lu sans ouvrir » retombait à zéro.
 - `deleteLocalFeed` = articles **puis** abonnement (dans une transaction : une coupure laissait des
   articles sans flux), miniatures orphelines (`gcThumbs`) + images pleine taille du cache
-  Coil (`articleMediaOfFeed` → `htmlImageUrls` sur `content`/`summary` → `purgeImages`) +
+  Coil (`articleHtmlSizesOfFeed` puis `mediaOfIds` par paquets → `htmlImageUrls` →
+  `purgeImages`) +
   `vacuum()`, puis réécriture de la copie automatique (un flux supprimé ne doit pas revenir au
   prochain lancement). Les **traces de lecture restent** (voir la note « statistiques » ci-dessous).
   `gcThumbs` ne couvre que `filesDir/thumbs` ; une image encore réclamée par un autre flux reste en
@@ -1206,16 +1236,19 @@ articles et favoris du compte compris).
   `resetStats`) et pose `Prefs.STATS_SINCE`, borne basse appliquée par `statsLowerBound` : elle est
   indispensable au compteur « passés en lu sans ouvrir », déduit de `articles.readAt` (un état
   d'article que la remise à zéro ne touche pas).
-- **Le temps de lecture ne compte que l'application au premier plan** (`ReadingTimer`,
-  `ArticleScreen.kt` ; écrit par `logReading`). Le chronomètre s'arrête sur `ON_STOP` — ouvrir
+- **Le temps de lecture ne compte que l'application au premier plan** (`ArticleScreen.kt` ;
+  écrit par `logReading` ; `ReadingTimer` reste la classe testée du même calcul). Le chronomètre s'arrête sur `ON_STOP` — ouvrir
   Chrome (onglet intégré, partage, lien), éteindre l'écran, passer à une autre application — et
   **reprend** sur `ON_RESUME` ; sans cela le temps d'un article lu avec des allers-retours dans le
   navigateur était compté en entier, y compris les nuits d'écran éteint. Chaque arrêt écrit le
   total de la visite sous la **même ouverture** (`openedAt`, l'heure d'arrivée sur l'article ;
   `dao.updateReading` puis insertion si la ligne n'existe pas) : un aller-retour reste **une**
   lecture, sinon le nombre d'ouvertures des stats doublerait. Le corollaire est voulu : un article
-  rouvert plus tard est une nouvelle visite, donc une seconde lecture. Vérifié à l'écran (15 s
-  d'arrière-plan exclues, 15 s en Chrome exclues, une seule ligne mise à jour).
+  rouvert plus tard est une nouvelle visite, donc une seconde lecture. Une **rotation** ne crée
+  pas une seconde visite : `openedAt` et le temps déjà compté sont `rememberSaveable`, et
+  `updateReading` écrit `MAX(durationSec, :secs)` (le total restauré pouvait être plus ancien que
+  la ligne déjà écrite et la raccourcir). Vérifié à l'écran (15 s d'arrière-plan exclues, 15 s en
+  Chrome exclues, une seule ligne mise à jour).
 - Suppression de masse (compte, flux, remise à zéro des stats) ⇒ `vacuum()` : `VACUUM` puis
   `PRAGMA wal_checkpoint(TRUNCATE)`. Sans le second, le `VACUUM` réécrit la base dans le WAL, le
   fichier principal garde sa taille, le WAL gonfle et « Cache utilisé » **monte** après une
@@ -1580,7 +1613,9 @@ articles et favoris du compte compris).
   reconstruit la liste : on repart en haut (une relecture après marquage groupé, elle, ne bouge pas
   la position). Page ouverte sans requête ⇒ `FocusRequester` + clavier. « Marquer tous lus »
   s'annule par `offerUndo` / `undoMarkRead`, qui relit aussi la recherche (les lignes portent leur
-  propre état lu/non-lu). L'action est une **icône** de la barre des résultats, comme celle des
+  propre état lu/non-lu). L'action part de `repo.searchUnreadIds` (requête sans `LIMIT`) et non de
+  `searchResults` : la liste n'a que les pages chargées (200 par page), donc « tous » n'en
+  marquait que les premières. L'action est une **icône** de la barre des résultats, comme celle des
   listes : `DoneAll` devient `Undo` tant que l'annulation porte sur ces résultats
   (`undoOffer.ids` tous affichés) — un marquage fait ailleurs ne se confond pas avec celui-ci.
 - Choix de portée (Recherche, Favoris) : `scopeEntries` / `ScopeChooser` (`ui/ScopeChooser.kt`)

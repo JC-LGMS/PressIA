@@ -354,8 +354,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val instapaperUser: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_USER, "").stateIn(viewModelScope, SharingStarted.Eagerly, "")
     /** Envoi Instapaper : "direct" (API simple) ou "choose" (dossier + tags via API v2). */
     val instapaperMode: StateFlow<String> = prefs.flow(Prefs.INSTAPAPER_MODE, "direct").stateIn(viewModelScope, SharingStarted.Eagerly, "direct")
-    /** Session web Instapaper active (dossiers + tags), dernier état vérifié. */
-    val instapaperWeb: StateFlow<Boolean> = prefs.flow(Prefs.INSTAPAPER_WEB, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     /**
      * Comptes à la session expirée (voir `EXPIRED_ACCOUNTS`) : l'écran Comptes les signale avec
      * une réinvite à reconnecter, et la synchro l'annonce au lieu d'un vague échec réseau.
@@ -377,7 +375,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val homeScreen: StateFlow<String?> = prefs.flow(Prefs.HOME_SCREEN, "subs").stateIn(viewModelScope, SharingStarted.Eagerly, null)
     /** Ouverture d'un article : « internal » (lecture dans PressIA) ou « external » (navigateur). */
     val openMode: StateFlow<String> = prefs.flow(Prefs.OPEN_MODE, "internal").stateIn(viewModelScope, SharingStarted.Eagerly, "internal")
-    val hasCloudAccounts: Boolean get() = accounts.isNotEmpty()
     /** Un compte de ce service (« feedly », « inoreader ») est-il connecté ? */
     fun hasAccount(service: String): Boolean = accounts.any { providerBase(it.id) == service }
     /** Le jeu de favoris choisi a-t-il encore un compte pour l'alimenter ? */
@@ -1039,7 +1036,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
                 val last = maxOf(prefs.flow(Prefs.LAST_SYNC_AT, 0L).first(), attemptedAt)
                 val dueIn = last + window * 60_000L - System.currentTimeMillis()
                 if (dueIn > 0L) {
-                    delay(dueIn)
+                    // Réveil au plus tard toutes les minutes : un changement de fréquence dans
+                    // Réglages s'applique sans attendre la fin de l'ancien délai (12 h).
+                    delay(minOf(dueIn, 60_000L))
                     continue
                 }
                 if (!repo.isOnline()) {
@@ -1351,7 +1350,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * autres marquages groupés : [offerUndo] avant l'écriture, [undoMarkRead] pour revenir.
      */
     fun markAllSearchRead() = viewModelScope.launch {
-        val ids = searchResults.filter { it.unread }.map { it.id }
+        // Toute la recherche, pas seulement les pages déjà chargées à l'écran.
+        val q = searchQuery.trim()
+        val ids = if (q.length < 2) emptyList() else repo.searchUnreadIds(
+            q, searchScope.feedId, searchScope.categoryId, searchWithBody
+        )
         if (ids.isEmpty()) return@launch
         offerUndo(ids)
         repo.markArticlesRead(ids)
@@ -1413,7 +1416,6 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         dups = repo.duplicateGroups()
         dupScanned = true
     }
-    fun loadDups() = viewModelScope.launch { loadDupsNow() }
     fun loadAccount() = viewModelScope.launch {
         repo.migrateLegacyAccount()
         accounts = repo.cloudAccounts()

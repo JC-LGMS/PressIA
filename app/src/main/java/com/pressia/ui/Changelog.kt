@@ -47,6 +47,37 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.23",
+        listOf(
+            ChangelogItem(
+                "2026-11-23",
+                "Audit : synchronisation, lecture et réseau corrigés",
+                "- Synchro : le renouvellement de jeton Inoreader est sérialisé (les 401 " +
+                    "parallèles réutilisent le même jeton), la date de dernière synchro n'avance " +
+                    "plus quand un compte a échoué, et les abonnements d'un premier chargement " +
+                    "sont remplacés dans une transaction.\n\n" +
+                "- Données lourdes : le HTML est relu par paquets dimensionnés (suppression d'un " +
+                    "flux, préservation Readability, passe images), au lieu de 200 à 500 corps " +
+                    "de 300 Ko qui saturaient la fenêtre de curseur Android.\n\n" +
+                "- Recherche : « marquer tous les résultats lus » couvre toute la recherche, pas " +
+                    "seulement les pages chargées à l'écran.\n\n" +
+                "- Réglages : une synchro de fond restaurée est replanifiée tout de suite, et un " +
+                    "changement de fréquence s'applique sans attendre la fin de l'ancien délai.\n\n" +
+                "- Connexion : remplacer un jeton lève « session expirée », les identifiants " +
+                    "Inoreader saisis s'appliquent aussi au worker de fond, et le retour OAuth " +
+                    "n'accepte que Feedly et Inoreader.\n\n" +
+                "- Lecture : une rotation ne compte plus une seconde visite (heure d'arrivée et " +
+                    "temps déjà lu conservés, mise à jour sans jamais raccourcir la visite).\n\n" +
+                "- Réseau : le charset déclaré par un flux est respecté, une entrée malformée " +
+                    "n'emporte plus tout le flux, la pagination « Read later » est plafonnée, et " +
+                    "une image trop lourde libère sa connexion.\n\n" +
+                "- Interface : le journal et les réglages partagent une seule barre de défilement. " +
+                    "Le renommage des APK ne recopie plus un fichier après une compilation cassée.",
+                time = "23:44"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.22",
         listOf(
             ChangelogItem(
@@ -1718,39 +1749,29 @@ fun ChangelogScreen() {
  */
 @Composable
 private fun ChangelogScrollBar(state: LazyListState, modifier: Modifier = Modifier) {
-    val thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-    val trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-    Canvas(modifier) {
-        val info = state.layoutInfo
-        val total = info.totalItemsCount
-        val visible = info.visibleItemsInfo
-        // Rien à faire défiler : pas de barre.
-        if (total <= 0 || visible.isEmpty() || visible.size >= total) return@Canvas
-        val radius = size.width / 2f
-        drawRoundRect(
-            color = trackColor,
-            size = size,
-            cornerRadius = CornerRadius(radius, radius)
-        )
-        // Part visible du contenu, avec un minimum lisible (une ligne très haute ne doit pas
-        // réduire le curseur à un trait invisible).
-        val thumbHeight = (size.height * visible.size / total)
-            .coerceIn(36.dp.toPx().coerceAtMost(size.height), size.height)
-        val maxTop = (size.height - thumbHeight).coerceAtLeast(0f)
-        val first = visible.first()
-        // Position : index du premier élément visible, plus la part déjà défilée dedans.
-        val inside = if (first.size > 0) {
-            (state.firstVisibleItemScrollOffset.toFloat() / first.size).coerceIn(0f, 1f)
-        } else 0f
-        val maxStart = (total - visible.size).coerceAtLeast(1)
-        val progress = ((first.index + inside) / maxStart).coerceIn(0f, 1f)
-        drawRoundRect(
-            color = thumbColor,
-            topLeft = Offset(0f, maxTop * progress),
-            size = Size(size.width, thumbHeight),
-            cornerRadius = CornerRadius(radius, radius)
-        )
-    }
+    ScrollBar(
+        fraction = {
+            val info = state.layoutInfo
+            if (info.totalItemsCount <= 0) 0f
+            else info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+        },
+        progress = {
+            val info = state.layoutInfo
+            val visible = info.visibleItemsInfo
+            if (visible.isEmpty() || info.totalItemsCount <= visible.size) 0f else {
+                val first = visible.first()
+                // Index du premier élément visible, plus la part déjà défilée dedans.
+                val inside = if (first.size > 0) {
+                    (state.firstVisibleItemScrollOffset.toFloat() / first.size).coerceIn(0f, 1f)
+                } else 0f
+                val maxStart = (info.totalItemsCount - visible.size).coerceAtLeast(1)
+                ((first.index + inside) / maxStart).coerceIn(0f, 1f)
+            }
+        },
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+        track = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    )
 }
 
 /** Une ligne du journal : date et heure à gauche, titre puis détail du commit à droite. */

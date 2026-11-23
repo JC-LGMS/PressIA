@@ -30,6 +30,13 @@ private const val MARKER_CHUNK = 500
 private const val FEEDLY_PAGE_MAX = 250
 
 /**
+ * Plafond de pages pour le tableau « Read later » : un serveur qui renvoie une continuation
+ * cyclique, ou un tableau démesuré, ne doit pas bloquer la synchronisation indéfiniment
+ * (200 pages ≈ 40 000 entrées, bien au-delà d'un usage réel).
+ */
+private const val LATER_MAX_PAGES = 200
+
+/**
  * Plancher de `newerThan` chez Feedly : la doc interdit une borne plus vieille que 31 jours
  * (« cannot be older than 31 days ago »). La fenêtre d'historique peut être réglée au-delà
  * d'un mois ; le filtre fin reste côté client (`withinHistory`), la tête n'a pas besoin
@@ -234,12 +241,6 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         android.util.Log.d("PressIA", "feedly unsave (${articleIds.size})")
         api.markers(auth(token), FeedlyMarkers("markAsUnsaved", "entries", entryIds = articleIds))
     }
-    override suspend fun search(token: String?, query: String, feedId: String?): List<ArticleEntity> {
-        val scope = cachedUserId(token)
-        if (scope.isBlank()) return emptyList()
-        val s = api.search(auth(token), "user/$scope/category/global.all", query)
-        return s.items.map { it.toEntity() }
-    }
     /** Tableau « Read later » du compte : le périmètre additionnel demandé pour les favoris. */
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val scope = cachedUserId(token)
@@ -247,12 +248,14 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         // Paginé jusqu'à épuisement : un grand tableau ne doit pas être tronqué à la page.
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
-        while (true) {
+        val seen = HashSet<String>()
+        var pages = 0
+        while (pages++ < LATER_MAX_PAGES) {
             val s = api.stream(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = cont)
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
-            if (next.isNullOrBlank() || next == cont) break
+            if (next.isNullOrBlank() || !seen.add(next)) break
             cont = next
         }
         return out
@@ -268,12 +271,14 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         return runCatching {
             val ids = HashSet<String>()
             var cont: String? = null
-            while (true) {
+            val seen = HashSet<String>()
+            var pages = 0
+            while (pages++ < LATER_MAX_PAGES) {
                 val page = api.streamIds(auth(token), "user/$scope/tag/global.saved", count = max.coerceIn(1, FEEDLY_PAGE_MAX), cont = cont)
                 if (page.ids.isEmpty()) break
                 ids += page.ids
                 val next = page.continuation
-                if (next.isNullOrBlank() || next == cont) break
+                if (next.isNullOrBlank() || !seen.add(next)) break
                 cont = next
             }
             IdSet(ids, true)
@@ -702,12 +707,14 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
     override suspend fun readLater(token: String?, max: Int): List<ArticleEntity> {
         val out = ArrayList<ArticleEntity>()
         var cont: String? = null
-        while (true) {
+        val seen = HashSet<String>()
+        var pages = 0
+        while (pages++ < LATER_MAX_PAGES) {
             val s = call(token) { h -> apiFor(token).stream(h, streamPath(SAVED_STATE), n = max.coerceIn(1, 200), cont = cont) }
             if (s.items.isEmpty()) break
             out += s.items.map { it.toEntity().copy(laterSaved = true) }
             val next = s.continuation
-            if (next.isNullOrBlank() || next == cont) break
+            if (next.isNullOrBlank() || !seen.add(next)) break
             cont = next
         }
         return out
@@ -720,12 +727,14 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
     override suspend fun readLaterIds(token: String?, max: Int): IdSet? = runCatching {
         val ids = HashSet<String>()
         var cont: String? = null
-        while (true) {
+        val seen = HashSet<String>()
+        var pages = 0
+        while (pages++ < LATER_MAX_PAGES) {
             val page = call(token) { h -> apiFor(token).itemsIds(h, SAVED_STATE, n = max.coerceIn(1, 200), cont = cont) }
             if (page.itemRefs.isEmpty()) break
             page.itemRefs.mapTo(ids) { it.id }
             val next = page.continuation
-            if (next.isNullOrBlank() || next == cont) break
+            if (next.isNullOrBlank() || !seen.add(next)) break
             cont = next
         }
         IdSet(ids, true)

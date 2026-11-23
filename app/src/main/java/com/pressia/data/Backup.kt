@@ -113,6 +113,9 @@ val NON_EXPORTED_PREFS = setOf(
     Prefs.RECONCILE_MARKS.name, Prefs.RECONCILE_FULL_AT.name,
     Prefs.READLATER_HASHES.name, Prefs.FAVICON_RESOLVED.name,
     Prefs.FAVICONS_AT.name, Prefs.FAVICONS_FEEDS.name, Prefs.LAST_SYNC_AT.name,
+    // État de cet appareil : une sauvegarde d'un téléphone où la session était morte ne doit
+    // pas afficher « Reconnecter » sur un téléphone où elle est valide.
+    Prefs.EXPIRED_ACCOUNTS.name,
     Prefs.BACKUP_CHECKPOINT.name, Prefs.BACKUP_CHECKPOINT_HASH.name, Prefs.BACKUP_NUDGE_AT.name
 )
 

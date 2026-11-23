@@ -598,9 +598,8 @@ private fun InstaModeRow(selected: Boolean, title: String, help: String, onSelec
  * préférences — sinon il disparaissait au lancement suivant.
  */
 suspend fun handleOAuthDeepLink(vm: PressVM, uri: android.net.Uri): String {
-    val service = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
-        ?: uri.getQueryParameter("provider")
-        ?: "feedly"
+    val service = OAuth.oauthService(uri.pathSegments, uri.getQueryParameter("provider"))
+        ?: return "Retour OAuth refusé : service inconnu"
     val redirect = if (service == "feedly") BuildConfig.FEEDLY_REDIRECT_URI else BuildConfig.INOREADER_REDIRECT_URI
     val res = OAuth.parseRedirect(uri.toString(), "pressia://oauth")
     if (res == null) return "Retour OAuth illisible"

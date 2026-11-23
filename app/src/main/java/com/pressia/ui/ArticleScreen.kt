@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalTextToolbar
@@ -209,7 +210,8 @@ fun ArticleScreen(
             val res = vm.repo.ensureFull(a.id)
             // Un balayage a pu changer d'article pendant l'extraction : ce résultat-là ne doit
             // pas écraser l'écran (on y verrait le titre et le corps de A sous l'article B).
-            if (a.id != articleId) return
+            // Lire l'état courant, pas le `articleId` capturé par cette composition.
+            if (a.id != article?.id) return
             // La base a pu changer (extraction enregistrée, cache vérolé purgé) : c'est elle qui
             // dit quelle version du texte s'affiche.
             val fresh = vm.repo.article(a.id) ?: a
@@ -260,28 +262,37 @@ fun ArticleScreen(
         // Mode épinglé par l'icône Readability : chaque article ouvert passe en complet.
         if (vm.readabilityOn) loadFull(quiet = true)
     }
+    // Chronomètre par article : il repart à chaque balayage vers un autre article.
+    // Il ne compte que l'application au premier plan : ouvrir Chrome (onglet intégré compris),
+    // éteindre l'écran ou passer à une autre application l'arrête et enregistre le temps déjà
+    // lu ; le retour le reprend, sous la même ouverture — un aller-retour reste **une** lecture.
+    // L'heure d'arrivée et le temps déjà compté survivent à une rotation : sinon chaque
+    // changement d'orientation créait une seconde visite pour la même lecture.
+    val openedAt = rememberSaveable(articleId) { System.currentTimeMillis() }
+    var elapsedMs by rememberSaveable(articleId) { mutableLongStateOf(0L) }
+    var since by remember(articleId) { mutableStateOf<Long?>(null) }
+    fun resume(now: Long) { if (since == null) since = now }
+    fun pause(now: Long) {
+        val started = since ?: return
+        elapsedMs += (now - started).coerceAtLeast(0L)
+        since = null
+    }
+    LaunchedEffect(articleId) { resume(System.currentTimeMillis()) }
     DisposableEffect(articleId) {
-        // Chronomètre par article : il repart à chaque balayage vers un autre article.
-        // (Un `remember` non clé gardait l'heure du premier article et cumulait les durées.)
-        // Il ne compte que l'application au premier plan : ouvrir Chrome (onglet intégré
-        // compris), éteindre l'écran ou passer à une autre application l'arrête et enregistre
-        // le temps déjà lu ; le retour le reprend, sous la même ouverture — un aller-retour
-        // reste **une** lecture, sinon il en compterait deux.
-        val clock = ReadingTimer()
-        val openedAt = System.currentTimeMillis()
-        clock.resume(openedAt)
         fun save() {
             // Rien à enregistrer tant que l'article affiché n'est pas celui de cet effet :
             // sinon le temps du voisin qui charge encore était crédité à l'article précédent.
             val cur = article ?: return
             if (cur.id != articleId) return
-            val secs = clock.pause(System.currentTimeMillis()) ?: return
+            pause(System.currentTimeMillis())
+            val secs = (elapsedMs / 1000).toInt()
+            if (secs <= 0) return
             vm.logReading(cur.id, cur.feedId, openedAt, secs)
         }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_STOP -> save()
-                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> clock.resume(System.currentTimeMillis())
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> resume(System.currentTimeMillis())
                 else -> {}
             }
         }
@@ -913,7 +924,9 @@ internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null
             ) {
-                toolbar.hide()
+                // Action de l'utilisateur : `hide()` écarte les appuis des 250 premières ms
+                // (garde-fou pour un champ éditable voisin) et laisserait le menu ouvert.
+                toolbar.dismiss()
                 toolbar.clearArmed = true
             }
         )
@@ -936,20 +949,20 @@ internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.
             shadowElevation = 6.dp
         ) {
             Column(Modifier.padding(vertical = 2.dp).widthIn(max = 240.dp)) {
-                SelectionAction("Copier") { menu.onCopy?.invoke(); toolbar.hide() }
-                SelectionAction("Tout sélectionner") { menu.onSelectAll?.invoke(); toolbar.hide() }
+                SelectionAction("Copier") { menu.onCopy?.invoke(); toolbar.dismiss() }
+                SelectionAction("Tout sélectionner") { menu.onSelectAll?.invoke(); toolbar.dismiss() }
                 // Champ éditable (recherche de l'À propos) : coller et couper restent utiles.
                 menu.onPaste?.let { paste ->
-                    SelectionAction("Coller") { paste(); toolbar.hide() }
+                    SelectionAction("Coller") { paste(); toolbar.dismiss() }
                 }
                 menu.onCut?.let { cut ->
-                    SelectionAction("Couper") { cut(); toolbar.hide() }
+                    SelectionAction("Couper") { cut(); toolbar.dismiss() }
                 }
                 SelectionAction("Rechercher sur Internet") {
                     selectionText(ctx, menu.onCopy)?.let {
                         openUrl(ctx, "https://www.google.com/search?q=" + android.net.Uri.encode(it))
                     }
-                    toolbar.hide()
+                    toolbar.dismiss()
                 }
                 SelectionAction("Traduire") {
                     selectionText(ctx, menu.onCopy)?.let {
@@ -958,7 +971,7 @@ internal fun SelectionActions(toolbar: ArticleTextToolbar, ctx: android.content.
                             "https://translate.google.com/?sl=auto&tl=fr&text=" + android.net.Uri.encode(it)
                         )
                     }
-                    toolbar.hide()
+                    toolbar.dismiss()
                 }
             }
         }
@@ -1052,29 +1065,16 @@ private fun selectionText(ctx: android.content.Context, copy: (() -> Unit)?): St
  */
 @Composable
 private fun ArticleScrollBar(state: ScrollState, viewportPx: Int, modifier: Modifier = Modifier) {
-    val thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-    val trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
-    Canvas(modifier) {
-        val max = state.maxValue
-        if (max <= 0 || viewportPx <= 0) return@Canvas
-        val content = viewportPx + max
-        val radius = size.width / 2f
-        drawRoundRect(
-            color = trackColor,
-            size = size,
-            cornerRadius = CornerRadius(radius, radius)
-        )
-        val thumbHeight = (size.height * viewportPx / content)
-            .coerceIn(36.dp.toPx().coerceAtMost(size.height), size.height)
-        val maxTop = (size.height - thumbHeight).coerceAtLeast(0f)
-        val progress = (state.value.toFloat() / max).coerceIn(0f, 1f)
-        drawRoundRect(
-            color = thumbColor,
-            topLeft = Offset(0f, maxTop * progress),
-            size = Size(size.width, thumbHeight),
-            cornerRadius = CornerRadius(radius, radius)
-        )
-    }
+    ScrollBar(
+        fraction = {
+            val max = state.maxValue
+            if (max <= 0 || viewportPx <= 0) 0f else viewportPx.toFloat() / (viewportPx + max)
+        },
+        progress = { if (state.maxValue > 0) state.value.toFloat() / state.maxValue else 0f },
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+        track = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    )
 }
 
 /**

@@ -258,15 +258,7 @@ object InstapaperWeb {
         if (names.isEmpty() || formKey.isNullOrBlank()) return names.isEmpty()
         return withContext(Dispatchers.IO) {
             try {
-                val json = JSONObject()
-                    .put("actions", JSONArray().put(
-                        JSONObject()
-                            .put("bookmark_id", bookmarkId)
-                            .put("action", "tags")
-                            .put("add_tags", JSONArray(names.map { JSONObject().put("name", it) }))
-                            .put("remove_tags", JSONArray())
-                    ))
-                    .toString()
+                val json = tagsBody(bookmarkId, names)
                 val req = Request.Builder()
                     .url("$BASE/data/bookmarks/actions")
                     .header("Cookie", cookieHeader())
@@ -278,6 +270,17 @@ object InstapaperWeb {
             } catch (_: Exception) { false }
         }
     }
+
+    /** Corps de `POST /data/bookmarks/actions` pour poser des tags (pur, testé). */
+    fun tagsBody(bookmarkId: Long, names: List<String>): String = JSONObject()
+        .put("actions", JSONArray().put(
+            JSONObject()
+                .put("bookmark_id", bookmarkId)
+                .put("action", "tags")
+                .put("add_tags", JSONArray(names.map { JSONObject().put("name", it) }))
+                .put("remove_tags", JSONArray())
+        ))
+        .toString()
 
     /** Crée un dossier (`POST /data/folders/create` + `X-Form-Key`), ou null si refusé. */
     suspend fun createFolder(title: String, formKey: String?): Folder? = withContext(Dispatchers.IO) {

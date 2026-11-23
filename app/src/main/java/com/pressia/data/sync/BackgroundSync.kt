@@ -31,6 +31,10 @@ class BackgroundSyncWorker(appCtx: Context, p: WorkerParameters) : CoroutineWork
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             val repo = Locator.repo(applicationContext)
+            // Un processus démarré uniquement par le worker ne crée pas `PressVM` : sans cet
+            // appel, les identifiants Inoreader saisis par l'utilisateur seraient ignorés et
+            // l'API répondrait 403 (compte déclaré expiré à tort).
+            repo.refreshInoreaderAppAuth()
             val hours = repo.prefs.flow(Prefs.BACKGROUND_SYNC_HOURS, 0).first()
             val last = repo.prefs.flow(Prefs.LAST_SYNC_AT, 0L).first()
             if (hours in 1..24 && repo.hasSources() && repo.isOnline() &&

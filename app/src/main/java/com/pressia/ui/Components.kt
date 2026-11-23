@@ -2,6 +2,7 @@ package com.pressia.ui
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -1424,6 +1425,38 @@ fun SyncButton(vm: PressVM, description: String = "actualiser", onClick: () -> U
         } else {
             Icon(Icons.Filled.Refresh, description)
         }
+    }
+}
+
+/**
+ * Curseur de défilement vertical — Compose n'en dessine pas. [fraction] est la part visible du
+ * contenu, [progress] son avancement (0..1). Les deux sont lus dans la phase de dessin : un
+ * défilement ne recompose pas la page. [track] null = pas de piste (indicateur discret).
+ */
+@Composable
+internal fun ScrollBar(
+    fraction: () -> Float,
+    progress: () -> Float,
+    modifier: Modifier = Modifier,
+    color: Color,
+    minThumb: Dp = 36.dp,
+    track: Color? = null
+) {
+    Canvas(modifier) {
+        val f = fraction()
+        if (f <= 0f || f >= 1f) return@Canvas
+        val radius = size.width / 2f
+        val round = androidx.compose.ui.geometry.CornerRadius(radius, radius)
+        track?.let { drawRoundRect(color = it, size = size, cornerRadius = round) }
+        val thumb = (size.height * f)
+            .coerceIn(minThumb.toPx().coerceAtMost(size.height), size.height)
+        val y = (size.height - thumb) * progress().coerceIn(0f, 1f)
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(0f, y),
+            size = androidx.compose.ui.geometry.Size(size.width, thumb),
+            cornerRadius = round
+        )
     }
 }
 

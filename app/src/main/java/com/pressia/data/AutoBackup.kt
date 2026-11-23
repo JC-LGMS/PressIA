@@ -58,11 +58,20 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
             tmp.writeText(json)
             // Remplacement atomique : une copie tronquée (arrêt en pleine écriture) ne doit pas
             // remplacer la précédente, seule source des flux locaux.
-            java.nio.file.Files.move(
-                tmp.toPath(), target.toPath(),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                java.nio.file.StandardCopyOption.ATOMIC_MOVE
-            )
+            try {
+                java.nio.file.Files.move(
+                    tmp.toPath(), target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                // Certains systèmes de fichiers refusent le remplacement atomique : un
+                // remplacement simple vaut mieux qu'une copie jamais réécrite.
+                java.nio.file.Files.move(
+                    tmp.toPath(), target.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+            }
             // La base a bien été vue par une écriture : une base vide désormais est un vidage
             // volontaire, pas une restauration Google (voir `autoBackupMarkFile`).
             autoBackupMarkFile().createNewFile()

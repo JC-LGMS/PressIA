@@ -93,8 +93,12 @@ class FeedlyAutoReadTest {
         )
         // Feedly : seul le non-lu récent peut être fermé par le serveur.
         assertEquals(setOf("recent", "sans-date"), closableUnread(states, cutoff))
-        // Inoreader (aucune fenêtre) : tout reste arbitrable par le serveur.
-        assertEquals(setOf("recent", "ancien", "sans-date"), closableUnread(states, null))
+        // Inoreader : même borne de 30 jours en production (`cutoffFor` passe ce cutoff) ;
+        // passer `null` ici ne testait donc rien.
+        assertEquals(
+            setOf("recent", "sans-date"),
+            closableUnread(states, autoReadCutoff("inoreader", now))
+        )
     }
 
     private fun article(unread: Boolean, published: Long) = ArticleEntity(

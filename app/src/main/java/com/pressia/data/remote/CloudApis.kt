@@ -127,13 +127,6 @@ interface FeedlyService {
         // Articles plus récents que ce timestamp (ms) : null = sans filtre.
         @Query("newerThan") newerThan: Long? = null
     ): FeedlyStream
-    @GET("search/contents")
-    suspend fun search(
-        @Header("Authorization") h: String,
-        @Query("streamId") streamId: String,
-        @Query("query") q: String,
-        @Query("count") c: Int = 50
-    ): FeedlyStream
     /**
      * IDs seuls (`streams/ids?streamId=…`, forme query comme `contents`, compatible niveau
      * gratuit — avec repli sur `contents` en cas de refus, voir `unreadIds`).

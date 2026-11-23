@@ -79,17 +79,21 @@ object Readability {
                 // entière en mémoire puis dans jsoup. Au-delà, l'extraction est un échec.
                 val bytes = readCapped(body.byteStream(), MAX_PAGE_BYTES)
                     ?: return@withContext FullResult.Failed
-                val html = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
-                // Un seul analyseur pour les trois lectures (blocage, extraction, texte) : la page
-                // était reparsée à chaque étape, sur des pages de plusieurs Mo.
-                val doc = Jsoup.parse(html, url)
+                // Jsoup lit les octets : il applique le charset de l'en-tête, sinon celui déclaré
+                // par la page (`<meta charset>`), sinon UTF-8. Convertir en texte avant lui
+                // figeait un mauvais encodage.
+                val doc = Jsoup.parse(
+                    java.io.ByteArrayInputStream(bytes),
+                    body.contentType()?.charset()?.name().orEmpty(),
+                    url
+                )
                 if (isBlockedPage(doc)) return@withContext FullResult.Blocked
                 val extracted = extract(doc)
                 val text = Jsoup.parse(extracted).text()
                 if (isPaywalledText(text)) return@withContext FullResult.Blocked
                 if (isConsentWallText(text)) return@withContext FullResult.Blocked
                 // Extraction vide alors que la page est consistante = contenu inaccessible (JS/paywall)
-                if (text.length < 200 && html.length > 20_000) {
+                if (text.length < 200 && bytes.size > 20_000) {
                     return@withContext FullResult.Blocked
                 }
                 FullResult.Ok(extracted)
@@ -178,12 +182,24 @@ object Readability {
                 e = e.parent()
             }
         }
+        val aLen = HashMap<org.jsoup.nodes.Element, Int>()
         doc.select("a").forEach { a ->
+            val len = a.text().length
             var e = a.parent()
             while (e != null) {
-                if (e in candidateSet) aCount[e] = (aCount[e] ?: 0) + 1
+                if (e in candidateSet) {
+                    aCount[e] = (aCount[e] ?: 0) + 1
+                    aLen[e] = (aLen[e] ?: 0) + len
+                }
                 e = e.parent()
             }
+        }
+        // Densité de liens calculée depuis les compteurs déjà accumulés : reparcourir le
+        // sous-arbre de chaque candidat (`el.text()`, `el.select("a")`) était O(n²).
+        fun density(el: org.jsoup.nodes.Element): Double {
+            val text = pLen[el] ?: 0
+            if (text <= 0) return 1.0
+            return ((aLen[el] ?: 0).toDouble() / text).coerceIn(0.0, 1.0)
         }
         var best: org.jsoup.nodes.Element? = null; var bestScore = 0
         // Repli : un article fait surtout de liens (revue de liens) serait écarté par le seuil
@@ -199,25 +215,20 @@ object Readability {
             // Plus de la moitié du texte en liens = liste de titres, encart « à la une »,
             // sommaire… jamais le corps d'un article. C'est ce qui faisait gagner la colonne
             // « derniers articles » d'un site (titres courts mais nombreux) contre l'article.
-            if (linkDensity(el) > 0.5) continue
+            if (density(el) > 0.5) continue
             if (score > bestScore) { bestScore = score; best = el }
         }
         val target = best ?: fallback ?: doc.body() ?: return doc.outerHtml()
         // Un conteneur large (main + colonne latérale) peut gagner au score : si un <article>
         // y porte la moitié du texte, c'est le corps — et lui seul. Retire les « derniers
         // articles » de la colonne de droite, qui sinon suivaient l'article.
+        // `target` peut être `body` (hors candidats) : sa taille se lit une seule fois.
+        val targetLen = pLen[target] ?: target.text().length
         val semantic = target.select("article")
-            .filter { it.text().length * 2 >= target.text().length }
-            .filter { linkDensity(it) <= 0.5 }
-            .maxByOrNull { it.select("p").size * 20 + it.text().length / 100 }
+            .filter { (pLen[it] ?: it.text().length) * 2 >= targetLen }
+            .filter { density(it) <= 0.5 }
+            .maxByOrNull { (pCount[it] ?: 0) * 20 + (pLen[it] ?: 0) / 100 }
         return cleaned(semantic ?: target)
-    }
-
-    /** Part du texte d'un bloc qui est cliquable (1 = tout est lien). */
-    private fun linkDensity(el: org.jsoup.nodes.Element): Double {
-        val text = el.text().length
-        if (text <= 0) return 1.0
-        return el.select("a").sumOf { it.text().length }.toDouble() / text
     }
 
     private fun cleaned(target: org.jsoup.nodes.Element): String {

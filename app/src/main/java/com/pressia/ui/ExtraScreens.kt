@@ -175,6 +175,10 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
                 { keyboard?.hide(); vm.runSearch() },
                 enabled = vm.searchQuery.trim().length >= 2 && !vm.searchLoading
             ) { Text("Chercher") }
+            if (vm.searchLoading) {
+                Spacer(Modifier.width(10.dp))
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
             Spacer(Modifier.width(8.dp))
             // Recherche sur le titre par défaut : le texte intégral (contenu de l'article) est une
             // option, il ramenait beaucoup de résultats hors sujet quand il était systématique.
@@ -196,10 +200,6 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
                 }
             }
         }
-        if (vm.searchLoading) {
-            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-        }
-
         if (vm.searchRan) {
             // Une seule action à cet endroit, en icône : marquer tous les résultats lus, puis —
             // comme le bouton de la barre des listes — annuler ce marquage. L'annulation ne
@@ -1505,6 +1505,14 @@ fun BackupScreen(vm: PressVM) {
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
                 // listes et compte affichés suivent ici même, filtre œil y compris.
                 vm.refresh(); vm.loadAccount(); vm.refreshUnreadOnly()
+                // La synchro de fond restaurée doit être replanifiée tout de suite : sans cela
+                // elle attendrait le prochain démarrage de l'application.
+                val p = vm.repo.prefs.data.first()
+                com.pressia.data.sync.BackgroundSyncWorker.schedule(
+                    ctx,
+                    p[com.pressia.data.local.Prefs.BACKGROUND_SYNC_HOURS] ?: 0,
+                    p[com.pressia.data.local.Prefs.WIFI_ONLY] ?: true
+                )
                 toast(ctx, "Restauration effectuée")
             } catch (e: Exception) {
                 backupMsg = "Import impossible : ${e.message}"
@@ -1861,24 +1869,23 @@ private fun SectionTitle(text: String) {
  */
 @Composable
 private fun LazyScrollbar(state: androidx.compose.foundation.lazy.LazyListState, modifier: Modifier = Modifier) {
-    val info = state.layoutInfo
-    val visible = info.visibleItemsInfo
-    val total = info.totalItemsCount
-    if (visible.isEmpty() || total <= visible.size) return
-    val fraction = visible.size.toFloat() / total
-    val steps = (total - visible.size).coerceAtLeast(1)
-    val progress = (info.visibleItemsInfo.first().index.toFloat() / steps).coerceIn(0f, 1f)
-    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-    androidx.compose.foundation.Canvas(modifier.width(4.dp)) {
-        val h = (size.height * fraction).coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height)
-        val y = (size.height - h) * progress
-        drawRoundRect(
-            color,
-            topLeft = androidx.compose.ui.geometry.Offset(0f, y),
-            size = androidx.compose.ui.geometry.Size(size.width, h),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width / 2)
-        )
-    }
+    ScrollBar(
+        fraction = {
+            val info = state.layoutInfo
+            if (info.totalItemsCount <= 0) 0f
+            else info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+        },
+        progress = {
+            val info = state.layoutInfo
+            val visible = info.visibleItemsInfo
+            if (visible.isEmpty() || info.totalItemsCount <= visible.size) 0f
+            else (visible.first().index.toFloat() /
+                (info.totalItemsCount - visible.size).coerceAtLeast(1)).coerceIn(0f, 1f)
+        },
+        modifier = modifier.width(4.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+        minThumb = 24.dp
+    )
 }
 
 /** Horodatage court pour le nom du fichier de sauvegarde. */

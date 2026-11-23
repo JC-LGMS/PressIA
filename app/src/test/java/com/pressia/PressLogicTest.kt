@@ -561,6 +561,14 @@ class PressLogicTest {
         val denied = OAuth.parseRedirect("pressia://oauth/feedly?error=access_denied", "pressia://oauth/feedly")
         assertEquals("access_denied", denied?.error)
     }
+    @Test fun `retour oauth accepte seulement les deux services`() {
+        assertEquals("feedly", OAuth.oauthService(listOf("feedly"), null))
+        assertEquals("inoreader", OAuth.oauthService(emptyList(), "inoreader"))
+        assertEquals("feedly", OAuth.oauthService(emptyList(), null))
+        // Une application tierce peut envoyer n'importe quel chemin : il est refusé.
+        assertNull(OAuth.oauthService(listOf("autre"), null))
+        assertNull(OAuth.oauthService(emptyList(), "https://exemple.test"))
+    }
 
     // ---- Session Inoreader capturée dans une WebView ------------------------------------
     @Test fun `auth inoreader - cookie prefixe contre jeton oauth`() {
@@ -723,17 +731,12 @@ class PressLogicTest {
         assertNull(com.pressia.data.remote.InstapaperWeb.formKey("", null))
     }
     @Test fun `action tags du site en JSON`() {
-        // Forme du dialogue de tags du site : {"actions":[{bookmark_id, action:"tags", …}]}.
-        val o = org.json.JSONObject()
-            .put("actions", org.json.JSONArray().put(
-                org.json.JSONObject()
-                    .put("bookmark_id", 12345)
-                    .put("action", "tags")
-                    .put("add_tags", org.json.JSONArray(listOf(org.json.JSONObject().put("name", "Cuisine"))))
-                    .put("remove_tags", org.json.JSONArray())
-            ))
-            .toString()
-        assertTrue(o.contains("\"action\":\"tags\"") && o.contains("\"name\":\"Cuisine\""))
+        // Le corps vient de la vraie fonction utilisée par l'envoi (et non d'un JSON recopié).
+        val o = com.pressia.data.remote.InstapaperWeb.tagsBody(12345, listOf("Cuisine"))
+        val action = org.json.JSONObject(o).getJSONArray("actions").getJSONObject(0)
+        assertEquals("tags", action.getString("action"))
+        assertEquals(12345L, action.getLong("bookmark_id"))
+        assertEquals("Cuisine", action.getJSONArray("add_tags").getJSONObject(0).getString("name"))
     }
     @Test fun `mode instapaper persiste`() {        assertTrue("instapaper_mode" in entryNames())
         assertTrue("instapaper_web" in entryNames())

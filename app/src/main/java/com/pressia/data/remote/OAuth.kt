@@ -33,6 +33,18 @@ object OAuth {
         return state != null && state == expected
     }
 
+    /**
+     * Service visé par un retour `pressia://oauth…`, ou null si le chemin n'en désigne aucun.
+     * Fonction pure (testée) : une application tierce peut envoyer n'importe quel chemin, et
+     * le handler ne doit accepter que les deux services connus.
+     */
+    fun oauthService(pathSegments: List<String>, providerParam: String?): String? {
+        val s = pathSegments.firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: providerParam?.takeIf { it.isNotBlank() }
+            ?: "feedly"
+        return s.takeIf { it == "feedly" || it == "inoreader" }
+    }
+
     fun feedlyAuthUrl(
         clientId: String,
         redirect: String = BuildConfig.FEEDLY_REDIRECT_URI,
@@ -90,10 +102,6 @@ object OAuth {
      * (long, seule voie pour obtenir un jeton neuf sans refaire la connexion).
      */
     data class Tokens(val access: String, val refresh: String = "")
-
-    /** Échange code→token Inoreader (réseau sur IO : jamais sur le thread d'appel). */
-    suspend fun inoreaderToken(code: String, appId: String, appKey: String, redirect: String = BuildConfig.INOREADER_REDIRECT_URI): String? =
-        inoreaderTokens(code, appId, appKey, redirect)?.access
 
     /**
      * Échange code→jetons Inoreader : les **deux** jetons sont récupérés.

@@ -114,7 +114,9 @@ object LocalRssFetcher {
                         }
                         val bytes = readCapped(body.byteStream(), MAX_FEED_BYTES)
                             ?: return@withContext LocalFeedFetch(feedId, error = "flux trop volumineux (plus de ${MAX_FEED_BYTES / 1024 / 1024} Mo)")
-                        val xml = String(bytes, body.contentType()?.charset() ?: Charsets.UTF_8)
+                        // L'en-tête HTTP ne dit souvent pas l'encodage : le flux le déclare
+                        // lui-même (`<?xml encoding="ISO-8859-1"?>`), sinon tout est mojibake.
+                        val xml = decodeFeed(bytes, body.contentType()?.charset())
                         val parsed = parseFeed(xml, feedId)
                         // Une page HTML servie en 200 n'est pas un flux : sans titre de racine
                         // ni entrée, c'est l'URL qui est fausse, pas un flux vide.
@@ -153,6 +155,30 @@ object LocalRssFetcher {
      * entrée : c'est le nom de la chaîne (YouTube) ou du site, ce qui doit être affiché à la
      * place de l'URL dans les listes.
      */
+    /**
+     * Décode le corps d'un flux : BOM, charset de l'en-tête HTTP, puis déclaration XML du
+     * document, puis UTF-8. Sans la déclaration, un flux `text/xml` sans charset en
+     * ISO-8859-1 s'affichait entièrement mojibaké.
+     */
+    fun decodeFeed(bytes: ByteArray, headerCharset: java.nio.charset.Charset?): String {
+        when {
+            bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() &&
+                bytes[2] == 0xBF.toByte() -> return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+            bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        }
+        headerCharset?.let { return String(bytes, it) }
+        val head = String(bytes, 0, minOf(bytes.size, 256), Charsets.ISO_8859_1)
+        Regex("""encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""")
+            .find(head)?.groupValues?.getOrNull(1)?.let { name ->
+                runCatching { java.nio.charset.Charset.forName(name) }.getOrNull()
+                    ?.let { return String(bytes, it) }
+            }
+        return String(bytes, Charsets.UTF_8)
+    }
+
     fun parseFeed(xml: String, feedId: String): ParsedFeed {
         val articles = parse(xml, feedId)
         val title = try {
@@ -175,6 +201,9 @@ object LocalRssFetcher {
                 it.tagName().equals("item", ignoreCase = true) || it.tagName().equals("entry", ignoreCase = true)
             }
             items.mapNotNull { el ->
+                // Une seule entrée malformée ne doit pas jeter tout le flux : elle est ignorée,
+                // les autres passent.
+                runCatching {
                 var title = ""; var link = ""; var desc = ""; var author = ""
                 var pub = 0L; var pubKnown = false; var img: String? = null
                 el.children().forEach { c ->
@@ -242,6 +271,7 @@ object LocalRssFetcher {
                     published = pub,
                     titleHash = dedupHash(clean, link)
                 )
+                }.getOrNull()
             }
         } catch (_: Exception) { emptyList() }
     }

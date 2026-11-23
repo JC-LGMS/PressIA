@@ -286,8 +286,6 @@ interface PressDao {
     suspend fun feedTitle(feedId: String): String?
     @Query("SELECT * FROM subscriptions WHERE id = :feedId LIMIT 1")
     suspend fun subscription(feedId: String): SubscriptionEntity?
-    @Query("DELETE FROM articles")
-    suspend fun clearArticles()
     /** Vide les articles d'un flux désabonné. */
     @Query("DELETE FROM articles WHERE feedId = :feedId")
     suspend fun deleteArticlesOfFeed(feedId: String)
@@ -304,8 +302,15 @@ interface PressDao {
      * serveur ne connaît pas en tant que tels) et le suivi des miniatures (tout serait
      * retéléchargé à chaque fois).
      */
-    @Query("SELECT id, starred, laterSaved, laterProvider, imageCached, unread, readAt, imageUrl, feedTitle, fullFetched, content FROM articles WHERE id IN (:ids)")
+    @SuppressWarnings(androidx.room.RoomWarnings.CURSOR_MISMATCH)
+    @Query("SELECT id, starred, laterSaved, laterProvider, imageCached, unread, readAt, imageUrl, feedTitle, fullFetched FROM articles WHERE id IN (:ids)")
     suspend fun flagsOf(ids: List<String>): List<ArticleFlags>
+    /**
+     * Corps HTML des seuls articles déjà extraits (Readability), relu à part : `flagsOf` ne
+     * charge plus les colonnes lourdes, qui saturaient la fenêtre de curseur sur 500 lignes.
+     */
+    @Query("SELECT id, content FROM articles WHERE id IN (:ids) AND fullFetched = 1")
+    suspend fun extractedContentOf(ids: List<String>): List<ArticleContent>
     /** Oublie le « Read later » des flux d'un compte, avant d'y replonger le contenu à jour. */
     @Query("UPDATE articles SET laterSaved = 0 WHERE feedId IN (:feedIds)")
     suspend fun clearLater(feedIds: List<String>)
@@ -317,10 +322,6 @@ interface PressDao {
      */
     @Query("UPDATE articles SET laterSaved = 0, laterProvider = '' WHERE laterProvider = :provider AND feedId NOT IN (SELECT id FROM subscriptions)")
     suspend fun clearLaterOrphans(provider: String)
-    /** Oublie le marquage « Read later » d'un service supprimé (compte retiré) : sans cela les
-     *  articles d'un autre flux gardaient le marquage et restaient dans les Favoris. */
-    @Query("UPDATE articles SET laterSaved = 0, laterProvider = '' WHERE laterProvider = :provider")
-    suspend fun clearLaterOf(provider: String)
     /** Provenance du « Read later » (voir [ArticleEntity.laterProvider]) pour les articles importés. */
     @Query("UPDATE articles SET laterProvider = :provider WHERE id IN (:ids)")
     suspend fun setLaterProvider(ids: List<String>, provider: String)
@@ -420,7 +421,11 @@ interface PressDao {
      * lourdes (`summary`, `content`) sont lues ici exprès : c'est de là que sortent les images
      * du corps, que l'index couvrant ne contient pas.
      */
-    @Query("SELECT id, feedId, feedTitle, title, imageUrl, url FROM articles WHERE imageCached = 0 ORDER BY published DESC")
+    @Query(
+        "SELECT id, feedId, feedTitle, title, imageUrl, url, " +
+            "LENGTH(COALESCE(content, '')) + LENGTH(COALESCE(summary, '')) AS htmlSize " +
+            "FROM articles WHERE imageCached = 0 ORDER BY published DESC"
+    )
     suspend fun articlesPendingImages(): List<PendingArticleImages>
     /**
      * HTML des articles d'un paquet (voir [articlesPendingImages]) : la passe miniatures les lit
@@ -468,8 +473,15 @@ interface PressDao {
      * ([ThumbStore.gc]) ne couvre que les miniatures déclarées ; le cache d'images Coil (images
      * pleine taille) a besoin des URLs, article par article.
      */
-    @Query("SELECT imageUrl, url, summary, content FROM articles WHERE feedId = :feedId")
-    suspend fun articleMediaOfFeed(feedId: String): List<ArticleMedia>
+    /**
+     * Tailles du HTML d'un flux, sans le lire : la suppression d'un flux lit ses articles par
+     * paquets dont la somme tient sous la fenêtre de curseur Android (~2 Mo).
+     */
+    @Query(
+        "SELECT id, LENGTH(COALESCE(content, '')) + LENGTH(COALESCE(summary, '')) AS size " +
+            "FROM articles WHERE feedId = :feedId"
+    )
+    suspend fun articleHtmlSizesOfFeed(feedId: String): List<ArticleHtmlSize>
     /**
      * Marque les articles dont **toutes** les images sont là. Le marquage suit l'article et non
      * l'URL : un article dont une seule image du corps manque doit rester en attente, sinon elle
@@ -545,6 +557,14 @@ interface PressDao {
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
         onlyUnread: Int, limit: Int, offset: Int
     ): List<ArticleEntity>
+    /**
+     * Tous les identifiants non lus correspondant à la recherche, **sans pagination** : « tout
+     * marquer lu » sur les résultats ne doit pas s'arrêter aux pages déjà chargées à l'écran.
+     */
+    @Query("SELECT id FROM articles WHERE unread = 1 AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' ESCAPE '\\' OR author LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' ESCAPE '\\' OR content LIKE '%' || :q || '%' ESCAPE '\\')))")
+    suspend fun searchUnreadIds(
+        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int
+    ): List<String>
 
     // --- Sync queue ---
     @Insert
@@ -557,10 +577,12 @@ interface PressDao {
      * Page de tête en **ignorant** les flux d'un compte hors jeu (session morte) : leurs lignes
      * restent dans la file pour la reconnexion, mais 100 lignes mortes en tête ne doivent pas
      * empêcher les autres comptes d'être poussés. [skipEmpty] = 1 quand [skipFeeds] est vide
-     * (`NOT IN ()` est invalide en SQLite).
+     * (`NOT IN ()` est invalide en SQLite). Les lignes ayant déjà échoué [maxTries] fois sont
+     * écartées : une seule ligne définitivement refusée ne doit pas bloquer toute la file
+     * (elle reste en base pour une reconnexion, mais ne repasse plus).
      */
-    @Query("SELECT * FROM sync_queue WHERE (:skipEmpty = 1 OR COALESCE(feedId, '') NOT IN (:skipFeeds)) ORDER BY createdAt LIMIT 100")
-    suspend fun pendingSyncExcept(skipFeeds: List<String>, skipEmpty: Int): List<SyncActionEntity>
+    @Query("SELECT * FROM sync_queue WHERE (:skipEmpty = 1 OR COALESCE(feedId, '') NOT IN (:skipFeeds)) AND tries < :maxTries ORDER BY createdAt LIMIT 100")
+    suspend fun pendingSyncExcept(skipFeeds: List<String>, skipEmpty: Int, maxTries: Int): List<SyncActionEntity>
     /**
      * Articles avec une action lu/non-lu en attente, **toute la file** : la réconciliation
      * doit les protéger en entier. Avec la page de [pendingSync] (100 lignes), un marquage
@@ -580,8 +602,6 @@ interface PressDao {
     suspend fun pendingSavedIds(): List<String>
     @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave'")
     suspend fun pendingUnsavedIds(): List<String>
-    @Query("DELETE FROM sync_queue WHERE rowId = :rowId")
-    suspend fun dequeue(rowId: Long)
     /** Retire plusieurs lignes d'un coup (une requête par paquet au lieu d'une par ligne). */
     @Query("DELETE FROM sync_queue WHERE rowId IN (:rowIds)")
     suspend fun dequeueAll(rowIds: List<Long>)
@@ -602,8 +622,11 @@ interface PressDao {
      * Met à jour la durée d'une lecture déjà écrite (même article, même ouverture) : le
      * chronomètre s'arrête quand l'application passe en arrière-plan et reprend au retour.
      * Rend 0 quand la ligne n'existe pas encore (premier enregistrement de la visite).
+     *
+     * `MAX` : après une rotation, le temps restauré peut repartir d'un total plus ancien que
+     * celui déjà écrit — sans ce garde-fou, la seconde écriture raccourcissait la visite.
      */
-    @Query("UPDATE reading_events SET durationSec = :secs, completed = :completed WHERE articleId = :articleId AND openedAt = :openedAt")
+    @Query("UPDATE reading_events SET durationSec = MAX(durationSec, :secs), completed = MAX(completed, :completed) WHERE articleId = :articleId AND openedAt = :openedAt")
     suspend fun updateReading(articleId: String, openedAt: Long, secs: Int, completed: Boolean): Int
     /** Bornes des lectures enregistrées : [0] = plus ancien, [1] = plus récent. */
     @Query("SELECT IFNULL(MIN(openedAt), 0) FROM reading_events")
@@ -689,8 +712,7 @@ data class ReadStateRow(val id: String, val unread: Boolean, val starred: Boolea
 data class FeedCount(val feedId: String, val c: Int)
 /** État lu d'un article local à sauvegarder (voir [PressDao.localReadStates]). */
 data class LocalReadRow(val id: String, val feedId: String, val readAt: Long?, val published: Long)
-/** Images d'un article d'un flux supprimé (voir [PressDao.articleMediaOfFeed]). */
-data class ArticleMedia(val imageUrl: String?, val url: String, val summary: String?, val content: String?)
+
 /** Ligne de l'écran Doublons : seules les colonnes affichées (voir [PressDao.unreadDuplicates]). */
 data class DuplicateRow(
     val id: String,
@@ -709,7 +731,9 @@ data class DuplicateRow(
     /** Titre de l'article : nomme l'image en échec dans le détail du bandeau de synchro. */
     val title: String = "",
     val imageUrl: String?,
-    val url: String
+    val url: String,
+    /** Taille du HTML de la ligne, en caractères : borne la lecture des colonnes lourdes. */
+    val htmlSize: Int = 0
 )
 /**
  * Miniature annoncée comme téléchargée (drapeau `imageCached`), avec de quoi nommer son
@@ -727,6 +751,12 @@ data class ArticleMediaById(val id: String, val imageUrl: String?, val url: Stri
 data class ReadingKey(val articleId: String, val openedAt: Long)
 /** Clé naturelle d'une tentative d'extraction (voir [PressDao.extractKeys]). */
 data class ExtractKey(val articleId: String, val createdAt: Long)
+
+/** Corps d'un article extrait (voir [PressDao.extractedContentOf]). */
+data class ArticleContent(val id: String, val content: String?)
+
+/** Identifiant d'article avec la taille de son HTML (voir [PressDao.articleHtmlSizesOfFeed]). */
+data class ArticleHtmlSize(val id: String, val size: Int = 0)
 
 /** Drapeaux locaux d'un article déjà en base, relus avant réinsertion (voir [PressDao.flagsOf]). */
 data class ArticleFlags(

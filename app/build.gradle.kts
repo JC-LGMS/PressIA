@@ -165,6 +165,14 @@ android {
     tasks.register("renameApks") {
         group = "build"
         description = "Renomme les APK en PressIA-<version>-<type>-<date>.apk"
+        // `finalizedBy` s'exécute aussi après un échec : sans ce garde-fou, l'APK de la
+        // compilation précédente était recopié sous le numéro de version de la compilation
+        // cassée, et semblait contenir la correction.
+        onlyIf {
+            listOf("assembleDebug", "assembleRelease").all {
+                tasks.named(it).get().state.failure == null
+            }
+        }
         doLast {
             val date = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
             val releaseApk = file("${buildDir}/outputs/apk/release/app-release.apk")
@@ -201,7 +209,6 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.navigation:navigation-compose:2.7.7")

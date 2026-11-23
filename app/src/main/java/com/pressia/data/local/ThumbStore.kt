@@ -37,7 +37,11 @@ fun imageCapInterceptor(cap: Long): okhttp3.Interceptor = okhttp3.Interceptor { 
     val resp = chain.proceed(chain.request())
     val body = resp.body
     if (body == null) return@Interceptor resp
-    if (body.contentLength() > cap) throw ImageTooLargeException()
+    if (body.contentLength() > cap) {
+        // Une réponse levée sans être fermée garde sa connexion occupée dans le pool.
+        resp.close()
+        throw ImageTooLargeException()
+    }
     resp.newBuilder().body(object : okhttp3.ResponseBody() {
         override fun contentType() = body.contentType()
         override fun contentLength() = body.contentLength()
@@ -250,8 +254,6 @@ object ThumbStore {
 
     fun dir(ctx: Context): File = File(ctx.filesDir, DIR)
 
-    fun fileFor(ctx: Context, url: String): File = File(dir(ctx), thumbFileName(url))
-
     /** Fichier local si la miniature est déjà stockée (JPEG, ou PNG transparent), `null` sinon. */
     fun cachedFile(ctx: Context, url: String): File? =
         thumbFileNames(url).firstNotNullOfOrNull { File(dir(ctx), it).takeIf { f -> f.exists() } }
@@ -327,6 +329,9 @@ object ThumbStore {
                         tmp.delete()
                         return@withContext "écriture impossible"
                     }
+                    // L'ancienne miniature de l'autre format resterait prioritaire à
+                    // l'affichage (`cachedFile` essaie .jpg avant .png) : elle part.
+                    File(d, thumbFileName(url, if (alpha) "jpg" else "png")).delete()
                 } finally {
                     tmp.delete()
                     scaled.recycle()
