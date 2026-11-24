@@ -21,7 +21,8 @@ images conservés sur l'appareil.
   d'être écrit sur l'appareil, et un refus ne laisse rien. « Se désabonner » le
   retire aussi du compte, efface ses articles et ses images, et s'annonce dans le
   bandeau du bas, étape par étape.
-- **Lecture** : quatre vues (liste, carte, magazine, compacte), quatre tailles de
+- **Lecture** : quatre vues (liste, carte, magazine, compacte — le titre de la
+  compacte peut passer sur trois lignes), quatre tailles de
   police, thème clair/sombre/AMOLED et apparence automatique selon la lumière
   ambiante. Un article ouvert est conservé hors-ligne (extrait du flux, images).
 - **Sélection** : le texte d'un article se sélectionne (appui long) et le menu

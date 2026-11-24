@@ -55,6 +55,8 @@ class Prefs(private val ctx: Context) {
         val ACCENT = stringPreferencesKey("accent") // "red"|"blue"|"green"|"violet"|"orange"|"pink"|"teal"
         val BG = stringPreferencesKey("background") // "default"|"white"|"black"|"sepia"|"grey"|"night"
         val VIEW_MODE = stringPreferencesKey("view_mode") // "list"|"card"|"magazine"|"compact"
+        /** Titre des articles sur 3 lignes dans la vue compacte (2 par défaut). */
+        val COMPACT_THREE_LINES = booleanPreferencesKey("compact_three_lines")
         val FONT_SIZE = intPreferencesKey("font_size") // corps du texte article, sp 12..24
         val TITLE_FONT_SIZE = intPreferencesKey("title_font_size") // titres de liste, sp 12..24
         val ARTICLE_TITLE_SIZE = intPreferencesKey("article_title_size") // titre écran article, sp 12..28
@@ -308,6 +310,7 @@ class Prefs(private val ctx: Context) {
             PrefEntry.IntPref("light_delay", LIGHT_DELAY),
             PrefEntry.Str("accent", ACCENT),
             PrefEntry.Str("background", BG), PrefEntry.Str("view_mode", VIEW_MODE),
+            PrefEntry.Bool("compact_three_lines", COMPACT_THREE_LINES),
             PrefEntry.IntPref("font_size", FONT_SIZE), PrefEntry.IntPref("title_font_size", TITLE_FONT_SIZE),
             PrefEntry.IntPref("article_title_size", ARTICLE_TITLE_SIZE), PrefEntry.IntPref("date_font_size", DATE_FONT_SIZE),
             PrefEntry.Str("trailing_action", TRAILING_ACTION), PrefEntry.Str("article_actions", ARTICLE_ACTIONS), PrefEntry.Str("swipe_action", SWIPE_ACTION),

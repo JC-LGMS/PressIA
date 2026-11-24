@@ -318,6 +318,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     val accent: StateFlow<String> = prefs.flow(Prefs.ACCENT, "red").stateIn(viewModelScope, SharingStarted.Eagerly, "red")
     val bg: StateFlow<String> = prefs.flow(Prefs.BG, "default").stateIn(viewModelScope, SharingStarted.Eagerly, "default")
     val viewMode: StateFlow<String> = prefs.flow(Prefs.VIEW_MODE, "list").stateIn(viewModelScope, SharingStarted.Eagerly, "list")
+    val compactThreeLines: StateFlow<Boolean> = prefs.flow(Prefs.COMPACT_THREE_LINES, false).stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val fontSize: StateFlow<Int> = prefs.flow(Prefs.FONT_SIZE, 16).stateIn(viewModelScope, SharingStarted.Eagerly, 16)
     val titleFont: StateFlow<Int> = prefs.flow(Prefs.TITLE_FONT_SIZE, 16).stateIn(viewModelScope, SharingStarted.Eagerly, 16)
     val articleTitle: StateFlow<Int> = prefs.flow(Prefs.ARTICLE_TITLE_SIZE, 19).stateIn(viewModelScope, SharingStarted.Eagerly, 19)

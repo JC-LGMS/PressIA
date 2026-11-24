@@ -130,7 +130,9 @@ Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assembl
   (l'incrément en cours est conservé) — deux entrées écrites trop tôt avaient une minute
   d'avance. **Contrôler l'écran après l'installation** (le nombre de changements doit augmenter) :
   un APK produit avant l'édition du journal affiche encore l'ancienne liste, et c'est le seul
-  signal.
+  signal. La page n'affiche **qu'une date et une heure par version**, dans l'en-tête de la
+  version : celles de son **dernier** changement (le commit qui la clôt). Les lignes de
+  changements n'en portent plus, ce qui laisse toute la largeur au texte.
 - **Un commit qui ne touche ni `app/src/main` ni `app/build.gradle.kts`** (tests, documentation,
   outillage — ce fichier compris) **ne change ni la version ni le journal** : l'empreinte ne
   couvre que ces sources, et la page ne consigne que ce qui est livré dans l'APK.
@@ -655,7 +657,12 @@ l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: pack
   (`offsetY` → `graphicsLayer`, comme `offsetX` pour l'horizontale), et seulement quand le
   relâchement fera quelque chose (voisin dans ce sens, ou action configurée) : on voit le geste
   aboutir avant de lâcher. Le seuil est `SWIPE_Y_PX` (300 px, dans les deux sens) contre
-  `SWIPE_PX` (120 px) pour l'horizontale. L'**icône** de ce qui va se déclencher s'affiche
+  `SWIPE_PX` (120 px) pour l'horizontale.
+  **Un geste = un seul axe** : le balayage horizontal est posé lui aussi **après**
+  `verticalScroll` (il voit l'évènement avant le défilement et le consomme dès qu'il démarre,
+  donc la page ne monte/descend plus pendant un balayage) ; les deux détecteurs se bloquent
+  mutuellement (`blocked = { swipingY }` / `{ dragging }`) et le vertical abandonne si la course
+  horizontale domine. Un geste diagonal ne déclenche donc jamais les deux. L'**icône** de ce qui va se déclencher s'affiche
   pendant le geste, dans les quatre sens — flèche du sens quand c'est la navigation, icône de
   l'action sinon (`gestureActionIcon`) —, en `onSurface` (noir en thème clair) tant que la course
   n'atteint pas le seuil, en `primary` dès que le relâchement agira (`swipeTint`). Sans voisin
@@ -1223,9 +1230,23 @@ articles et favoris du compte compris).
   (meilleur candidat sans ce filtre) pour un article fait surtout de liens.
 - **Un `<article>` qui porte l'essentiel du texte est préféré à son conteneur** : quand `main`
   englobe l'article et sa colonne latérale, il gagne au score et l'extraction se terminait par les
-  « derniers articles ». Si un `<article>` du conteneur retenu pèse au moins la moitié de son texte
-  (et reste sous 0,5 de densité de liens), c'est lui le corps. Vérifié sur les deux articles
-  MacGeneration : le sondage (1756 car.) et la dépêche Nvidia (3706 car.), sans la colonne.
+  « derniers articles ». Le choix se fait sur **tout le document** : un `<article>` qui pèse au
+  moins la moitié du texte du gagnant (et reste sous 0,5 de densité de liens) est le corps — même
+  quand le gagnant est un bloc sans rapport avec lui. C'est ce qui écarte le volet de connexion
+  masqué de p-nintendo (10 `<p>` courts, 885 car.) qui battait l'article (2 423 car.).
+  Vérifié sur les deux articles MacGeneration : le sondage (1756 car.) et la dépêche Nvidia
+  (3706 car.), sans la colonne.
+- **Premier message d'un fil de forum** (`FIRST_POST_SELECTORS` : Invision `div.post[id^=post-]`,
+  XenForo `article.message`, phpBB `div.postbody`, Discourse `.cooked`) : le sujet **est** le
+  premier message, les réponses qui suivent sont des commentaires. Elles sont souvent plus
+  longues et gagnaient le score générique — « News fr » (logic-sunrise) affichait une réponse.
+- **Le corps peut être en `<div>` nus, sans un seul `<p>`** (BBCode d'Invision, `<div>texte<br>`
+  de p-nintendo) : le rendu de l'écran ne garde que les blocs (`p`, `li`, médias…) et perdrait ce
+  texte. `paragraphsFromInline` (dans `cleaned`) regroupe les nœuds en ligne en paragraphes, à
+  leur place ; les blocs et leurs enfants ne bougent pas.
+- Les sous-blocs de bruit **internes** au corps (commentaires, partage, encart) sont retirés
+  avant le rendu : le `<article>` de p-nintendo englobe la section des commentaires, qui suivait
+  l'article.
 - `articleBlocks` ne retient que `p, li, h1..h6, pre, blockquote, figcaption, img, video, iframe,
   table` : certains flux livrent le corps en texte nu (`…texte…<br><img …>`, cas des Numériques).
   Les nœuds texte de premier niveau sont enveloppés dans un `<p>` avant sélection, sinon
@@ -1390,6 +1411,9 @@ articles et favoris du compte compris).
 - Modifier une vue article = toucher `ArticleRow` dans `Components.kt`. Le `MetaLine` (source +
   étoile + heure) est partagé par les 4 vues ; lui donner un paramètre `modifier` plutôt que d'en
   dupliquer une variante.
+- Vue compacte : le titre tient sur 2 lignes, **3** si « Titre sur 3 lignes (vue compacte) » est
+  activé (`Prefs.COMPACT_THREE_LINES`, Réglages → Listes d'articles). Le réglage ne concerne que
+  cette vue : liste et carte titrent déjà sur 3 lignes, magazine aussi.
 - La position du rond lu/non-lu (`dotAtStart`) pilote aussi celle de l'étoile de swipe : les deux
   doivent rester du même côté, sinon l'information saute d'un bout à l'autre de la ligne au geste.
   Il ne vaut que pour la vue **magazine** : en liste, carte et compacte le bouton de raccourci
@@ -1433,6 +1457,11 @@ articles et favoris du compte compris).
   laissé sur place. L'identifiant n'entre **pas** dans la route (URL de flux local, identifiants
   d'entrée) : `nav.navigate("article")` puis
   `nav.currentBackStackEntry?.savedStateHandle?.set(ARTICLE_ID, id)`.
+- **Un article ne se dépile qu'une fois par entrée** (drapeau `popped` autour de `onBack`) : deux
+  retours dans la même image (molette très rapide sur l'émulateur, balayages en rafale) dépilaient
+  l'article **puis** la liste sous lui, et un `NavHost` vide ne dessine rien — écran noir
+  persistant dont seul un redémarrage sortait. Filet dans `MainActivity` : si la pile se vide, la
+  route de départ est rouverte (après une image, le temps que le `NavHost` pose son graphe).
 - **Bouton « remonter en haut » : pas d'`animateScrollToItem(0)` sur une longue liste.** Il avance
   par étapes — il réestime la hauteur des lignes et relance l'animation à chaque fois — si bien
   que la course durait des dizaines de secondes et finissait article par article.

@@ -3096,6 +3096,8 @@ class PressRepository(
         pendingReads: Set<String>? = null
     ): Int {
         if (articles.isEmpty()) return 0
+        val t0 = System.currentTimeMillis()
+        val duplicates = articles.size - articles.distinctBy { it.id }.size
         val known = HashSet<String>()
         val prev = HashMap<String, ArticleFlags>()
         // Une seule requête par paquet (drapeaux + existence) au lieu de trois : les
@@ -3106,6 +3108,8 @@ class PressRepository(
                 prev[it.id] = it
             }
         }
+        val tFlags = System.currentTimeMillis()
+        val prevExtracted = prev.values.count { it.fullFetched }
         // Le HTML des articles extraits est relu à part, par très petits paquets : 500 corps
         // de 300 Ko ne tiennent pas dans la fenêtre de curseur (~2 Mo).
         prev.values.filter { it.fullFetched }.map { it.id }.chunked(3).forEach { chunk ->
@@ -3113,6 +3117,7 @@ class PressRepository(
                 prev[c.id]?.let { prev[c.id] = it.copy(content = c.content) }
             }
         }
+        val tExtracted = System.currentTimeMillis()
         // Source de l'article, figée à l'enregistrement : la ligne `subscriptions` peut disparaître
         // (désabonnement) et l'article garder son origine — c'est ce que lisent les favoris.
         val needsTitle = articles.any { it.feedTitle.isBlank() }
@@ -3132,8 +3137,20 @@ class PressRepository(
         val merged = capped.map { a ->
             mergeIncomingArticle(a, prev[a.id], keepRead, keepReadBeforeMs, pending)
         }
+        val tMerged = System.currentTimeMillis()
         val fresh = merged.count { it.id !in known }
+        val htmlKb = merged.sumOf { ((it.content?.length ?: 0) + (it.summary?.length ?: 0)) / 1024 }
         dao.upsertArticles(merged)
+        // Chrono temporaire : situe le coût de la fusion (lecture des drapeaux, corps extraits,
+        // plafonnement + fusion, écriture). À retirer une fois la mesure faite.
+        android.util.Log.i(
+            "PressIA",
+            "fusion: ${merged.size} articles (connus=${known.size}, extraits=$prevExtracted, " +
+                "doublons=$duplicates, neufs=$fresh, html=${htmlKb}Ko) " +
+                "drapeaux=${tFlags - t0}ms corps=${tExtracted - tFlags}ms " +
+                "fusion=${tMerged - tExtracted}ms ecriture=${System.currentTimeMillis() - tMerged}ms " +
+                "total=${System.currentTimeMillis() - t0}ms"
+        )
         return fresh
     }
 

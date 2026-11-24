@@ -151,6 +151,20 @@ class MainActivity : ComponentActivity() {
                 // Départ du NavHost (figé) et accueil configuré (suit le réglage).
                 val startRoute = startOf(sessionHome.value ?: "subs")
                 val homeRoute = startOf(home ?: sessionHome.value ?: "subs")
+                // Filet : un NavHost sans entrée ne dessine rien — écran noir persistant, dont
+                // seul un redémarrage sortait. Des retours rapprochés pouvaient vider la pile
+                // (article puis page d'accueil, voir le garde-fou de l'écran article) : la page
+                // de départ est rouverte. L'attente d'une image laisse le NavHost poser son
+                // graphe et sa destination de départ au premier passage.
+                val entries by nav.currentBackStack.collectAsState()
+                LaunchedEffect(entries.isEmpty()) {
+                    if (entries.isEmpty()) {
+                        withFrameNanos { }
+                        if (nav.currentBackStack.value.isEmpty()) {
+                            nav.navigate(startRoute) { launchSingleTop = true }
+                        }
+                    }
+                }
                 val current = backStack?.destination?.route?.substringBefore("/") ?: startRoute
                 // Accueil « Tous les articles » : hiérarchie racine → Accueil → dossier/flux.
                 // Le geste vers la droite et le retour remontent donc d'un niveau au lieu de
@@ -552,11 +566,18 @@ class MainActivity : ComponentActivity() {
                                     // avait laissé, et non le dernier ouvert ailleurs.
                                     val handle = entry.savedStateHandle
                                     val id by handle.getStateFlow(ARTICLE_ID, "").collectAsState()
+                                    // Un retour par geste peut se répéter dans la même image
+                                    // (molette très rapide, balayages en rafale) : le second
+                                    // dépilait la liste sous l'article puis la pile entière,
+                                    // laissant un écran noir. Une seule sortie par entrée.
+                                    var popped by remember(entry.id) { mutableStateOf(false) }
                                     if (id.isBlank()) {
                                         LaunchedEffect(Unit) { nav.popBackStack() }
                                     } else {
                                         ArticleScreen(vm, id,
-                                            onBack = { nav.popBackStack() },
+                                            onBack = {
+                                                if (!popped) { popped = true; nav.popBackStack() }
+                                            },
                                             onMenu = { openDrawer() },
                                             onShowArticle = { handle[ARTICLE_ID] = it },
                                             onSearch = { s -> openSearch(s) })

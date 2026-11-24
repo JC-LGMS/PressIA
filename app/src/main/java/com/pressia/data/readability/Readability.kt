@@ -148,6 +148,33 @@ object Readability {
         "#next-single-post"
     )
 
+    /**
+     * Premier message d'un fil de forum : le sujet **est** ce message, les réponses qui suivent
+     * ne sont que des commentaires. Elles sont souvent plus longues et gagnaient le score
+     * générique — « News fr » (Invision) affichait une réponse à la place de la news.
+     */
+    private val FIRST_POST_SELECTORS = listOf(
+        "div.post[id^=post-]",     // Invision Power Board 3 (logic-sunrise)
+        "article.ipsComment",      // Invision 4
+        "article.message",         // XenForo
+        "div.postbody",            // phpBB
+        "div.cooked"               // Discourse
+    )
+
+    /** Balises de bloc : tout le reste est en ligne (texte, liens, images, `<br>`…). */
+    private val BLOCK_TAGS = setOf(
+        "p", "div", "section", "article", "main", "header", "footer", "nav", "aside",
+        "ul", "ol", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tr", "td", "th",
+        "blockquote", "pre", "figure", "figcaption", "hr", "h1", "h2", "h3", "h4", "h5",
+        "h6", "form", "fieldset"
+    )
+
+    /** Conteneurs dont le texte nu doit devenir des paragraphes (pas `p`, `li`, titres…). */
+    private val STRUCTURAL_TAGS = setOf(
+        "div", "section", "article", "main", "header", "footer", "nav", "aside",
+        "td", "th", "dl", "dt", "dd", "figure", "fieldset"
+    )
+
     /** Un bloc « contenu » ne doit jamais être écarté comme bruit (ex. `article-content--has-sidebar`). */
     private val CONTENT_HINT = Regex("(?i)article|content|post-body|entry")
 
@@ -163,6 +190,12 @@ object Readability {
             .filter { it.select("p").size >= 2 || it.text().length >= 300 }
             .maxByOrNull { it.select("p").size * 20 + it.text().length / 100 }
         if (explicit != null) return cleaned(explicit)
+        // 1 bis) premier message d'un forum (voir FIRST_POST_SELECTORS). Pris avant le score
+        // générique : les réponses, plus longues, l'emportaient sur le message qui porte le sujet.
+        val firstPost = FIRST_POST_SELECTORS.asSequence()
+            .mapNotNull { sel -> doc.select(sel).firstOrNull { it.text().length >= 300 } }
+            .firstOrNull()
+        if (firstPost != null) return cleaned(firstPost)
         // 2) repli générique : bloc avec le plus de <p> significatifs. Le comptage se fait en
         // **un seul parcours** de <p> et de <a>, accumulé sur leurs ancêtres : réinterroger le
         // sous-arbre de chaque `div` coûtait O(n²) sur une page longue.
@@ -219,19 +252,71 @@ object Readability {
             if (score > bestScore) { bestScore = score; best = el }
         }
         val target = best ?: fallback ?: doc.body() ?: return doc.outerHtml()
-        // Un conteneur large (main + colonne latérale) peut gagner au score : si un <article>
-        // y porte la moitié du texte, c'est le corps — et lui seul. Retire les « derniers
-        // articles » de la colonne de droite, qui sinon suivaient l'article.
-        // `target` peut être `body` (hors candidats) : sa taille se lit une seule fois.
-        val targetLen = pLen[target] ?: target.text().length
-        val semantic = target.select("article")
-            .filter { (pLen[it] ?: it.text().length) * 2 >= targetLen }
-            .filter { density(it) <= 0.5 }
-            .maxByOrNull { (pCount[it] ?: 0) * 20 + (pLen[it] ?: 0) / 100 }
+        // Un <article> du document qui porte au moins la moitié du texte du gagnant est le
+        // corps : un volet de connexion masqué en CSS (10 <p> courts, cas p-nintendo) ou une
+        // colonne « derniers articles » ne doivent pas le battre. Un <article> rangé dans une
+        // zone de commentaires ou de contenus liés est écarté.
+        val targetLen = target.text().length
+        val semantic = doc.select("article")
+            .filter { it.text().length * 2 >= targetLen }
+            .filter { linkDensity(it) <= 0.5 }
+            .filter { a -> a.parents().none { p -> NOISE.containsMatchIn(p.className() + " " + p.id()) } }
+            .maxByOrNull { it.text().length }
         return cleaned(semantic ?: target)
     }
 
+    /** Part du texte portée par des liens (calcul direct, pour le choix de l'`article`). */
+    private fun linkDensity(el: org.jsoup.nodes.Element): Double {
+        val text = el.text().length
+        if (text <= 0) return 1.0
+        val linked = el.select("a").sumOf { it.text().length }
+        return (linked.toDouble() / text).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * Les forums et certains sites écrivent le corps en texte nu dans des `<div>` (BBCode
+     * d'Invision, `<div>texte<br>…</div>` de p-nintendo) : le rendu ne garde que les blocs
+     * (`p`, `li`, médias…) et perdrait ce texte. Les nœuds en ligne sont regroupés en
+     * paragraphes, à leur place, sans toucher aux blocs ni à leurs enfants.
+     */
+    private fun paragraphsFromInline(root: org.jsoup.nodes.Element) {
+        val containers = (root.select("*").toList() + root)
+            .filter { it.tagName().lowercase() in STRUCTURAL_TAGS }
+            .asReversed()
+        for (c in containers) {
+            fun inline(n: org.jsoup.nodes.Node): Boolean =
+                n is org.jsoup.nodes.TextNode ||
+                    (n is org.jsoup.nodes.Element && n.tagName().lowercase() !in BLOCK_TAGS)
+            val rebuilt = mutableListOf<org.jsoup.nodes.Node>()
+            var run = mutableListOf<org.jsoup.nodes.Node>()
+            fun flush() {
+                if (run.any { it is org.jsoup.nodes.TextNode && it.text().isNotBlank() }) {
+                    val p = org.jsoup.nodes.Element("p")
+                    run.forEach { p.appendChild(it) }
+                    rebuilt += p
+                } else {
+                    rebuilt += run
+                }
+                run = mutableListOf()
+            }
+            for (n in c.childNodes().toList()) {
+                if (inline(n)) run += n else { flush(); rebuilt += n }
+            }
+            flush()
+            c.empty()
+            rebuilt.forEach { c.appendChild(it) }
+        }
+    }
+
     private fun cleaned(target: org.jsoup.nodes.Element): String {
+        // Bruit **interne** au bloc retenu : le corps peut englober la section des commentaires
+        // (p-nintendo en fin d'article) ou un encart de partage. Le filtre de bruit ne servait
+        // qu'au choix du bloc, pas à son contenu.
+        target.select("div, section, aside").forEach { el ->
+            val cls = el.className() + " " + el.id()
+            if (NOISE.containsMatchIn(cls) && !CONTENT_HINT.containsMatchIn(cls)) el.remove()
+        }
+        paragraphsFromInline(target)
         target.select("img").forEach { it.attr("loading", "lazy") }
         // absolutiser
         target.select("img[src]").forEach { it.attr("src", it.absUrl("src")) }

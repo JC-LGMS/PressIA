@@ -441,6 +441,24 @@ fun ArticleScreen(
         val downNav = swipeDown == "newer"
         Box(
             Modifier.padding(pad).fillMaxSize()
+        ) {
+        // Texte sélectionnable (appui long, puis poignées ou « Tout sélectionner ») : la
+        // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
+        // défilement comme les badges de balayage restent en dehors. `clearEpoch` ne change
+        // qu'au deuxième appui à côté du menu de sélection.
+        key(textToolbar.clearEpoch) {
+        CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
+        SelectionContainer(selectionAnchor(textToolbar)) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp)
+                // Taille de la fenêtre de défilement, relevée là où la colonne est mesurée
+                // (après la marge de page, avant `verticalScroll` qui, lui, voit le contenu
+                // entier) : c'est l'échelle de la barre de défilement.
+                .onSizeChanged { viewportPx = it.height }
+                .verticalScroll(scrollState)
+                // Balayage gauche/droite, posé **après** `verticalScroll` : il voit l'évènement
+                // avant le défilement (passage montant) et le consomme dès qu'il démarre — le
+                // contenu ne monte/descend plus pendant un balayage horizontal.
                 .pointerInput(prevId, nextId, swipeLeft, swipeRight) {
                     if (prevId != null || nextId != null || swipeLeft != "none" || swipeRight != "none") {
                     detectArticleSwipe(
@@ -448,6 +466,7 @@ fun ArticleScreen(
                         // exception, le moindre déplacement horizontal lui envoyait un
                         // `pointercancel` et la barre d'avancée de la vidéo ne répondait plus.
                         onPlayer = { inPlayer.value },
+                        blocked = { swipingY },
                         onStart = { dragging = true; dragX = 0f },
                         onDrag = { change, amount ->
                             change.consume()
@@ -478,21 +497,6 @@ fun ArticleScreen(
                     )
                     }
                 }
-        ) {
-        // Texte sélectionnable (appui long, puis poignées ou « Tout sélectionner ») : la
-        // sélection vit dans la colonne défilante, donc dans le texte lui-même, et la barre de
-        // défilement comme les badges de balayage restent en dehors. `clearEpoch` ne change
-        // qu'au deuxième appui à côté du menu de sélection.
-        key(textToolbar.clearEpoch) {
-        CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
-        SelectionContainer(selectionAnchor(textToolbar)) {
-        Column(
-            Modifier.fillMaxSize().padding(16.dp)
-                // Taille de la fenêtre de défilement, relevée là où la colonne est mesurée
-                // (après la marge de page, avant `verticalScroll` qui, lui, voit le contenu
-                // entier) : c'est l'échelle de la barre de défilement.
-                .onSizeChanged { viewportPx = it.height }
-                .verticalScroll(scrollState)
                 // Balayage haut/bas : il ne prend le geste que là où l'article ne peut plus
                 // défiler (bas atteint vers le haut, haut atteint vers le bas) ; partout ailleurs
                 // le défilement reste maître.
@@ -501,6 +505,7 @@ fun ArticleScreen(
                         onPlayer = { inPlayer.value },
                         atTop = { scrollState.value <= 0 },
                         atBottom = { scrollState.value >= scrollState.maxValue },
+                        blocked = { dragging },
                         onStart = { dragY = 0f; offsetY = 0f; swipingY = true },
                         onDrag = { dy ->
                             dragY = (dragY + dy).coerceIn(-600f, 600f)
@@ -2214,6 +2219,8 @@ fun VideoPlayer(
  */
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectArticleSwipe(
     onPlayer: () -> Boolean,
+    /** Vrai si le balayage vertical a déjà pris le geste (un geste = un seul axe). */
+    blocked: () -> Boolean,
     onStart: () -> Unit,
     onDrag: (androidx.compose.ui.input.pointer.PointerInputChange, Float) -> Unit,
     onEnd: () -> Unit,
@@ -2243,6 +2250,8 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
                     // Course verticale : c'est le défilement de l'article, on rend la main.
                     kotlin.math.abs(totalY) > slop && kotlin.math.abs(totalY) > kotlin.math.abs(totalX) -> break
                     kotlin.math.abs(totalX) > slop -> {
+                        // Le balayage vertical a déjà pris le geste : on ne fait pas les deux.
+                        if (blocked()) break
                         started = true
                         change.consume()
                         onStart()
@@ -2273,6 +2282,8 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
     onPlayer: () -> Boolean,
     atTop: () -> Boolean,
     atBottom: () -> Boolean,
+    /** Vrai si le balayage horizontal a déjà pris le geste (un geste = un seul axe). */
+    blocked: () -> Boolean,
     onStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onEnd: () -> Unit,
@@ -2288,6 +2299,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
         }
         val slop = viewConfiguration.touchSlop
         var total = 0f
+        var totalX = 0f
         var started = false
         while (true) {
             val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
@@ -2295,7 +2307,11 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
             val dy = change.positionChange().y
             if (!started) {
                 total += dy
+                totalX += change.positionChange().x
                 if (kotlin.math.abs(total) > slop) {
+                    // Un geste = un axe : le balayage horizontal a déjà commencé, ou sa course
+                    // domine → le geste vertical ne prend pas la main.
+                    if (blocked() || kotlin.math.abs(totalX) > kotlin.math.abs(total)) break
                     // Vers le haut : seulement au bas de l'article ; vers le bas : seulement en
                     // haut. Sinon le défilement garde le geste (rien n'est consommé).
                     if (!(if (total < 0) atBottom() else atTop())) break
@@ -2304,6 +2320,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectAr
                     onStart()
                     onDrag(total)
                     total = 0f
+                    totalX = 0f
                 }
             } else {
                 change.consume()

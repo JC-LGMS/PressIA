@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +45,55 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  * l'ouverture de la page ([changelog] n'est pas une constante chargée au démarrage).
  */
 fun changelog(): List<ChangelogEntry> = listOf(
+    ChangelogEntry(
+        "1.25",
+        listOf(
+            ChangelogItem(
+                "2026-11-25",
+                "Titre sur 3 lignes en vue compacte",
+                "- Réglages → Listes d'articles : un interrupteur « Titre sur 3 lignes (vue " +
+                    "compacte) » laisse le titre des articles s'étaler sur trois lignes au lieu " +
+                    "de deux ; les autres vues ne changent pas.",
+                time = "00:57"
+            ),
+            ChangelogItem(
+                "2026-11-25",
+                "Écran noir après un retour d'article trop rapide",
+                "- Un article ne se dépile plus qu'une fois : deux retours rapprochés (molette " +
+                    "très rapide, balayages en rafale) dépilaient l'article puis la liste sous " +
+                    "lui, et l'écran restait noir jusqu'au redémarrage de l'application. Une " +
+                    "pile de navigation vide rouvre désormais la page de départ.",
+                time = "00:57"
+            ),
+            ChangelogItem(
+                "2026-11-25",
+                "Readability : Puissance Nintendo et News fr",
+                "- Puissance Nintendo : l'extraction rendait le volet de connexion (10 <p> courts, " +
+                    "masqué en CSS) à la place de l'article ; le corps, écrit en <div> nus, est " +
+                    "désormais reconnu et les commentaires de fin d'article sont écartés.\n\n" +
+                "- News fr (forums logic-sunrise) : c'était une réponse du fil qui était extraite, " +
+                    "plus longue que le sujet ; le premier message du fil fait foi, et son texte " +
+                    "sans paragraphes s'affiche quand même.",
+                time = "00:57"
+            ),
+            ChangelogItem(
+                "2026-11-25",
+                "Un geste d'article, un seul axe",
+                "- Un balayage gauche/droite commence : le contenu ne monte et ne descend plus " +
+                    "pendant le geste, et le balayage haut/bas ne se déclenche plus en même " +
+                    "temps (et inversement). Un geste diagonal suit l'axe dominant.",
+                time = "00:57"
+            ),
+            ChangelogItem(
+                "2026-11-25",
+                "Journal : une seule date et heure par version",
+                "- La date et l'heure d'une version s'affichent une fois, à côté de son numéro " +
+                    "(celle de son dernier changement) ; les lignes de changements n'en portent " +
+                    "plus, ce qui laisse toute la largeur au texte.",
+                time = "00:57"
+            )
+        )
+    ),
     ChangelogEntry(
         "1.24",
         listOf(
@@ -452,7 +500,7 @@ fun changelog(): List<ChangelogEntry> = listOf(
                     "PressIA écrit dans les favoris du serveur, et l'écran Favoris gagne " +
                     "l'ensemble « Favoris - FreshRSS ». Un serveur sans certificat se saisit avec " +
                     "« http:// » devant l'adresse.",
-                time = "00:54"
+                time = "00:57"
             )
         )
     ),
@@ -1738,23 +1786,32 @@ fun ChangelogScreen() {
             ) {
                 entries.forEach { entry ->
                     item {
-                        Text(
-                            "Version ${entry.version}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        // Une seule date/heure pour la version : celle du **dernier** changement
+                        // qu'elle porte, c'est-à-dire du commit qui l'a close. Les changements
+                        // d'une même version ne répètent donc plus de date à chaque ligne.
+                        val stampDate = entry.items.lastOrNull()?.date.orEmpty()
+                        val stampTime = entry.items.lastOrNull()?.time
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Version ${entry.version}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (stampDate.isNotBlank()) Text(
+                                if (stampTime.isNullOrBlank()) stampDate else "$stampDate $stampTime",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
-                    itemsIndexed(entry.items) { index, item ->
-                        val prev = entry.items.getOrNull(index - 1)
-                        // Date et heure ne se répètent pas : la colonne garde sa hauteur (blanc)
-                        // pour que les lignes restent alignées les unes sous les autres.
-                        ChangelogRow(
-                            item,
-                            showDate = prev?.date != item.date,
-                            showTime = prev?.time != item.time
-                        )
+                    entry.items.forEach { change ->
+                        item { ChangelogRow(change) }
                     }
                     item {
                         Spacer(Modifier.height(18.dp))
@@ -1812,36 +1869,19 @@ private fun ChangelogScrollBar(state: LazyListState, modifier: Modifier = Modifi
     )
 }
 
-/** Une ligne du journal : date et heure à gauche, titre puis détail du commit à droite. */
+/** Un changement du journal : titre puis détail du commit. La date et l'heure sont portées par
+ *  l'en-tête de la version, une seule fois. */
 @Composable
-private fun ChangelogRow(item: ChangelogItem, showDate: Boolean, showTime: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
-        // Colonne étroite : la date sur une ligne, l'heure juste en dessous. Réduite au strict
-        // nécessaire (« 2026-11-06 » en 11 sp ≈ 64 dp) pour laisser la place au texte.
-        Column(Modifier.width(70.dp).padding(top = 2.dp, end = 4.dp)) {
+private fun ChangelogRow(item: ChangelogItem) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+        Text(item.title, style = MaterialTheme.typography.bodyMedium)
+        if (!item.detail.isNullOrBlank()) {
+            Spacer(Modifier.height(2.dp))
             Text(
-                if (showDate) item.date else " ",
-                style = MaterialTheme.typography.labelSmall,
+                item.detail,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (!item.time.isNullOrBlank()) {
-                Text(
-                    if (showTime) item.time!! else " ",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                )
-            }
-        }
-        Column(Modifier.weight(1f)) {
-            Text(item.title, style = MaterialTheme.typography.bodyMedium)
-            if (!item.detail.isNullOrBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    item.detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
     }
 }

@@ -754,6 +754,7 @@ fun SettingsScreen(vm: PressVM) {
     var bg by remember { mutableStateOf("default") }
     var home by remember { mutableStateOf("subs") }
     var viewMode by remember { mutableStateOf("list") }
+    var compactThreeLines by remember { mutableStateOf(false) }
     var trailing by remember { mutableStateOf("read") }
     var swipe by remember { mutableStateOf("star") }
     var swipeRight by remember { mutableStateOf("read") }
@@ -802,6 +803,7 @@ fun SettingsScreen(vm: PressVM) {
         lightThreshold = get(Prefs.LIGHT_THRESHOLD, 1)
         lightDelay = get(Prefs.LIGHT_DELAY, Prefs.LIGHT_DELAY_DEFAULT)
         viewMode = get(Prefs.VIEW_MODE, "list"); trailing = get(Prefs.TRAILING_ACTION, "read")
+        compactThreeLines = get(Prefs.COMPACT_THREE_LINES, false)
         swipe = get(Prefs.SWIPE_ACTION, "star")
         swipeRight = get(Prefs.SWIPE_RIGHT_ACTION, "read")
         articleActions = parseArticleActions(get(Prefs.ARTICLE_ACTIONS, ARTICLE_ACTIONS_DEFAULT))
@@ -854,6 +856,7 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.LIGHT_DELAY, lightDelay)
         vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
         vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
+        vm.repo.prefs.set(Prefs.COMPACT_THREE_LINES, compactThreeLines)
         vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
         vm.repo.prefs.set(Prefs.SWIPE_RIGHT_ACTION, swipeRight)
         vm.repo.prefs.set(Prefs.ARTICLE_ACTIONS, articleActions.joinToString(","))
@@ -1149,6 +1152,18 @@ fun SettingsScreen(vm: PressVM) {
                     FilterChip(viewMode == id, { viewMode = id; save() }, { Text(l) })
                 }
             }
+        }
+        SettingBox {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Titre sur 3 lignes (vue compacte)"); Spacer(Modifier.weight(1f))
+                Switch(compactThreeLines, { compactThreeLines = it; save() })
+            }
+            Text(
+                "La vue compacte n'affiche que 2 lignes de titre ; activée, elle en affiche 3 comme " +
+                    "les autres vues. Sans effet sur les autres vues.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         SettingBox {
             Text("Bouton de raccourci à droite de chaque article")

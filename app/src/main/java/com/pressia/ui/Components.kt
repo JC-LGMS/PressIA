@@ -112,7 +112,9 @@ fun ArticleRow(
     swipeRight: String = "read",
     /** Menu d'appui long (« plus récents/anciens ») : fourni par la liste, vide par défaut. */
     onLongPress: () -> Unit = {},
-    isHighlighted: Boolean = false
+    isHighlighted: Boolean = false,
+    /** Vue compacte : titre sur 3 lignes au lieu de 2 (Réglages → Listes d'articles). */
+    compactThreeLines: Boolean = false
 ) {
     val ctx = LocalContext.current
     // Lus bien estompés, mais encore lisibles.
@@ -229,7 +231,7 @@ fun ArticleRow(
                 Text(title, fontSize = titleSp.sp, lineHeight = (titleSp * 1.2f).sp,
                     fontWeight = FontWeight.Normal,
                     modifier = Modifier.weight(1f),
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    maxLines = if (compactThreeLines) 3 else 2, overflow = TextOverflow.Ellipsis)
                 trail(swiping)
             }
             // La méta est calée sur le titre : retrait du favicon à gauche, bord du bouton à
@@ -1019,6 +1021,7 @@ fun ArticleList(
     val tapFaviconRead by vm.tapFaviconRead.collectAsState()
     val titleSp by vm.titleFont.collectAsState()
     val dateSp by vm.dateFont.collectAsState()
+    val compactThreeLines by vm.compactThreeLines.collectAsState()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
     val ctx = LocalContext.current
     val density = LocalDensity.current
@@ -1041,7 +1044,8 @@ fun ArticleList(
                 menuFor = a
                 menuAt = with(density) { DpOffset(pressPx.x.toDp(), pressPx.y.toDp()) }
             },
-            isHighlighted = menuFor?.id == a.id)
+            isHighlighted = menuFor?.id == a.id,
+            compactThreeLines = compactThreeLines)
     }
     if (mode == "magazine") {
         val gridState = rememberLazyGridState()

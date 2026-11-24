@@ -496,8 +496,41 @@ class PressLogicTest {
         assertFalse("la colonne ne doit pas être extraite", out.contains("Titre 1 de la colonne"))
     }
 
-    @Test fun `readability prefere le corps a son conteneur avec colonne`() {
-        // Peu de titres : le conteneur `main` garde une densité de liens acceptable et gagne au
+    @Test fun `readability prefere l'article au volet de connexion (cas p-nintendo)`() {
+        // Le volet de connexion masqué en CSS a 10 <p> courts et gagnait le score générique :
+        // l'extraction ne rendait que « Connectez-vous… ». Le corps est dans un <div> nu.
+        val modal = (1..10).joinToString("") { "<p>Ligne de connexion $it, courte.</p>" }
+        val body = "Le corps de l'article, écrit en div nu, avec du texte long et informatif. ".repeat(10)
+        val html = """<html><body>
+            <div id="myModal" class="reveal-modal"><div class="box monpn auth">$modal</div></div>
+            <article><h1>Un titre d'article</h1><p>Le chapeau de l'article.</p>
+                <div>$body<br>Une seconde ligne du corps.</div></article>
+            </body></html>"""
+        val out = Readability.extract(html, "https://www.p-nintendo.com/")
+        assertTrue("le corps de l'article doit être extrait", out.contains("Le corps de l'article"))
+        assertFalse("le volet de connexion ne doit pas l'être", out.contains("Ligne de connexion"))
+        // Texte nu rendu en paragraphes, sinon l'écran article le perdrait.
+        assertTrue("le texte nu devient un paragraphe", out.contains("<p>Le corps de l'article"))
+    }
+
+    @Test fun `readability forums - premier message du sujet, pas une reponse`() {
+        // Fil Invision (« News fr ») : le sujet est le premier message ; les réponses, plus
+        // longues (5 <p>), gagnaient le score générique. Le premier message est en texte nu.
+        val news = "La news du sujet, en texte nu, sans paragraphe. ".repeat(8)
+        val replies = (1..5).joinToString("") {
+            "<p>Réponse $it du fil, plus longue et détaillée que la news.</p>"
+        }
+        val html = """<html><body><div id="content">
+            <div class="post" id="post-1"><div>$news</div></div>
+            <div class="topic_reply"><div class="post" id="post-2">$replies</div></div>
+            </div></body></html>"""
+        val out = Readability.extract(html, "https://www.logic-sunrise.com/")
+        assertTrue("le premier message doit être extrait", out.contains("La news du sujet"))
+        assertFalse("les réponses ne doivent pas l'être", out.contains("Réponse 1 du fil"))
+        assertTrue("le texte nu devient un paragraphe", out.contains("<p>La news du sujet"))
+    }
+
+    @Test fun `readability prefere le corps a son conteneur avec colonne`() {        // Peu de titres : le conteneur `main` garde une densité de liens acceptable et gagne au
         // score. Le <article> qui porte la moitié de son texte doit alors être préféré — sinon
         // les « derniers articles » de la colonne suivent l'article.
         val teasers = (1..3).joinToString("") {
