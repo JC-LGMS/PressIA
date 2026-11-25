@@ -2,6 +2,7 @@ package com.pressia.data
 
 import com.pressia.data.local.Prefs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,6 +40,14 @@ fun PressRepository.autoBackupMarkFile(): File =
     File(appCtx.noBackupFilesDir, AUTO_BACKUP_NAME + ".ecrit")
 
 /**
+ * Empreinte de la dernière copie écrite, dans `noBackupFilesDir` (jamais sauvegardée) : un
+ * contenu identique n'est pas réécrit. Le passage en arrière-plan réécrivait sinon la même copie
+ * plusieurs fois par heure, pour un contenu qui n'avait pas changé.
+ */
+fun PressRepository.autoBackupHashFile(): File =
+    File(appCtx.noBackupFilesDir, AUTO_BACKUP_NAME + ".somme")
+
+/**
  * Réécrit la copie automatique. Appelée quand l'application passe en arrière-plan et à la fin
  * d'une synchronisation : la sauvegarde Google tourne elle aussi écran éteint, une copie à jour
  * à ce moment-là est donc tout ce dont elle a besoin.
@@ -52,8 +61,30 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
             // Flux locaux seulement : la base exclue de la sauvegarde Google ne contient de toute
             // façon que les leurs (dossiers locaux), et y mêler ceux des comptes les détacherait de
             // leurs dossiers au premier réimport.
-            val json = exportJson(AUTO_SECTIONS, localFeedsOnly = true)
+            // Les lus ne sont gardés que dans la fenêtre « Durée d'historique hors favoris »
+            // (les favoris, eux, restent sans limite) : sans cette borne la copie grossissait avec
+            // tous les articles lus, et un dépassement du quota de 25 Mo ferait sauter la
+            // sauvegarde Google entière.
+            val months = prefs.data.first()[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT
+            val readSince = historyCutoffMs(System.currentTimeMillis(), months)
+            val json = exportJson(
+                AUTO_SECTIONS, localFeedsOnly = true, readSinceMs = readSince, pretty = false
+            )
             val target = autoBackupFile()
+            val hashFile = autoBackupHashFile()
+            // Empreinte des **sections utiles** seulement : `generatedAt` change à chaque export,
+            // et hacher le fichier entier aurait réécrit la copie à chaque passage.
+            val root = org.json.JSONObject(json)
+            val signature = (root.optJSONObject(Sections.ACCOUNTS)?.toString().orEmpty() +
+                root.optJSONArray(Sections.READ)?.toString().orEmpty())
+            val hash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+            // Contenu identique à la dernière écriture : rien à refaire.
+            if (target.exists() && hashFile.exists() && hashFile.readText() == hash) {
+                autoBackupMarkFile().createNewFile()
+                return@runCatching
+            }
             val tmp = File(target.parentFile, target.name + ".tmp")
             tmp.writeText(json)
             // Remplacement atomique : une copie tronquée (arrêt en pleine écriture) ne doit pas
@@ -75,6 +106,8 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
             // La base a bien été vue par une écriture : une base vide désormais est un vidage
             // volontaire, pas une restauration Google (voir `autoBackupMarkFile`).
             autoBackupMarkFile().createNewFile()
+            // Empreinte de ce qui vient d'être écrit : le prochain passage identique sautera.
+            hashFile.writeText(hash)
         }.onFailure {
             // La copie automatique est la seule sauvegarde des flux locaux : un échec répété
             // laisserait une version périmée sans que personne ne le sache. Un simple log,

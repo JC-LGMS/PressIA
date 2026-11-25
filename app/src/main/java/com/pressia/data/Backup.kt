@@ -206,13 +206,26 @@ data class ImportReport(
 suspend fun PressRepository.exportJson(
     sections: List<String>,
     includeTokens: Boolean = false,
-    localFeedsOnly: Boolean = false
-): String = sauvegardeJson(sections, includeTokens, localFeedsOnly)
+    localFeedsOnly: Boolean = false,
+    readSinceMs: Long = 0L,
+    pretty: Boolean = true
+): String = sauvegardeJson(sections, includeTokens, localFeedsOnly, readSinceMs, pretty)
+
+/**
+ * États lus à sauvegarder : ceux encore dans la fenêtre « Durée d'historique hors favoris »
+ * (`readSinceMs` = 0 : pas de fenêtre, tout est gardé). Les favoris, eux, sont exportés sans
+ * limite d'âge — c'est la règle de rétention (`beyondHistory`). Cette borne est ce qui empêche
+ * la copie automatique de grossir sans fin avec les lus des flux locaux.
+ */
+fun readStatesWithinHistory(rows: List<LocalReadRow>, readSinceMs: Long): List<LocalReadRow> =
+    if (readSinceMs <= 0L) rows else rows.filter { it.published >= readSinceMs }
 
 suspend fun PressRepository.sauvegardeJson(
     sections: List<String>,
     includeTokens: Boolean = false,
-    localFeedsOnly: Boolean = false
+    localFeedsOnly: Boolean = false,
+    readSinceMs: Long = 0L,
+    pretty: Boolean = true
 ): String = withContext(Dispatchers.IO) {
     val dao = db.dao()
     val root = JSONObject()
@@ -304,7 +317,7 @@ suspend fun PressRepository.sauvegardeJson(
                 .put("id", r.id).put("unread", r.unread).put("starred", r.starred)
                 .put("readAt", r.readAt ?: JSONObject.NULL).put("feedId", r.feedId)
         }
-        dao.localReadStates().forEach { r ->
+        readStatesWithinHistory(dao.localReadStates(), readSinceMs).forEach { r ->
             val o = rows.getOrPut(r.id) {
                 JSONObject().put("id", r.id).put("unread", false).put("starred", false)
                     .put("readAt", JSONObject.NULL).put("feedId", r.feedId)
@@ -316,7 +329,7 @@ suspend fun PressRepository.sauvegardeJson(
             rows.values.sortedBy { it.optString("id") }.forEach { put(it) }
         })
     }
-    root.toString(2)
+    if (pretty) root.toString(2) else root.toString()
 }
 
 /** Restaure les sections présentes dans [json] et présentes dans [sections]. [replaceStats] remplace les stats existantes. */

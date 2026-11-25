@@ -46,6 +46,34 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.27",
+        listOf(
+            ChangelogItem(
+                "2026-11-25",
+                "Audit : articles courts, Instapaper, copie automatique et APK allégé",
+                "- Readability : un article court (moins de 120 caractères extraits) ou parlant de " +
+                    "Cloudflare, d'un captcha ou d'un accès refusé n'est plus déclaré « site " +
+                    "protégé » ; l'extrait court reste utilisable et n'est plus retéléchargé à " +
+                    "chaque ouverture.\n\n" +
+                "- Instapaper : une panne réseau n'est plus annoncée comme un mauvais mot de passe " +
+                    "(« Connexion impossible : vérifiez le réseau »).\n\n" +
+                "- Copie automatique : les lus sauvegardés s'arrêtent à la « Durée d'historique " +
+                    "hors favoris » (les favoris restent sans limite), le JSON est compact, et la " +
+                    "copie n'est plus réécrite quand rien n'a changé.\n\n" +
+                "- Recherche : l'annulation ne s'affiche plus pour un marquage fait ailleurs. " +
+                    "Favoris : un flux désabonné remet le périmètre sur « Tous les articles » au " +
+                    "lieu d'une liste vide. Déplacement de flux : un dossier disparu entre-temps " +
+                    "est signalé comme refusé, plus comme un succès.\n\n" +
+                "- Providers : les annulations ne sont plus avalées par les replis non-lus et " +
+                    "« Read later ».\n\n" +
+                "- Build : R8 rétrécit enfin le code de l'application (`-keepnames` au lieu de " +
+                    "`-keep`) ; l'APK release est plus petit. Nettoyage : paramètre `categoryId` " +
+                    "mort de `syncDown`, deux commentaires périmés.",
+                time = "23:27"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.26",
         listOf(
             ChangelogItem(

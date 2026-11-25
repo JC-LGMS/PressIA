@@ -1379,14 +1379,14 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             q, searchScope.feedId, searchScope.categoryId, searchWithBody
         )
         if (ids.isEmpty()) return@launch
-        offerUndo(ids)
+        offerUndo(ids, origin = "search")
         repo.markArticlesRead(ids)
         keep(ids)
         refresh()
         reloadSearch()
     }
     /** Proposition d'annulation d'un marquage groupé (« tout marquer lu », menu appui long). */
-    data class UndoOffer(val ids: List<String>, val label: String)
+    data class UndoOffer(val ids: List<String>, val label: String, val origin: String = "")
     var undoOffer by mutableStateOf<UndoOffer?>(null)
         private set
     /**
@@ -1397,10 +1397,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     var undoPillVisible by mutableStateOf(false)
         private set
     /** Propose l'annulation : vide = rien à annuler, pas de bouton. */
-    fun offerUndo(ids: List<String>) {
+    fun offerUndo(ids: List<String>, origin: String = "") {
         undoOffer = if (ids.isEmpty()) null else UndoOffer(
             ids,
-            if (ids.size == 1) "1 article marqué lu" else "${ids.size} articles marqués lus"
+            if (ids.size == 1) "1 article marqué lu" else "${ids.size} articles marqués lus",
+            origin
         )
         undoPillVisible = undoOffer != null
     }
@@ -1505,22 +1506,26 @@ class PressVM(val repo: PressRepository) : ViewModel() {
             done("Identifiant et mot de passe requis")
             return@launch
         }
-        val ok = try {
+        val res = try {
             com.pressia.data.remote.Instapaper.authenticate(u, pass)
         } catch (_: Exception) {
-            false
+            com.pressia.data.remote.Instapaper.AuthResult.NetworkError
         }
-        if (ok) {
-            prefs.set(Prefs.INSTAPAPER_USER, u)
-            prefs.set(Prefs.INSTAPAPER_PASS, pass)
-            repo.clearAccountExpired("instapaper")
-            done("Compte Instapaper connecté")
-            // Session web en arrière-plan : silencieuse, le drapeau sert au mode « choose ».
-            try {
-                withWebSession()
-            } catch (_: Exception) { /* réessayée au premier envoi */ }
-        } else {
-            done("Connexion refusée : vérifiez identifiant et mot de passe")
+        when (res) {
+            com.pressia.data.remote.Instapaper.AuthResult.Ok -> {
+                prefs.set(Prefs.INSTAPAPER_USER, u)
+                prefs.set(Prefs.INSTAPAPER_PASS, pass)
+                repo.clearAccountExpired("instapaper")
+                done("Compte Instapaper connecté")
+                // Session web en arrière-plan : silencieuse, le drapeau sert au mode « choose ».
+                try {
+                    withWebSession()
+                } catch (_: Exception) { /* réessayée au premier envoi */ }
+            }
+            com.pressia.data.remote.Instapaper.AuthResult.NetworkError ->
+                done("Connexion impossible : vérifiez le réseau")
+            com.pressia.data.remote.Instapaper.AuthResult.Refused ->
+                done("Connexion refusée : vérifiez identifiant et mot de passe")
         }
     }
 

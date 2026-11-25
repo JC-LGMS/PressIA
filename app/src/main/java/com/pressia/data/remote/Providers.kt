@@ -288,7 +288,7 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             // Plafond de pages ou continuation cyclique : la liste est partielle, `complete`
             // reste faux et l'appelant redescend tout (voir le contrat de `readLaterIds`).
             IdSet(ids, complete)
-        }.getOrNull()
+        }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
     /**
      * Non-lus du compte sur 30 jours (flux global, `unreadOnly`, du plus récent au plus ancien) :
@@ -339,7 +339,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
     private suspend fun unreadSetOfStream(token: String?, streamId: String, maxIds: Int): UnreadSet =
         runCatching { unreadIdsViaIds(token, streamId, maxIds) }
             .onSuccess { android.util.Log.d("PressIA", "feedly unreadIds via ids (${it.ids.size})") }
-            .onFailure { android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents") }
+            .onFailure {
+                // Ne jamais avaler l'annulation : le repli relancerait une pagination entière.
+                if (it is CancellationException) throw it
+                android.util.Log.d("PressIA", "feedly streams/ids refusé, repli contents")
+            }
             .getOrNull() ?: unreadIdsViaContents(token, streamId, maxIds)
 
     /** IDs seuls, pour le marquage de masse (voir [markStreamRead] : énumération jusqu'à
@@ -762,7 +766,7 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         // Plafond de pages ou continuation cyclique : la liste est partielle, `complete` reste
         // faux et l'appelant redescend tout (voir le contrat de `readLaterIds`).
         IdSet(ids, complete)
-    }.getOrNull()
+    }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     /**
      * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus
      * ancien) : même usage que côté Feedly. Le filtre se fait aussi sur les catégories de chaque

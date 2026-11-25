@@ -19,6 +19,13 @@ object Readability {
         .build()
     private const val UA = "Mozilla/5.0 (Linux; Android 14; PressIA) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
+    /**
+     * Longueur minimale d'un corps extrait pour le considérer comme un article (et non comme un
+     * mur anti-robot ou un bloc de navigation). Assez bas pour une brève, assez haut pour un
+     * extrait vide.
+     */
+    private const val MIN_ARTICLE_CHARS = 120
+
     /** Plafond de la page récupérée pour l'extraction (voir `ThumbStore.readCapped`). */
     private const val MAX_PAGE_BYTES = 8 * 1024 * 1024
     private val NOISE = Regex("(?i)nav|header|footer|sidebar|comment|share|related|advert|cookie|menu|widget|subscribe|newsletter|popup|banner")
@@ -95,8 +102,10 @@ object Readability {
                 val text = Jsoup.parse(extracted).text()
                 if (isPaywalledText(text)) return@withContext FullResult.Blocked
                 if (isConsentWallText(text)) return@withContext FullResult.Blocked
-                // Extraction vide alors que la page est consistante = contenu inaccessible (JS/paywall)
-                if (text.length < 200 && bytes.size > 20_000) {
+                // Extraction vide alors que la page est consistante = contenu inaccessible (JS/paywall).
+                // Le seuil est bas (120) : une brève réelle fait parfois 150 caractères, et un
+                // corps vide vient d'une page **longue** (menus, commentaires), pas d'une page courte.
+                if (text.length < MIN_ARTICLE_CHARS && doc.text().length > 2_000) {
                     return@withContext FullResult.Blocked
                 }
                 FullResult.Ok(extracted)
@@ -112,6 +121,10 @@ object Readability {
         return try {
             val text = norm(doc.text())
             if (text.length > 3000) return false // un vrai article long n'est pas une page de blocage
+            // Un **article court** qui parle de Cloudflare, d'un captcha ou d'un « accès refusé »
+            // a des paragraphes ; un mur anti-robot n'en a pas. Sans ce test, un seul marqueur
+            // suffisait à déclarer bloqué un vrai article de 2 500 caractères.
+            if (doc.select("p").size >= 4 && text.length >= 500) return false
             BLOCKED_MARKERS.any { text.contains(it) }
         } catch (_: Exception) { false }
     }
@@ -139,7 +152,7 @@ object Readability {
         if (html.isNullOrBlank()) return false
         if (isBlockedPage(html)) return false
         val text = try { Jsoup.parse(html).text() } catch (_: Exception) { return false }
-        return text.length >= 200 && !isPaywalledText(text) && !isConsentWallText(text)
+        return text.length >= MIN_ARTICLE_CHARS && !isPaywalledText(text) && !isConsentWallText(text)
     }
 
     /** Le vrai corps d'article porte souvent une classe explicite : on le cherche d'abord. */

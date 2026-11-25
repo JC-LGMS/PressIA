@@ -206,12 +206,9 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
         if (vm.searchRan) {
             // Une seule action à cet endroit, en icône : marquer tous les résultats lus, puis —
             // comme le bouton de la barre des listes — annuler ce marquage. L'annulation ne
-            // s'affiche que si elle porte bien sur ces résultats : un marquage fait ailleurs ne
-            // doit pas se confondre avec celui-ci.
-            val shownIds = remember(vm.searchResults) { vm.searchResults.mapTo(HashSet()) { it.id } }
-            // Œil fermé : les articles qu'on vient de marquer lus sortent de la liste, l'annulation
-            // doit rester visible et utilisable (c'est elle qui les fait revenir).
-            val offer = vm.undoOffer?.takeIf { o -> o.ids.all { it in shownIds } || vm.searchUnreadOnly }
+            // s'affiche que si elle vient de cet écran (`origin = "search"`) : un marquage fait
+            // ailleurs ne doit pas se confondre avec celui-ci, même avec l'œil « non-lus » actif.
+            val offer = vm.undoOffer?.takeIf { it.origin == "search" }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 // Résultats paginés (200 par page, la suite au défilement) : tant que la dernière
                 // page n'est pas atteinte, le compteur le dit au lieu de laisser croire que la
@@ -469,7 +466,7 @@ fun StatsScreen(vm: PressVM) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 // Compté au premier plan seulement : le temps passé dans Chrome ou l'écran
-                // éteint ne gonfle pas le total (voir ReadingTimer).
+                // éteint ne gonfle pas le total (voir ArticleScreen).
                 Text(
                     "Seul le temps passé sur l'article, application au premier plan, est compté : " +
                         "ouvrir l'article dans Chrome met le chronomètre en pause.",

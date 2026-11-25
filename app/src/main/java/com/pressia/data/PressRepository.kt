@@ -1209,23 +1209,27 @@ class PressRepository(
      *
      * Pour un flux de compte, le déplacement part d'abord chez le service : la synchronisation
      * réécrit le dossier de chaque flux avec ce que dit le compte, donc un déplacement local
-     * seul serait défait. Rend false si le compte a refusé — le flux reste alors où il est.
+     * seul serait défait. Rend false si le compte a refusé, si les flux ont disparu ou si le
+     * dossier visé n'existe plus — le flux reste alors où il est.
      */
     suspend fun moveFeedsToFolder(feedIds: List<String>, categoryId: String?): Boolean = withContext(Dispatchers.IO) {
-        if (feedIds.isEmpty()) return@withContext true
+        if (feedIds.isEmpty()) return@withContext false
         val subs = dao.subscriptions().filter { it.id in feedIds }.associateBy { it.id }
+        if (subs.isEmpty()) return@withContext false
         if (categoryId == null) {
             if (!subs.values.all { pushMove(it, null) }) return@withContext false
             dao.moveFeeds(feedIds, null)
             return@withContext true
         }
         val ids = resolveCategoryIds(categoryId).orEmpty()
-        if (ids.isEmpty()) return@withContext true
+        // Dossier supprimé entre-temps (ou groupe fusionné recomposé) : rien à déplacer, et
+        // l'écran doit le dire au lieu de rendre « déplacé » sans écriture.
+        if (ids.isEmpty()) return@withContext false
         val cats = dao.categories().filter { it.id in ids }
         // Un identifiant affiché peut ne plus exister (dossier fusionné recomposé, dossier
         // supprimé depuis un autre écran) : l'écrire tel quel dans `subscriptions.categoryId`
         // violait la clé étrangère et faisait planter l'application.
-        if (cats.isEmpty()) return@withContext true
+        if (cats.isEmpty()) return@withContext false
         var ok = true
         // Dossiers locaux remplacés par un dossier du compte, à retirer s'ils restent vides.
         val replaced = mutableSetOf<String>()
@@ -1874,7 +1878,7 @@ class PressRepository(
      * précise ainsi d'où viennent les articles. Appelé depuis des fils IO (comme [onProgress]
      * de [syncImages]) ; les comptes cloud partent en parallèle, l'ordre varie.
      */
-    suspend fun syncDown(feedId: String? = null, categoryId: String? = null, withThumbs: Boolean = true, onSource: ((String) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
+    suspend fun syncDown(feedId: String? = null, withThumbs: Boolean = true, onSource: ((String) -> Unit)? = null): Int = withContext(Dispatchers.IO) {
         val max = maxItems()
         val t0 = System.currentTimeMillis()
         var added = 0
@@ -1897,7 +1901,7 @@ class PressRepository(
                         syncStep.value = "Réception des articles… (flux locaux $done/$total : $label)"
                     }
                     val page = try {
-                        local.stream(null, feedId, categoryId, max)
+                        local.stream(null, feedId, null, max)
                     } finally {
                         // Le rappel ne doit pas survivre à la passe, même en échec : laissé en place, il
                         // réécrivait l'étape du bandeau pendant la synchro suivante.
@@ -1934,7 +1938,7 @@ class PressRepository(
                         val step: (Int, Int) -> Unit = { d, t ->
                             syncStep.value = "Réception des articles… (${account.label}, flux $d/$t)"
                         }
-                        runCatching { syncAccount(account, feedId, categoryId, max, step) }
+                        runCatching { syncAccount(account, feedId, max, step) }
                             .onFailure {
                                 // Ne jamais avaler l'annulation : sinon la synchro
                                 // « annulée » continue en tâche de fond (résurrection
@@ -2518,15 +2522,14 @@ class PressRepository(
     private suspend fun syncAccount(
         account: CloudAccount,
         feedId: String?,
-        categoryId: String?,
         max: Int,
         onFeed: ((done: Int, total: Int) -> Unit)? = null
     ): Int {
         try {
             val p = providerFor(account.provider)
-            if (feedId != null || categoryId != null) {
+            if (feedId != null) {
                 // Périmètre restreint : le flux seul, comme avant (ni dossiers ni compteurs).
-                val only = p.stream(account.token, feedId, categoryId, max)
+                val only = p.stream(account.token, feedId, null, max)
                 val added = storeArticles(only.articles, keepReadBeforeMs = cutoffFor(p.id))
                 // Le jeton a parlé : la session est bonne, on oublie une éventuelle alerte.
                 clearAccountExpired(account.id)

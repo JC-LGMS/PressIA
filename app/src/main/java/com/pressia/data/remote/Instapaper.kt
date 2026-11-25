@@ -35,17 +35,34 @@ object Instapaper {
         data object NetworkError : AddResult
     }
 
+    /**
+     * Résultat de la validation d'un couple identifiant / mot de passe. Distinct de `false` : une
+     * panne réseau n'est pas un refus, et l'annoncer comme tel faisait ressaisir un mot de passe
+     * qui était bon.
+     */
+    sealed interface AuthResult {
+        data object Ok : AuthResult
+        data object Refused : AuthResult
+        data object NetworkError : AuthResult
+    }
+
     /** Valide un couple identifiant / mot de passe, sans rien ajouter au compte. */
-    suspend fun authenticate(user: String, pass: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun authenticate(user: String, pass: String): AuthResult = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
                 .url(AUTH_URL)
                 .header("Authorization", Credentials.basic(user, pass))
                 .post(FormBody.Builder().build())
                 .build()
-            client.newCall(req).execute().use { it.code == 200 }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
-            false
+            client.newCall(req).execute().use { r ->
+                if (r.code == 200) AuthResult.Ok else AuthResult.Refused
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: java.io.IOException) {
+            AuthResult.NetworkError
+        } catch (_: Exception) {
+            AuthResult.Refused
         }
     }
 

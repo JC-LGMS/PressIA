@@ -69,6 +69,15 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
         // liste resterait vide sans explication.
         if (!vm.favSetAvailable(vm.favSet.value)) vm.setFavSet("all")
     }
+    LaunchedEffect(vm.subs) {
+        // Le flux choisi peut disparaître (désabonnement, déconnexion d'un compte) : on revient à
+        // « tous les flux » au lieu de laisser une liste vide sous une puce qui nomme encore ce
+        // flux. Même garde que le périmètre principal dans MainActivity.
+        val id = feedScope.feedId
+        if (id != null && vm.subs.none { it.id == id }) {
+            feedScope = Scope(label = "Tous les articles")
+        }
+    }
     val live = remember(set, feedScope, favUnreadOnly) { vm.streamList(favUnreadOnly, fav) }
     // `null` tant que la première émission n'est pas arrivée : sinon la carte « aucun favori »
     // s'affiche un instant à chaque ouverture ou changement de jeu (même garde que StreamScreen).

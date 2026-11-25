@@ -787,7 +787,7 @@ data class ArticleFlags(
 )
 
 /**
- * État lu d'un article pour la réconciliation distante (voir [PressDao.readStatesOfProvider])
+ * État lu d'un article pour la réconciliation distante (voir [PressDao.unreadStatesOfProvider])
  * avec sa date de publication : au-delà de la fenêtre d'auto-lecture du service, l'état
  * distant ne doit plus l'arbitrer.
  */

@@ -563,6 +563,33 @@ class PressLogicTest {
         val html = "<html><body><article><h1>Titre</h1>$paras</article></body></html>"
         assertFalse(Readability.isBlockedPage(html))
     }
+    @Test fun `article court parlant de cloudflare n'est pas bloque`() {
+        // Un vrai article de 2 500 caractères sur une panne Cloudflare a des paragraphes : un
+        // marqueur isolé ne doit plus suffire à le déclarer bloqué (les murs anti-robot n'ont
+        // pas cette structure).
+        val paras = (1..6).joinToString("") {
+            "<p>Cloudflare a subi une panne ce matin, et les sites clients ont répondu une erreur $it. " +
+                "L'incident a duré environ trente minutes avant un retour progressif à la normale.</p>"
+        }
+        val html = "<html><body><article><h1>Panne Cloudflare</h1>$paras</article></body></html>"
+        assertFalse(Readability.isBlockedPage(html))
+    }
+    @Test fun `un extrait court reste utilisable`() {
+        // Une brève réelle de 150 caractères ne doit plus être rejetée comme « page bloquée ».
+        val breve = "La liaison ferroviaire a repris ce matin après deux jours d'interruption. " +
+            "Les trains circulent à nouveau avec un léger retard, selon la compagnie."
+        assertTrue(Readability.isUsableFull("<p>$breve</p>"))
+    }
+    @Test fun `backup des lus borne a l'historique`() {
+        val rows = listOf(
+            com.pressia.data.local.LocalReadRow("a", "f", null, 1_000L),
+            com.pressia.data.local.LocalReadRow("b", "f", null, 5_000L)
+        )
+        // Fenêtre illimitée : tout part.
+        assertEquals(listOf("a", "b"), com.pressia.data.readStatesWithinHistory(rows, 0L).map { it.id })
+        // Fenêtre à 2 000 : le vieux lu n'est plus sauvegardé.
+        assertEquals(listOf("b"), com.pressia.data.readStatesWithinHistory(rows, 2_000L).map { it.id })
+    }
     @Test fun `boilerplate paywall detecte`() {
         val paywall = "La suite est réservée à nos abonnés. Votre carte bancaire a expiré. " +
             "La suite est réservée à nos abonnés. Déjà abonné ? Se connecter. " +
