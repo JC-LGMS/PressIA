@@ -262,8 +262,8 @@ interface PressDao {
      * de l'écran article n'a besoin que de cela ; `SELECT *` y chargeait 2000 articles complets,
      * HTML compris, pour n'en garder que les identifiants.
      */
-    @Query("SELECT id FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1) ORDER BY published DESC LIMIT :limit OFFSET :offset")
-    suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int): List<String>
+    @Query("SELECT id FROM articles WHERE ((:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds)) AND (:onlyUnread = 0 OR unread = 1)) OR (id IN (:keepIds) AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:catFeedIds))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    suspend fun streamIds(feedId: String?, catFeedIds: List<String>, catEmpty: Int, onlyUnread: Int, limit: Int, offset: Int, keepIds: List<String>): List<String>
     /**
      * Reste-t-il un non-lu **plus ancien** que [published] dans ce périmètre ? Le bouton
      * « descendre » s'en sert : la liste n'étant lue que par tranches, c'est cette question —
@@ -369,17 +369,9 @@ interface PressDao {
     @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.unread = 1")
     suspend fun unreadStatesOfProvider(provider: String): List<ReconcileState>
     /**
-     * États locaux utiles à la réconciliation, en une seule passe : non-lus du compte, plus
-     * lus locaux parmi des IDs distants (non lus ailleurs → à rouvrir). Remplace deux
-     * balayages ([unreadStatesOfProvider] + l'équivalent lu) par un seul par paquet ;
-     * [unreadStatesOfProvider] reste pour le cas dégénéré (aucun ID distant : `IN ()` invalide).
-     */
-    @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND (a.unread = 1 OR a.id IN (:ids))")
-    suspend fun readStatesOfProvider(provider: String, ids: List<String>): List<ReconcileState>
-    /**
-     * États locaux des **seules** entrées demandées : la requête de la réconciliation complète
-     * rend aussi tous les non-lus du compte, ce qui chargeait des milliers de lignes pour deux
-     * événements de delta (`markers/reads`).
+     * États locaux des **seules** entrées demandées : la réconciliation complète lit les non-lus
+     * du compte une fois ([unreadStatesOfProvider]) puis ces états par paquet, au lieu de
+     * recharger tous les non-lus à chaque paquet.
      */
     @Query("SELECT a.id AS id, a.unread AS unread, a.published AS published FROM articles a JOIN subscriptions s ON s.id = a.feedId WHERE s.provider = :provider AND a.id IN (:ids)")
     suspend fun readStatesByIds(provider: String, ids: List<String>): List<ReconcileState>
@@ -600,9 +592,6 @@ interface PressDao {
      */
     @Query("SELECT articleId FROM sync_queue WHERE kind = 'read' OR kind = 'unread'")
     suspend fun pendingReadIds(): List<String>
-    /** Toute la file lu/non-lu, réduite (voir `undoneReadRows`). */
-    @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread')")
-    suspend fun pendingReadUnread(): List<QueuedAction>
     /**
      * File lu/non-lu depuis une borne : un « unread » plus ancien que la page poussée ne peut
      * pas la défaire (voir `undoneReadRows`), inutile de relire toute la file à chaque page.

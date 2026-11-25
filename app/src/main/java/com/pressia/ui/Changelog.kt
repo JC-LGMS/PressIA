@@ -46,6 +46,38 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.26",
+        listOf(
+            ChangelogItem(
+                "2026-11-25",
+                "Audit complet : extraction, flux locaux, synchro et import corrigés",
+                "- Article : l'extraction Readability refonctionne quand le serveur n'annonce pas " +
+                    "de charset (frandroid, numerama, debian…) ; le corps de l'article précédent ne " +
+                    "reste plus sous le titre du nouveau pendant un balayage ; sous « non-lus " +
+                    "seuls », le balayage garde ses voisins et ne renvoie plus à la liste.\n\n" +
+                "- Synchro : actualiser pendant une passe ne l'annule plus ; un profil Feedly " +
+                    "injoignable est signalé comme un échec (plus de « terminé » vide) ; les " +
+                    "clients cloud et les flux locaux ont un délai total ; le « Read later » est " +
+                    "replongé par service (deux comptes du même service ne s'effacent plus) ; la " +
+                    "réconciliation ne relit plus tous les non-lus à chaque paquet ; un lu ou une " +
+                    "étoile posé pendant une réimportation n'est plus écrasé.\n\n" +
+                "- Flux et comptes : une URL locale invalide n'arrête plus la synchro de tous les " +
+                    "flux ; l'identifiant rendu par quickadd Inoreader est retenu ; un dossier " +
+                    "fusionné n'est plus renommé à moitié.\n\n" +
+                "- Données : import de sauvegarde transactionnel ; les statistiques de l'appareil " +
+                    "ne sont plus masquées par `stats_since` importé seul ; Instapaper est " +
+                    "réellement déconnecté (cookie hôte) ; les images panoramiques sont " +
+                    "sous-échantillonnées (plus de bitmap à 29 Mo).\n\n" +
+                "- Build : renommage des APK par variante (un build debug ne fabrique plus une " +
+                    "fausse release) ; `local.properties` est lu pour les identifiants OAuth.\n\n" +
+                "- Interface : la liste ne se recompose plus à chaque image de défilement ; " +
+                    "l'export et l'import OPML passent hors du fil principal. `ReadingTimer` et " +
+                    "deux requêtes DAO inutilisées sont supprimés.",
+                time = "01:19"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.25",
         listOf(
             ChangelogItem(

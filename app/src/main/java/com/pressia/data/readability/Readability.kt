@@ -82,9 +82,12 @@ object Readability {
                 // Jsoup lit les octets : il applique le charset de l'en-tête, sinon celui déclaré
                 // par la page (`<meta charset>`), sinon UTF-8. Convertir en texte avant lui
                 // figeait un mauvais encodage.
+                // Charset **nul** (et non vide) quand l'en-tête n'en annonce pas : jsoup refuse
+                // une chaîne vide (`Must set charset arg…`) et l'extraction échouait alors sur
+                // tout serveur qui n'annonce pas `; charset=…` (frandroid, numerama, debian…).
                 val doc = Jsoup.parse(
                     java.io.ByteArrayInputStream(bytes),
-                    body.contentType()?.charset()?.name().orEmpty(),
+                    body.contentType()?.charset()?.name(),
                     url
                 )
                 if (isBlockedPage(doc)) return@withContext FullResult.Blocked

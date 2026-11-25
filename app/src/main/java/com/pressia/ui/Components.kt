@@ -1116,7 +1116,7 @@ fun ArticleList(
                 gridState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, menuAt, gridState.layoutInfo.viewportSize, vm, onSearch) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, { gridState.layoutInfo.viewportSize }, vm, onSearch) { menuFor = null }
         }
     } else {
         val now = remember(articles) { System.currentTimeMillis() }
@@ -1202,7 +1202,7 @@ fun ArticleList(
                 listState,
                 Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp)
             )
-            ArticleLongPressMenu(articles, menuFor, menuAt, listState.layoutInfo.viewportSize, vm, onSearch) { menuFor = null }
+            ArticleLongPressMenu(articles, menuFor, menuAt, { listState.layoutInfo.viewportSize }, vm, onSearch) { menuFor = null }
         }
     }
 }
@@ -1228,13 +1228,16 @@ private fun BoxScope.ArticleLongPressMenu(
     articles: List<ArticleEntity>,
     anchor: ArticleEntity?,
     at: DpOffset,
-    viewportPx: IntSize,
+    // Lu **seulement** quand le menu s'ouvre : passé en valeur, `layoutInfo` abonnait la
+    // composition d'`ArticleList` à chaque mesure et refaisait la liste à chaque pixel défilé.
+    viewport: () -> IntSize,
     vm: PressVM,
     onSearch: ((ArticleEntity) -> Unit)?,
     onDismiss: () -> Unit
 ) {
     val article = anchor ?: return
     if (at == DpOffset.Unspecified) return
+    val viewportPx = viewport()
     val density = LocalDensity.current
     val ids = remember(articles) { articles.map { it.id } }
     val (newerIds, olderIds) = remember(ids, article.id) { splitAround(ids, article.id) }

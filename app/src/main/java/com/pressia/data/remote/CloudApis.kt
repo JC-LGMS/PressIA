@@ -11,6 +11,7 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.*
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
+import java.util.concurrent.TimeUnit
 
 // ---------- Feedly Cloud API (v3, niveau gratuit suffisant : categories/subscriptions/streams/markers) ----------
 @Serializable data class FeedlyCategory(val id: String, val label: String)
@@ -158,6 +159,10 @@ interface FeedlyService {
         fun create(): FeedlyService {
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
             val builder = OkHttpClient.Builder()
+                // Plafond **total** de l'appel : un serveur qui débite sa réponse par petits
+                // paquets ne déclenche jamais le délai de lecture, et la synchro restait alors
+                // bloquée, verrou tenu, jusqu'au redémarrage.
+                .callTimeout(60, TimeUnit.SECONDS)
             // Journal d'URL **en debug seulement** : en release, chaque appel écrivait dans
             // logcat l'URL complète (identifiants de flux, streamId=user/<uid>/…), lisible par
             // toute application ayant READ_LOGS sur les anciens Android.
@@ -282,6 +287,9 @@ interface InoreaderService {
         ): InoreaderService {
             val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
             val client = OkHttpClient.Builder()
+                // Plafond total, comme Feedly : une réponse qui n'en finit pas ne doit pas tenir
+                // la synchro (et son verrou) indéfiniment.
+                .callTimeout(60, TimeUnit.SECONDS)
                 // Authentification applicative Inoreader : exigée sur *chaque* appel, à côté
                 // de l'authentification utilisateur (en-tête `Authorization`). Sans elle,
                 // l'API répond 403 (« You are not sending the correct AppID and/or

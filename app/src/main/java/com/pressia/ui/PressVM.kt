@@ -712,7 +712,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // Borné à KEEP_MAX : la requête rend les identifiants légers (pas le HTML), et le
         // balayage de l'écran article ne demande la suite qu'en approchant du bout
         // (`moreScanIds`). La liste, elle, en affiche jusqu'à STREAM_MAX.
-        scanIds = repo.streamIds(scope.feedId, scope.categoryId, unreadOnly, limit = KEEP_MAX)
+        // `keepIds` : l'article ouvert vient d'être marqué lu et sort du filtre « non-lus » ;
+        // sans lui, le balayage perdait ses voisins en fin de fenêtre.
+        scanIds = repo.streamIds(
+            scope.feedId, scope.categoryId, unreadOnly, limit = KEEP_MAX,
+            keepIds = keepIds.value.toList()
+        )
         accounts = repo.cloudAccounts()
         localFeeds = repo.localFeeds()
         } finally {
@@ -733,10 +738,11 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * de plus (la requête rend les identifiants, pas le HTML). Au-delà de [STREAM_MAX], la
      * liste elle-même s'arrête : on rend la même longueur et l'appelant cesse de demander.
      */
-    suspend fun moreScanIds(current: Int): List<String> {
+    suspend fun moreScanIds(current: Int, keep: String? = null): List<String> {
         val ids = repo.streamIds(
             scope.feedId, scope.categoryId, unreadOnly,
-            limit = current + KEEP_MAX
+            limit = current + KEEP_MAX,
+            keepIds = (keepIds.value + listOfNotNull(keep)).toList()
         )
         if (ids.size > current) android.util.Log.i("PressIA", "balayage : voisins $current → ${ids.size}")
         return ids
@@ -1006,7 +1012,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /** Déclenche [syncNow] en tâche de fond et publie le résultat dans [syncMsg]. */
-    fun sync() = launchSync { syncMsg = syncNow() }
+    fun sync() {
+        // Une passe déjà en cours n'est **pas** annulée par une actualisation : elle tiendrait
+        // encore le verrou le temps de s'arrêter, la nouvelle demande échouerait alors
+        // (« déjà en cours ») et plus rien ne tournait. La déconnexion, elle, annule exprès.
+        if (syncJob?.isActive == true) {
+            syncMsg = "Synchronisation déjà en cours"
+            return
+        }
+        launchSync { syncMsg = syncNow() }
+    }
 
     /**
      * Une seule synchro effective à la fois, même entre déclencheurs : une nouvelle demande

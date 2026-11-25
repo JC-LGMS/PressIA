@@ -171,7 +171,9 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
 
     override suspend fun stream(token: String?, feedId: String?, categoryId: String?, max: Int, continuation: String?, newerThanMs: Long?): StreamPage {
         val streamId = feedId ?: categoryId ?: feedlyGlobalStream(cachedUserId(token))
-            ?: return StreamPage(emptyList(), null)
+            // Profil injoignable : rendre une page vide la ferait passer pour une synchro réussie
+            // (aucun échec enregistré, LAST_SYNC_AT avance, aucun nouvel article).
+            ?: throw IllegalStateException("feedly : profil injoignable")
         // `newerThan` plus vieux que 31 jours est refusé par Feedly : la fenêtre d'historique
         // peut aller au-delà, mais la tête n'a pas à demander plus loin (le rattrapage filtre
         // côté client). Une date nulle reste nulle (pas de filtre).
@@ -574,12 +576,17 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
      */
     override suspend fun addSubscription(token: String?, url: String): String {
         val stream = "feed/$url"
+        var created = stream
         call(token) { h ->
             val t = csrf(token, h)
             val added = apiFor(token).quickAdd(h, stream, t)
             if (added.numResults <= 0) throw IllegalStateException(added.error ?: "flux introuvable")
+            // Le serveur rend le flux **résolu** (redirection, barre finale, http→https) : c'est
+            // lui qui fait foi, sinon la ligne locale désigne un flux que le compte ne connaît
+            // pas - zéro article reçu, dossier refusé, puis ligne supprimée à la passe suivante.
+            created = added.streamId?.takeIf { it.isNotBlank() } ?: stream
         }
-        return stream
+        return created
     }
 
     /** `subscription/edit` avec `ac=unsubscribe` : un appel, jeton CSRF de la session. */

@@ -158,7 +158,13 @@ fun ArticleScreen(
     val ownNeighbours = remember { vm.takeArticleNeighbours() }
     var ids by remember { mutableStateOf(ownNeighbours ?: vm.scanIds) }
     LaunchedEffect(vm.scanIds) {
-        if (ids.isEmpty()) ids = vm.scanIds
+        if (ids.isEmpty()) {
+            // L'article ouvert vient d'être marqué lu : sous « non-lus seuls », il ne figure plus
+            // dans `scanIds`, et sans lui le balayage n'avait aucun voisin (« pas d'article plus
+            // ancien » puis retour à la liste). `keep` le réinsère à sa place.
+            ids = if (articleId in vm.scanIds) vm.scanIds
+            else vm.moreScanIds(vm.scanIds.size, articleId)
+        }
     }
     val idx = ids.indexOf(articleId)
     val prevId = if (idx > 0) ids[idx - 1] else null
@@ -171,7 +177,7 @@ fun ArticleScreen(
         if (ownNeighbours != null || scanEnded) return@LaunchedEffect
         val here = ids.indexOf(articleId)
         if (here < 0 || here < ids.lastIndex - 1) return@LaunchedEffect
-        val more = vm.moreScanIds(ids.size)
+        val more = vm.moreScanIds(ids.size, articleId)
         if (more.size > ids.size) ids = more else scanEnded = true
     }
     var offsetX by remember(articleId) { mutableFloatStateOf(0f) }
@@ -617,6 +623,9 @@ fun ArticleScreen(
             // caractères, et il bloquait l'affichage à l'ouverture, puis une seconde fois quand
             // l'extraction remplaçait le texte.
             val blocks by produceState(emptyList<ABlock>(), html, article?.url) {
+                // Vider d'abord : sans cela, le corps de l'article précédent restait affiché sous
+                // le titre du nouveau pendant le découpage (jusqu'à quelques centaines de ms).
+                value = emptyList()
                 value = withContext(Dispatchers.Default) {
                     articleBlocks(html.orEmpty(), article?.url.orEmpty())
                 }
@@ -2033,29 +2042,6 @@ fun openUrl(ctx: android.content.Context, url: String) {
         val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
         ctx.startActivity(i)
     } catch (_: Exception) {}
-}
-
-/**
- * Chronomètre de lecture d'un article : des segments mis bout à bout, un seul total.
- *
- * [resume] ouvre un segment (sans effet si le chronomètre tourne déjà), [pause] le referme et rend
- * le total en secondes — `null` si rien ne tournait, pour qu'un second appel n'écrive rien. Le
- * total ne redescend jamais : arrêter l'application puis revenir repart de ce qui était déjà lu.
- */
-class ReadingTimer {
-    private var sinceMs: Long? = null
-    private var totalMs = 0L
-
-    fun resume(nowMs: Long) {
-        if (sinceMs == null) sinceMs = nowMs
-    }
-
-    fun pause(nowMs: Long): Int? {
-        val started = sinceMs ?: return null
-        totalMs += (nowMs - started).coerceAtLeast(0L)
-        sinceMs = null
-        return (totalMs / 1000).toInt()
-    }
 }
 
 /**

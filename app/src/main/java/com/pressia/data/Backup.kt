@@ -1,6 +1,7 @@
 package com.pressia.data
 
 import com.pressia.BuildConfig
+import androidx.room.withTransaction
 import com.pressia.data.local.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -339,7 +340,10 @@ suspend fun PressRepository.restaurationJson(
     if (Sections.PREFS in sections) {
         // La décision (clés de l'appareil, secrets, types inexploitables) est pure et testée ;
         // ici on ne fait plus qu'appliquer.
+        // `stats_since` borne les statistiques **de l'appareil** : l'importer sans les
+        // statistiques (section non cochée) masquait les lectures locales sans rien remplacer.
         val values = restorablePrefs(root.optJSONObject(Sections.PREFS), hasTokens)
+            .filterKeys { it != Prefs.STATS_SINCE.name || Sections.STATS in sections }
         var n = 0
         // `setByName` renvoie faux pour une clé inconnue ou un type incohérent : elle n'est
         // alors pas comptée, et le rapport ne surestime pas la restauration.
@@ -354,16 +358,20 @@ suspend fun PressRepository.restaurationJson(
             val cats = o.optJSONArray("categories")?.toCategoryList().orEmpty()
                 .filter { isLocalProvider(it.provider) }
             val subs = o.optJSONArray("subscriptions")?.toSubscriptionList().orEmpty()
-            if (cats.isNotEmpty()) dao.upsertCategories(cats)
-            if (subs.isNotEmpty()) {
-                // Un flux pointant vers un dossier absent (ancien fichier avec dossiers de
-                // compte, ou dossier local supprimé depuis) sort du dossier au lieu de
-                // casser l'import sur la clé étrangère — la synchro re-rattachera les flux
-                // des comptes, et le rattachement local manquant reste visible.
-                val known = dao.categories().map { it.id }.toSet()
-                dao.upsertSubscriptions(subs.map { s ->
-                    if (s.categoryId != null && s.categoryId !in known) s.copy(categoryId = null) else s
-                })
+            // Une seule transaction : les dossiers et les flux restaurés arrivent ensemble (un
+            // arrêt entre les deux laissait des flux détachés ou des dossiers vides).
+            db.withTransaction {
+                if (cats.isNotEmpty()) dao.upsertCategories(cats)
+                if (subs.isNotEmpty()) {
+                    // Un flux pointant vers un dossier absent (ancien fichier avec dossiers de
+                    // compte, ou dossier local supprimé depuis) sort du dossier au lieu de
+                    // casser l'import sur la clé étrangère - la synchro re-rattachera les flux
+                    // des comptes, et le rattachement local manquant reste visible.
+                    val known = dao.categories().map { it.id }.toSet()
+                    dao.upsertSubscriptions(subs.map { s ->
+                        if (s.categoryId != null && s.categoryId !in known) s.copy(categoryId = null) else s
+                    })
+                }
             }
             o.optString("provider").takeIf { it.isNotBlank() }?.let { prefs.set(Prefs.PROVIDER, it) }
             if (hasTokens) o.optString("token").takeIf { it.isNotBlank() }?.let { prefs.set(Prefs.TOKEN, it) }
@@ -375,19 +383,23 @@ suspend fun PressRepository.restaurationJson(
         if (Sections.STATS in sections) {
             val reading = o.optJSONArray("reading")?.toReadingList().orEmpty()
             val extract = o.optJSONArray("extract")?.toExtractList().orEmpty()
-            if (replaceStats) { dao.clearReadingEvents(); dao.clearExtractEvents() }
-            // En fusion on ne garde que l'inédit : réimporter le même fichier ne duplique rien.
-            // Les clés sont lues une fois (le fichier et la base peuvent contenir des milliers
-            // d'évènements, une requête par ligne coûterait trop cher).
-            val knownReading = if (replaceStats) emptySet() else dao.readingKeys().mapTo(HashSet()) { it.articleId to it.openedAt }
-            val knownExtract = if (replaceStats) emptySet() else dao.extractKeys().mapTo(HashSet()) { it.articleId to it.createdAt }
-            val freshReading = reading.filter { e -> (e.articleId to e.openedAt) !in knownReading }
-                .distinctBy { e -> e.articleId to e.openedAt }
-            val freshExtract = extract.filter { e -> (e.articleId to e.createdAt) !in knownExtract }
-                .distinctBy { e -> e.articleId to e.createdAt }
-            if (freshReading.isNotEmpty()) dao.insertReadingEvents(freshReading)
-            if (freshExtract.isNotEmpty()) dao.insertExtractEvents(freshExtract)
-            report = report.copy(stats = freshReading.size + freshExtract.size)
+            // Une seule transaction : vider puis n'insérer qu'une partie laissait les
+            // statistiques perdues à moitié si le processus était tué entre les deux.
+            db.withTransaction {
+                if (replaceStats) { dao.clearReadingEvents(); dao.clearExtractEvents() }
+                // En fusion on ne garde que l'inédit : réimporter le même fichier ne duplique rien.
+                // Les clés sont lues une fois (le fichier et la base peuvent contenir des milliers
+                // d'évènements, une requête par ligne coûterait trop cher).
+                val knownReading = if (replaceStats) emptySet() else dao.readingKeys().mapTo(HashSet()) { it.articleId to it.openedAt }
+                val knownExtract = if (replaceStats) emptySet() else dao.extractKeys().mapTo(HashSet()) { it.articleId to it.createdAt }
+                val freshReading = reading.filter { e -> (e.articleId to e.openedAt) !in knownReading }
+                    .distinctBy { e -> e.articleId to e.openedAt }
+                val freshExtract = extract.filter { e -> (e.articleId to e.createdAt) !in knownExtract }
+                    .distinctBy { e -> e.articleId to e.createdAt }
+                if (freshReading.isNotEmpty()) dao.insertReadingEvents(freshReading)
+                if (freshExtract.isNotEmpty()) dao.insertExtractEvents(freshExtract)
+                report = report.copy(stats = freshReading.size + freshExtract.size)
+            }
         }
     }
 

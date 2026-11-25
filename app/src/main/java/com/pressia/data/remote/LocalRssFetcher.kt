@@ -81,6 +81,9 @@ object LocalRssFetcher {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        // Plafond total : un flux qui débite par petits paquets ne déclenchait jamais le délai
+        // de lecture, et retenait toute la synchro locale.
+        .callTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
         .build()
     private const val UA = "Mozilla/5.0 (Linux; Android 14; PressIA) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
@@ -98,7 +101,14 @@ object LocalRssFetcher {
         val url = sanitizeFeedUrl(feedUrl)
         if (url.isEmpty()) return@withContext LocalFeedFetch(feedId, error = "URL vide")
         if (!isSupportedFeedUrl(url)) return@withContext LocalFeedFetch(feedId, error = "protocole non supporté : $url")
-        val req = Request.Builder().url(url).header("User-Agent", UA).build()
+        // Une URL enregistrée peut être invalide pour OkHttp (`https://`, hôte avec espace) :
+        // construire la requête **hors** du try faisait remonter l'IllegalArgumentException et
+        // abandonnait toute la synchro des flux locaux, à chaque passe.
+        val req = try {
+            Request.Builder().url(url).header("User-Agent", UA).build()
+        } catch (_: IllegalArgumentException) {
+            return@withContext LocalFeedFetch(feedId, error = "URL invalide : $url")
+        }
         var error: String? = null
         // Un serveur qui répond 500 ou 429 (YouTube le fait régulièrement) n'a pas de réponse
         // définitive : on retente une fois. Un 404, lui, veut dire que l'URL est fausse —

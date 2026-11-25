@@ -483,6 +483,13 @@ class PressRepository(
      * acquis — le second constate que le premier vient de synchroniser et saute son tour.
      */
     private val syncMutex = Mutex()
+    /**
+     * Sérialise la lecture puis l'écriture des articles entre `storeArticles` et les gestes de
+     * l'utilisateur : la relève des drapeaux (`flagsOf`) et l'upsert ne sont pas atomiques, et un
+     * lu/étoile posé entre les deux était écrasé par la ligne reconstruite d'avant — définitif
+     * pour un flux local, qu'aucun serveur ne rétablit.
+     */
+    private val articlesMutex = Mutex()
     /** Sérialise la mise à jour des empreintes (lecture-modification-écriture d'une map JSON). */
     private val hashMutex = Mutex()
     /** Idem pour la table des sessions expirées (comptes synchronisés en parallèle). */
@@ -1102,7 +1109,11 @@ class PressRepository(
             val key = id.removePrefix(MERGED_PREFIX)
             cats.filter { it.label.trim().lowercase() == key }
         } else cats.filter { it.id == id }
+        // Pousser **toutes** les composantes d'abord, n'écrire en local que si tout est accepté :
+        // un refus au second service laissait sinon le dossier à moitié renommé, avec un message
+        // « refusé » contredit par l'état local.
         var ok = true
+        val pushes = ArrayList<Triple<CategoryEntity, List<String>, String?>>()
         targets.forEach { cat ->
             if (!isLocalProvider(cat.provider)) {
                 val account = cloudAccounts().firstOrNull { it.id == cat.provider }
@@ -1111,15 +1122,22 @@ class PressRepository(
                     if (!pushRename(account, cat, feeds, name)) { ok = false; return@forEach }
                     // L'API Google Reader tire l'identifiant du nom : le dossier en change.
                     val newId = renamedFolderId(account.provider, cat.id, name)
-                    if (newId != cat.id) {
-                        dao.insertCategory(CategoryEntity(id = newId, label = name, provider = cat.provider))
-                        dao.moveFeeds(feeds, newId)
-                        dao.deleteCategory(cat.id)
-                    } else dao.renameCategory(cat.id, name)
+                    pushes += Triple(cat, feeds, if (newId != cat.id) newId else null)
                     return@forEach
                 }
             }
-            dao.renameCategory(cat.id, name)
+            pushes += Triple(cat, emptyList(), null)
+        }
+        if (ok) {
+            pushes.forEach { (cat, feeds, newId) ->
+                if (newId != null) {
+                    dao.insertCategory(CategoryEntity(id = newId, label = name, provider = cat.provider))
+                    dao.moveFeeds(feeds, newId)
+                    dao.deleteCategory(cat.id)
+                } else {
+                    dao.renameCategory(cat.id, name)
+                }
+            }
         }
         ok
     }
@@ -1331,10 +1349,11 @@ class PressRepository(
 
     /** Identifiants du périmètre, dans l'ordre d'affichage (liste de balayage de l'écran article). */
     suspend fun streamIds(
-        feedId: String?, catId: String?, unreadOnly: Boolean, limit: Int = 2000, offset: Int = 0
+        feedId: String?, catId: String?, unreadOnly: Boolean, limit: Int = 2000, offset: Int = 0,
+        keepIds: List<String> = emptyList()
     ): List<String> {
         val (catFeeds, catEmpty) = catScope(catId)
-        return dao.streamIds(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, limit, offset)
+        return dao.streamIds(feedId, catFeeds, catEmpty, if (unreadOnly) 1 else 0, limit, offset, keepIds)
     }
 
     /**
@@ -1426,9 +1445,12 @@ class PressRepository(
 
     // ----- Actions utilisateur (optimiste + file de sync sauf en local) -----
     suspend fun setRead(id: String, unread: Boolean) = withContext(Dispatchers.IO) {
+        // Sous le verrou des articles : un upsert concurrent (`storeArticles`) relit les drapeaux
+        // puis réécrit la ligne, et écraserait cette bascule.
+        articlesMutex.withLock {
         // Projection légère : `dao.article` est un SELECT * et chargeait jusqu'à 600 Ko de HTML
         // à chaque bascule lu/non-lu, pour le seul `feedId`.
-        val a = dao.feedOfIds(listOf(id)).firstOrNull() ?: return@withContext
+        val a = dao.feedOfIds(listOf(id)).firstOrNull() ?: return@withLock
         dao.setRead(id, unread, if (!unread) System.currentTimeMillis() else null)
         // Sans aucun compte connecté, la file montante n'a aucun sens : l'état reste local.
         if (cloudAccounts().isNotEmpty()) {
@@ -1436,6 +1458,7 @@ class PressRepository(
             // Fusionnée avec la passe en cours : lire vingt articles d'affilée ne fait plus
             // vingt allers-retours sérialisés (voir `schedulePush`).
             schedulePush()
+        }
         }
     }
     /**
@@ -1448,25 +1471,28 @@ class PressRepository(
      * lu/non-lu) au lieu d'un favori local. Les flux locaux gardent l'étoile locale.
      */
     suspend fun setStarred(id: String, starred: Boolean) = withContext(Dispatchers.IO) {
-        val a = dao.feedOfIds(listOf(id)).firstOrNull()
-        val owner = a?.feedId?.let { dao.subscription(it)?.provider }
-        // L'étoile de ces comptes est leur tableau « à lire plus tard » (voir
-        // `providerUsesSaved`), pas un favori local : c'est lui que le serveur doit voir.
-        val accountSaved = cloudAccounts().any { sameAccount(it.id, owner) && providerUsesSaved(it.id) }
-        if (a != null && accountSaved) {
-            // Pas de favori local pour ces comptes (leur étoile = « Read later »), mais on
-            // efface aussi l'étoile locale héritée d'avant : sinon elle ne part plus jamais.
-            dao.setStarred(id, false)
-            if (starred) {
-                dao.markLaterSaved(listOf(id))
-                dao.setLaterProvider(listOf(id), providerBase(owner))
+        // Même verrou que `setRead` : un upsert concurrent écraserait l'étoile.
+        articlesMutex.withLock {
+            val a = dao.feedOfIds(listOf(id)).firstOrNull()
+            val owner = a?.feedId?.let { dao.subscription(it)?.provider }
+            // L'étoile de ces comptes est leur tableau « à lire plus tard » (voir
+            // `providerUsesSaved`), pas un favori local : c'est lui que le serveur doit voir.
+            val accountSaved = cloudAccounts().any { sameAccount(it.id, owner) && providerUsesSaved(it.id) }
+            if (a != null && accountSaved) {
+                // Pas de favori local pour ces comptes (leur étoile = « Read later »), mais on
+                // efface aussi l'étoile locale héritée d'avant : sinon elle ne part plus jamais.
+                dao.setStarred(id, false)
+                if (starred) {
+                    dao.markLaterSaved(listOf(id))
+                    dao.setLaterProvider(listOf(id), providerBase(owner))
+                } else {
+                    dao.unmarkLaterSaved(listOf(id))
+                }
+                dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (starred) "save" else "unsave"))
+                schedulePush()
             } else {
-                dao.unmarkLaterSaved(listOf(id))
+                dao.setStarred(id, starred)
             }
-            dao.enqueue(SyncActionEntity(articleId = id, feedId = a.feedId, kind = if (starred) "save" else "unsave"))
-            schedulePush()
-        } else {
-            dao.setStarred(id, starred)
         }
     }
     suspend fun markAllRead(feedIds: List<String>) = withContext(Dispatchers.IO) {
@@ -2073,7 +2099,7 @@ class PressRepository(
         if (work.isEmpty()) {
             // Articles sans image : marqués tout de suite, sinon leur HTML serait relu à chaque
             // synchronisation sans rien à faire.
-            rows.map { it.id }.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+            markImagesCached(rows.map { it.id })
             return@withContext 0
         }
         val total = work.size
@@ -2120,7 +2146,7 @@ class PressRepository(
         val complete = perArticle.filter { (_, urls) ->
             urls.all { it in okUrls || ThumbStore.cachedFile(ctx, it) != null }
         }.mapTo(HashSet()) { (id, _) -> id }
-        complete.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+        markImagesCached(complete.toList())
         // Images en échec, rattachées à leur article avec leur cause : le message de fin de
         // synchro n'en donne que le nombre, la modale « Voir le détail » les nomme — la
         // synchronisation, elle, reste réussie.
@@ -2765,10 +2791,15 @@ class PressRepository(
         // les paires (id, unread) se répartissent ensuite entre les deux ensembles purs.
         // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
         // (qui suffisent : rien à rouvrir quand le compte n'a aucun non-lu).
+        // Une seule lecture des non-lus locaux, puis les IDs distants par paquet : l'ancienne
+        // requête (`readStatesOfProvider`) renvoyait **tous** les non-lus du compte à chaque
+        // paquet de 500, soit des dizaines de milliers de lignes relues pour deux évènements.
+        val localUnreadRows = dao.unreadStatesOfProvider(account.id)
         val states = if (remote.ids.isEmpty()) {
-            dao.unreadStatesOfProvider(account.id)
+            localUnreadRows
         } else {
-            remote.ids.chunked(500).flatMap { dao.readStatesOfProvider(account.id, it) }
+            (localUnreadRows + remote.ids.chunked(500).flatMap { dao.readStatesByIds(account.id, it) })
+                .distinctBy { it.id }
         }
         val cutoff = cutoffFor(p.id)
         val localUnread = closableUnread(states, cutoff)
@@ -3094,6 +3125,16 @@ class PressRepository(
         keepRead: Boolean = false,
         keepReadBeforeMs: Long? = null,
         pendingReads: Set<String>? = null
+    ): Int = articlesMutex.withLock {
+        storeArticlesLocked(articles, keepRead, keepReadBeforeMs, pendingReads)
+    }
+
+    /** Corps de [storeArticles], verrou des articles déjà pris. */
+    private suspend fun storeArticlesLocked(
+        articles: List<ArticleEntity>,
+        keepRead: Boolean,
+        keepReadBeforeMs: Long?,
+        pendingReads: Set<String>?
     ): Int {
         if (articles.isEmpty()) return 0
         val t0 = System.currentTimeMillis()
@@ -3154,6 +3195,11 @@ class PressRepository(
         return fresh
     }
 
+    /** Images d'un article marquées téléchargées, sous le verrou des articles (voir `storeArticles`). */
+    private suspend fun markImagesCached(ids: List<String>) = articlesMutex.withLock {
+        ids.chunked(500).forEach { dao.markArticlesImagesCached(it) }
+    }
+
     /**
      * Réécrit les dossiers d'un compte sans perdre les affectations de flux.
      *
@@ -3211,80 +3257,11 @@ class PressRepository(
         val keepSaved = dao.pendingSavedIds()
         val keepUnsaved = dao.pendingUnsavedIds()
         val added = coroutineScope {
-            accounts.map { account ->
-                async {
-                    var alive = false
-                    runCatching {
-                        // Voie légère : mêmes IDs qu'au dernier import (liste complète, rien en
-                        // attente) = rien à redescendre — ni contenus, ni stockage, ni miniatures
-                        // (la passe avec compteur couvre déjà les miniatures des articles).
-                        // Un appel IDs réussi prouve déjà la session (quitus ci-dessous).
-                        val idSet = providerFor(account.provider).readLaterIds(account.token)
-                        if (idSet != null) alive = true
-                        if (idSet != null && idSet.complete && keepSaved.isEmpty() && keepUnsaved.isEmpty()) {
-                            val hash = savedHash(account, idSet.ids)
-                            if (readLaterHashes()[account.id] == hash) {
-                                android.util.Log.i("PressIA", "read later ${account.id} inchangé (${idSet.ids.size} articles)")
-                                return@runCatching 0
-                            }
-                        }
-                        val items = providerFor(account.provider).readLater(account.token)
-                        android.util.Log.d("PressIA", "read later ${account.id} : ${items.size} articles")
-                        if (items.isNotEmpty()) alive = true
-                        if (items.isEmpty()) {
-                            // Tableau vraiment vide (appel abouti) : l'empreinte du vide est
-                            // stockée pour sauter aussi ce cas ; état inconnu (aucun appel
-                            // abouti : pas de scope, endpoint refusé) : on ne touche à rien —
-                            // ni tableau, ni quitus de session (le drapeau expiré éventuel
-                            // posé par la passe articles doit survivre).
-                            if (idSet != null) {
-                                // Tableau vidé chez le compte : les marques locales partent avec
-                                // lui, sinon elles y restaient à vie (l'empreinte du vide fait
-                                // sauter toutes les passes suivantes).
-                                dao.subscriptions().filter { sameAccount(it.provider, account.id) }
-                                    .map { it.id }.takeIf { it.isNotEmpty() }
-                                    ?.let { dao.clearLater(it) }
-                                // Et les articles de flux plus abonnés du tout, que le tableau
-                                // garde par nature (voir `clearLaterOrphans`).
-                                dao.clearLaterOrphans(providerFor(account.provider).id)
-                                storeReadLaterHash(account.id, savedHash(account, emptySet()))
-                            }
-                            return@runCatching 0
-                        }
-                        // On repart d'un tableau vierge pour ce compte : un article retiré des « à lire
-                        // » plus tard chez Feedly ne doit pas rester marqué indéfiniment.
-                        val feeds = dao.subscriptions().filter { sameAccount(it.provider, account.id) }.map { it.id }
-                        if (feeds.isNotEmpty()) dao.clearLater(feeds)
-                        // Les articles de flux qu'on ne suit plus (le tableau en garde par
-                        // nature) : sans cette passe, un article retiré chez le service y
-                        // resterait marqué à vie.
-                        dao.clearLaterOrphans(providerFor(account.provider).id)
-                        // Dernier mot au compteur (Int) : les rattrapages ci-dessous sont des
-                        // instructions, le bloc doit toujours s'évaluer en nombre d'articles.
-                        val n = storeArticles(
-                            items,
-                            keepReadBeforeMs = cutoffFor(providerFor(account.provider).id)
-                        )
-                        // Le tableau redescendu est marqué de son service : c'est ce qui sépare
-                        // « À lire plus tard - Feedly » de celui d'Inoreader dans les Favoris.
-                        // Paquets de 500 : un tableau de plusieurs milliers d'identifiants dépasse
-                        // la limite de variables SQLite des anciens Android.
-                        items.map { it.id }.chunked(500).forEach {
-                            dao.setLaterProvider(it, providerFor(account.provider).id)
-                        }
-                        keepSaved.chunked(500).forEach { dao.markLaterSaved(it) }
-                        keepUnsaved.chunked(500).forEach { dao.unmarkLaterSaved(it) }
-                        storeReadLaterHash(account.id, savedHash(account, items.map { it.id }.toSet()))
-                        n
-                    }.onSuccess { if (alive) clearAccountExpired(account.id) }
-                        .onFailure {
-                            if (it is CancellationException) throw it
-                            noteRateLimit(it, account.label)
-                            android.util.Log.e("PressIA", "read later ${account.id} failed", it)
-                            if (isAuthFailure(it)) markAccountExpired(account.id)
-                        }
-                        .getOrDefault(0)
-                }
+            // Une replongée **par service** : deux comptes du même service partagent les lignes
+            // `subscriptions`, si bien que l'effacement de l'un emportait les marques que l'autre
+            // venait de poser — et l'empreinte « inchangé » de celui-ci les laissait perdues.
+            accounts.groupBy { providerBase(it.id) }.values.map { group ->
+                async { syncReadLaterService(group, keepSaved, keepUnsaved) }
             }.awaitAll().sum()
         }
         // Pas de passe miniatures ici : les appelants (pipeline, première synchronisation) en
@@ -3293,6 +3270,93 @@ class PressRepository(
         // Le tableau a changé : les favoris suivent sans attendre la fin du pipeline.
         pokeLists()
         added
+    }
+
+    /**
+     * Replonge le tableau d'un service : une seule fois pour ses comptes, puisque leurs flux
+     * partagent les mêmes lignes. Si un compte échoue **avant** l'effacement, rien n'est touché :
+     * on ne saurait pas quelles marques lui appartenaient.
+     */
+    private suspend fun syncReadLaterService(
+        group: List<CloudAccount>,
+        keepSaved: List<String>,
+        keepUnsaved: List<String>
+    ): Int {
+        val provider = providerFor(group.first().provider)
+        val pending = keepSaved.isNotEmpty() || keepUnsaved.isNotEmpty()
+        val idSets = HashMap<String, IdSet?>()
+        var allUnchanged = !pending
+        // Voie légère d'abord : mêmes IDs qu'au dernier import (liste complète, rien en attente)
+        // = rien à redescendre — ni contenus, ni stockage, ni miniatures (la passe avec compteur
+        // couvre déjà les miniatures des articles). Un appel IDs réussi prouve la session.
+        for (account in group) {
+            try {
+                val idSet = provider.readLaterIds(account.token)
+                idSets[account.id] = idSet
+                if (idSet != null) clearAccountExpired(account.id)
+                val unchanged = idSet != null && idSet.complete &&
+                    readLaterHashes()[account.id] == savedHash(account, idSet.ids)
+                if (unchanged) {
+                    android.util.Log.i(
+                        "PressIA",
+                        "read later ${account.id} inchangé (${idSet?.ids?.size ?: 0} articles)"
+                    )
+                } else {
+                    allUnchanged = false
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                noteRateLimit(e, account.label)
+                android.util.Log.e("PressIA", "read later ${account.id} failed", e)
+                if (isAuthFailure(e)) markAccountExpired(account.id)
+                return 0
+            }
+        }
+        if (allUnchanged) return 0
+        // Les contenus d'abord : un échec réseau ici laisse les marques locales en place.
+        val tables = HashMap<String, List<ArticleEntity>>()
+        for (account in group) {
+            try {
+                val items = provider.readLater(account.token)
+                android.util.Log.d("PressIA", "read later ${account.id} : ${items.size} articles")
+                // Liste vide sans IDs : état inconnu (endpoint refusé), on ne touche à rien.
+                if (items.isEmpty() && idSets[account.id] == null) return 0
+                if (items.isNotEmpty()) clearAccountExpired(account.id)
+                tables[account.id] = items
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                noteRateLimit(e, account.label)
+                android.util.Log.e("PressIA", "read later ${account.id} failed", e)
+                if (isAuthFailure(e)) markAccountExpired(account.id)
+                return 0
+            }
+        }
+        // Un article retiré du tableau ne doit pas rester marqué : on repart d'un tableau vierge,
+        // une seule fois pour le service, puis on repose celui de chaque compte.
+        val ownerIds = group.map { it.id }.toSet()
+        val feeds = dao.subscriptions().filter { it.provider in ownerIds }.map { it.id }
+        if (feeds.isNotEmpty()) dao.clearLater(feeds)
+        // Les articles de flux qu'on ne suit plus (le tableau en garde par nature).
+        dao.clearLaterOrphans(provider.id)
+        var added = 0
+        for (account in group) {
+            val items = tables[account.id].orEmpty()
+            added += storeArticles(items, keepReadBeforeMs = cutoffFor(provider.id))
+            // Le tableau redescendu est marqué de son service : c'est ce qui sépare
+            // « À lire plus tard - Feedly » de celui d'Inoreader dans les Favoris.
+            // Paquets de 500 : un tableau de plusieurs milliers d'identifiants dépasse
+            // la limite de variables SQLite des anciens Android.
+            items.map { it.id }.chunked(500).forEach {
+                dao.setLaterProvider(it, provider.id)
+            }
+            storeReadLaterHash(account.id, savedHash(account, items.map { it.id }.toSet()))
+        }
+        // Étoiles posées hors-ligne pendant la replongée : on les repose.
+        keepSaved.chunked(500).forEach { dao.markLaterSaved(it) }
+        keepUnsaved.chunked(500).forEach { dao.unmarkLaterSaved(it) }
+        return added
     }
 
     private suspend fun pruneArticles() {

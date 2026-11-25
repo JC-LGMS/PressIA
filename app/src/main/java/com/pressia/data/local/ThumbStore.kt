@@ -230,8 +230,12 @@ object ThumbStore {
      */
     fun sampleSize(srcW: Int, srcH: Int, maxW: Int, maxH: Int): Int {
         if (srcW <= 0 || srcH <= 0 || maxW <= 0 || maxH <= 0) return 1
+        // Le **plus grand** des deux ratios : exiger les deux dimensions (ancienne règle) ne
+        // réduisait jamais une image panoramique (12000×600 restait décodée pleine taille,
+        // ~29 Mo par bitmap). Le décodé reste au plus à 2× le gabarit.
+        val ratio = maxOf(srcW.toDouble() / maxW, srcH.toDouble() / maxH)
         var s = 1
-        while (srcW / (s * 2) >= maxW && srcH / (s * 2) >= maxH) s *= 2
+        while (s * 2 <= ratio) s *= 2
         return s
     }
 

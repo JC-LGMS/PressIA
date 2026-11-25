@@ -317,8 +317,15 @@ object InstapaperWeb {
             // Seuls les cookies du domaine nous appartiennent : on les expire un par un.
             before.split(";").mapNotNull {
                 val n = it.substringBefore("=").trim()
-                n.takeIf { s -> s.isNotBlank() }?.let { name -> "$name=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.instapaper.com" }
-            }.forEach { cm.setCookie(BASE, it) }
+                n.takeIf { s -> s.isNotBlank() }
+            }.forEach { name ->
+                // Instapaper (Rails) pose ses cookies sur l'hôte seul, sans attribut `Domain`.
+                // Les expirer uniquement avec `domain=.instapaper.com` créait/expirait une autre
+                // entrée : la session d'origine survivait à la déconnexion. On expire les deux.
+                val expiry = "$name=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/"
+                cm.setCookie(BASE, "$expiry; domain=.instapaper.com")
+                cm.setCookie(BASE, expiry)
+            }
             cm.flush()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* tant pis, la session mourra côté serveur */ }
     }

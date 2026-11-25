@@ -37,6 +37,18 @@ val versionProps = Properties().apply {
     if (versionFile.exists()) versionFile.inputStream().use { load(it) }
 }
 
+/**
+ * `local.properties` (gitignoré) : Gradle ne le charge pas lui-même — seul AGP y lit
+ * `sdk.dir`. `findProperty` l'ignorait donc, et les identifiants OAuth qu'on y mettait ne
+ * servaient à rien. Il passe en première source, avant `gradle.properties` et l'environnement.
+ */
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun localProp(name: String): String? =
+    localProps.getProperty(name) ?: project.findProperty(name)?.toString() ?: System.getenv(name)
+
 /** `version.properties` porte-t-il un incrément non commité (évolution en cours) ? */
 fun versionFileIsDirty(): Boolean = try {
     val proc = ProcessBuilder("git", "diff", "--quiet", "HEAD", "--", versionFile.name)
@@ -121,11 +133,11 @@ android {
         // Un compte de l'application (identifiants déclarés par le développeur) reste
         // prioritaire : renseignez INOREADER_APP_ID / INOREADER_APP_KEY dans
         // local.properties ou l'environnement pour le remplacer.
-        buildConfigField("String", "FEEDLY_CLIENT_ID", "\"${project.findProperty("FEEDLY_CLIENT_ID") ?: System.getenv("FEEDLY_CLIENT_ID") ?: ""}\"")
-        buildConfigField("String", "FEEDLY_CLIENT_SECRET", "\"${project.findProperty("FEEDLY_CLIENT_SECRET") ?: System.getenv("FEEDLY_CLIENT_SECRET") ?: ""}\"")
+        buildConfigField("String", "FEEDLY_CLIENT_ID", "\"${localProp("FEEDLY_CLIENT_ID") ?: ""}\"")
+        buildConfigField("String", "FEEDLY_CLIENT_SECRET", "\"${localProp("FEEDLY_CLIENT_SECRET") ?: ""}\"")
         buildConfigField("String", "FEEDLY_REDIRECT_URI", "\"pressia://oauth/feedly\"")
-        buildConfigField("String", "INOREADER_APP_ID", "\"${project.findProperty("INOREADER_APP_ID") ?: System.getenv("INOREADER_APP_ID") ?: "1000001524"}\"")
-        buildConfigField("String", "INOREADER_APP_KEY", "\"${project.findProperty("INOREADER_APP_KEY") ?: System.getenv("INOREADER_APP_KEY") ?: "uxILTlPQilTphfcf4xwBEspL_0EDaUZL"}\"")
+        buildConfigField("String", "INOREADER_APP_ID", "\"${localProp("INOREADER_APP_ID") ?: "1000001524"}\"")
+        buildConfigField("String", "INOREADER_APP_KEY", "\"${localProp("INOREADER_APP_KEY") ?: "uxILTlPQilTphfcf4xwBEspL_0EDaUZL"}\"")
         buildConfigField("String", "INOREADER_REDIRECT_URI", "\"pressia://oauth/inoreader\"")
         val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
@@ -161,41 +173,37 @@ android {
         jvmTarget = "17"
     }
     // Nommage personnalisé des APK : PressIA-<version>-<type>-<date>.apk
-    // Tâche simple qui renomme après assemblage
-    tasks.register("renameApks") {
-        group = "build"
-        description = "Renomme les APK en PressIA-<version>-<type>-<date>.apk"
-        // `finalizedBy` s'exécute aussi après un échec : sans ce garde-fou, l'APK de la
-        // compilation précédente était recopié sous le numéro de version de la compilation
-        // cassée, et semblait contenir la correction.
-        onlyIf {
-            listOf("assembleDebug", "assembleRelease").all {
-                tasks.named(it).get().state.failure == null
-            }
-        }
-        doLast {
-            val date = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
-            val releaseApk = file("${buildDir}/outputs/apk/release/app-release.apk")
-            val debugApk = file("${buildDir}/outputs/apk/debug/app-debug.apk")
-            if (releaseApk.exists()) {
-                val newName = "PressIA-${appVersionName}-release-$date.apk"
-                // Copie (et non `renameTo`) : déplacer l'APK hors de son dossier faisait
-                // reconstruire `packageDebug` en incrémental **sans** son fichier de base, et
-                // l'APK produit était tronqué (1,2 Mo au lieu de 20). Une copie laisse
-                // l'original en place, ce dont l'empaquetage incrémental a besoin.
-                releaseApk.copyTo(releaseApk.parentFile.resolve(newName), overwrite = true)
-            }
-            if (debugApk.exists()) {
-                debugApk.copyTo(
-                    debugApk.parentFile.resolve("PressIA-${appVersionName}-debug-$date.apk"),
-                    overwrite = true
-                )
+    // Une tâche **par variante** : copier l'APK de l'autre variante (resté d'un build antérieur)
+    // le nommait avec la version courante — un APK qui ne contenait donc pas ce code, par
+    // exemple après un build release suivi d'un build debug qui incrémente la version.
+    fun registerRenameTask(taskName: String, variant: String, apk: String) {
+        tasks.register(taskName) {
+            group = "build"
+            description = "Renomme l'APK $variant en PressIA-<version>-$variant-<date>.apk"
+            // `finalizedBy` s'exécute aussi après un échec : sans ce garde-fou, l'APK de la
+            // compilation précédente était recopié sous le numéro de la version cassée.
+            onlyIf { tasks.named("assemble${variant.replaceFirstChar { it.uppercase() }}").get().state.failure == null }
+            doLast {
+                val date = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+                val source = file("${buildDir}/outputs/apk/$variant/$apk")
+                if (source.exists()) {
+                    // Copie (et non `renameTo`) : déplacer l'APK hors de son dossier faisait
+                    // reconstruire `packageDebug` en incrémental **sans** son fichier de base, et
+                    // l'APK produit était tronqué (1,2 Mo au lieu de 20). Une copie laisse
+                    // l'original en place, ce dont l'empaquetage incrémental a besoin.
+                    source.copyTo(
+                        source.parentFile.resolve("PressIA-${appVersionName}-$variant-$date.apk"),
+                        overwrite = true
+                    )
+                }
             }
         }
     }
+    registerRenameTask("renameDebugApk", "debug", "app-debug.apk")
+    registerRenameTask("renameReleaseApk", "release", "app-release.apk")
     afterEvaluate {
-        tasks.named("assembleRelease") { finalizedBy("renameApks") }
-        tasks.named("assembleDebug") { finalizedBy("renameApks") }
+        tasks.named("assembleRelease") { finalizedBy("renameReleaseApk") }
+        tasks.named("assembleDebug") { finalizedBy("renameDebugApk") }
     }
 }
 

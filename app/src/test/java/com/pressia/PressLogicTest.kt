@@ -2025,13 +2025,16 @@ class PressLogicTest {
 
     @Test fun `sous-echantillonnage cale dans le gabarit`() {
         val s = com.pressia.data.local.ThumbStore.sampleSize(4000, 3000, 1080, 500)
-        assertEquals(2, s)
+        assertEquals(4, s)
         // Puissance de 2.
         assertTrue(s >= 1 && (s and (s - 1)) == 0)
-        // Le décodé couvre encore le gabarit dans les deux dimensions (pas de pixels inventés
-        // à la mise à l'échelle finale), mais un cran de plus ne le couvrirait plus.
-        assertTrue(4000 / s >= 1080 && 3000 / s >= 500)
-        assertTrue(4000 / (s * 2) < 1080 || 3000 / (s * 2) < 500)
+        // Le décodé reste au plus à 2× le gabarit dans les deux dimensions (pas de pixels
+        // inventés à la mise à l'échelle finale).
+        assertTrue(4000 / s <= 1080 * 2 && 3000 / s <= 500 * 2)
+        // Une image panoramique est bien réduite : l'ancienne règle (« les deux dimensions »)
+        // la laissait en pleine résolution, ~29 Mo par bitmap.
+        assertEquals(8, com.pressia.data.local.ThumbStore.sampleSize(12000, 600, 1080, 1080))
+        assertTrue(12000 / 8 <= 1080 * 2)
         // Petite image : pas de réduction.
         assertEquals(1, com.pressia.data.local.ThumbStore.sampleSize(100, 100, 1080, 500))
         assertEquals(1, com.pressia.data.local.ThumbStore.sampleSize(0, 0, 1080, 500))
@@ -2192,20 +2195,6 @@ class PressLogicTest {
         assertEquals(listOf("x", "y"), keptIds(setOf("x", "y"), listOf("x")).toList())
         assertEquals(setOf("x"), keptIds(setOf("x"), emptyList()))
         assertEquals(listOf("y"), keptIds(setOf("x", "y"), emptyList(), max = 1).toList())
-    }
-
-    @Test fun `chronometre de lecture, arret et reprise cumules`() {
-        // Le chrono s'arrête quand l'application passe en arrière-plan (Chrome, écran éteint) et
-        // reprend au retour : le total s'additionne, une seule lecture par visite.
-        val t = com.pressia.ui.ReadingTimer()
-        t.resume(1_000)
-        assertEquals(10, t.pause(11_000))
-        // Rien ne tourne : un second arrêt n'écrit rien (évite une écriture pour rien).
-        assertNull(t.pause(20_000))
-        t.resume(20_000)
-        assertEquals(25, t.pause(35_000))
-        // Après une pause, le temps qui passe ne s'ajoute pas tout seul.
-        assertNull(t.pause(90_000))
     }
 
     @Test fun `lecture plus tard du compte, feedly et inoreader seulement`() {

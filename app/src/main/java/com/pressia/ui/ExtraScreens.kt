@@ -1468,7 +1468,7 @@ fun BackupScreen(vm: PressVM) {
                 // Écriture vérifiée (voir writeBackupFile) : sans elle, un flux de sortie nul ou
                 // tronqué laissait annoncer « Sauvegarde effectuée » alors qu'aucun fichier
                 // n'existait — le pire des messages, puisqu'il décourage de recommencer.
-                val written = writeBackupFile(ctx, uri, json.toByteArray())
+                val written = withContext(Dispatchers.IO) { writeBackupFile(ctx, uri, json.toByteArray()) }
                 // Restaurer n'est pas sauvegarder : seule une exportation réussie pose la date.
                 val now = System.currentTimeMillis()
                 vm.repo.prefs.set(Prefs.LAST_BACKUP_AT, now)
@@ -1546,7 +1546,9 @@ fun BackupScreen(vm: PressVM) {
     ) { uri ->
         if (uri != null) scope.launch {
             try {
-                val written = writeBackupFile(ctx, uri, vm.repo.exportOpml().toByteArray())
+                val written = withContext(Dispatchers.IO) {
+                    writeBackupFile(ctx, uri, vm.repo.exportOpml().toByteArray())
+                }
                 backupMsg = "OPML exporté (${byteSizeText(written)})."
                 toast(ctx, "OPML exporté")
             } catch (e: Exception) {
@@ -1559,12 +1561,18 @@ fun BackupScreen(vm: PressVM) {
     ) { uri ->
         if (uri != null) scope.launch {
             try {
-                val bytes = ctx.contentResolver.openInputStream(uri)
-                    ?.use { readCapped(it, MAX_OPML_BYTES) }
-                    ?: throw Exception("fichier illisible ou plus de 2 Mo")
+                // Fichier choisi : lecture plafonnée **hors du fil principal** (un document SAF
+                // adossé au cloud peut mettre des secondes à s'ouvrir).
+                val bytes = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)
+                        ?.use { readCapped(it, MAX_OPML_BYTES) }
+                } ?: throw Exception("fichier illisible ou plus de 2 Mo")
                 // Le charset déclaré par le fichier fait foi (vieux exports en ISO-8859-1),
                 // comme pour les flux RSS.
-                val r = vm.repo.importOpml(com.pressia.data.remote.LocalRssFetcher.decodeFeed(bytes, null))
+                val xml = withContext(Dispatchers.IO) {
+                    com.pressia.data.remote.LocalRssFetcher.decodeFeed(bytes, null)
+                }
+                val r = vm.repo.importOpml(xml)
                 backupMsg = "OPML : ${r.added} flux ajouté(s), ${r.folders} dossier(s) créé(s)" +
                     (if (r.existing > 0) ", ${r.existing} déjà abonné(s)" else "") +
                     (if (r.invalid > 0) ", ${r.invalid} refusé(s)" else "") + "."
