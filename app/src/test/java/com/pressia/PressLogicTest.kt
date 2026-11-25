@@ -45,6 +45,7 @@ import com.pressia.data.remote.inoreaderCookieHasSession
 import com.pressia.data.remote.providerUsesSaved
 import com.pressia.data.remote.cleanTitle
 import com.pressia.data.escapeLike
+import com.pressia.data.searchText
 import com.pressia.data.shouldRestorePref
 import com.pressia.data.remote.newFolderId
 import com.pressia.data.remote.renamedFolderId
@@ -2376,6 +2377,15 @@ class PressLogicTest {
         // La barre inverse est echappee en premier, sinon elle mangerait les echappements suivants.
         assertEquals("\\\\\\%", escapeLike("\\%"))
         assertEquals("simple", escapeLike("simple"))
+    }
+
+    @Test fun `apostrophes valent pareil dans la recherche`() {
+        // Les flux emploient « ’ », le clavier « ' » : la saisie est normalisée dans le même sens
+        // que les colonnes (`REPLACE(col, '’', '''')`), sinon « l'article » ne trouve rien.
+        assertEquals("l'article", searchText("l’article"))
+        assertEquals("d'accord", searchText("d'accord"))
+        // L'échappement des jokers s'applique après la normalisation.
+        assertEquals("l'\\%article", escapeLike(searchText("l’%article")))
     }
 
     @Test fun `restauration des preferences selon jetons et cles locales`() {

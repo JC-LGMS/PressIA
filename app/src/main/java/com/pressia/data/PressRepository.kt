@@ -1433,7 +1433,7 @@ class PressRepository(
         unreadOnly: Boolean = false, limit: Int = SEARCH_PAGE, offset: Int = 0
     ): List<ArticleEntity> {
         val (feedIds, catEmpty) = catScope(catId)
-        return dao.search(escapeLike(q), feedId, feedIds, catEmpty, if (withBody) 1 else 0,
+        return dao.search(escapeLike(searchText(q)), feedId, feedIds, catEmpty, if (withBody) 1 else 0,
             if (unreadOnly) 1 else 0, limit, offset)
     }
 
@@ -1443,7 +1443,7 @@ class PressRepository(
     ): List<String> {
         val (feedIds, catEmpty) = catScope(catId)
         return dao.searchUnreadIds(
-            escapeLike(q), feedId, feedIds, catEmpty, if (withBody) 1 else 0
+            escapeLike(searchText(q)), feedId, feedIds, catEmpty, if (withBody) 1 else 0
         )
     }
 
@@ -4660,6 +4660,13 @@ fun fmtDuration(sec: Int): String {
  * l'utilisateur rendait tout le contenu (`_` un caractère quelconque). L'échappement vit dans
  * [PressDao.search] (`ESCAPE '\'`) ; la barre inverse doit donc être échappée en premier.
  */
+/**
+ * Recherche : l'apostrophe typographique (`’`, celle des flux) et la droite (`'`, celle du
+ * clavier) doivent se valoir — sinon « l'article » ne trouve pas « l’article ». Les colonnes sont
+ * normalisées de la même façon dans les requêtes (`REPLACE(col, '’', '''')`).
+ */
+fun searchText(q: String): String = q.replace('’', '\'')
+
 fun escapeLike(q: String): String =
     q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 

@@ -1309,7 +1309,13 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             // Nouvelle recherche : on repart de la première page ; une relecture (marquage groupé)
             // garde les pages déjà chargées et les relit toutes.
-            if (bumpEpoch) searchPage = 0
+            // Nouvelle recherche : l'annulation proposée portait sur les résultats précédents ;
+            // la laisser affichée remplaçait « Tout marquer lu » par « Annuler » et rendait le
+            // marquage de la nouvelle recherche inatteignable.
+            if (bumpEpoch) {
+                searchPage = 0
+                if (undoOffer?.origin == "search") dismissUndo()
+            }
             searchResults = loadSearch(q)
             searchRan = true
             // Nouvelle recherche : la liste repart en haut. Une relecture (marquage groupé) garde

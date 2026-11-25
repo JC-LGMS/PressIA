@@ -553,7 +553,7 @@ interface PressDao {
      * **Paginée** (`limit`/`offset`) : l'écran charge 200 résultats puis la tranche suivante au
      * défilement ; un `LIMIT 200` fixe laissait les résultats plus anciens inatteignables.
      */
-    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (title LIKE '%' || :q || '%' ESCAPE '\\' OR author LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' ESCAPE '\\' OR content LIKE '%' || :q || '%' ESCAPE '\\'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (REPLACE(title, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(author, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (REPLACE(summary, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(content, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun search(
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
         onlyUnread: Int, limit: Int, offset: Int
@@ -562,7 +562,7 @@ interface PressDao {
      * Tous les identifiants non lus correspondant à la recherche, **sans pagination** : « tout
      * marquer lu » sur les résultats ne doit pas s'arrêter aux pages déjà chargées à l'écran.
      */
-    @Query("SELECT id FROM articles WHERE unread = 1 AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (title LIKE '%' || :q || '%' ESCAPE '\\' OR author LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (summary LIKE '%' || :q || '%' ESCAPE '\\' OR content LIKE '%' || :q || '%' ESCAPE '\\')))")
+    @Query("SELECT id FROM articles WHERE unread = 1 AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (REPLACE(title, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(author, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (REPLACE(summary, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(content, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\')))")
     suspend fun searchUnreadIds(
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int
     ): List<String>

@@ -46,6 +46,22 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.28",
+        listOf(
+            ChangelogItem(
+                "2026-11-25",
+                "Recherche : apostrophes et « tout marquer lu » après une nouvelle recherche",
+                "- Recherche : l'apostrophe typographique (`’`, celle des flux) et la droite (`'`, " +
+                    "celle du clavier) se valent — « l'Asus » trouve « l’Asus » au lieu de zéro " +
+                    "résultat. Les colonnes sont normalisées dans les deux requêtes de recherche.\n\n" +
+                "- Après « tout marquer lu » sur une recherche, une nouvelle recherche repropose " +
+                    "« marquer tous les résultats lus » : l'annulation de la précédente ne laisse " +
+                    "plus la barre bloquée sur « Annuler ».",
+                time = "23:43"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.27",
         listOf(
             ChangelogItem(
