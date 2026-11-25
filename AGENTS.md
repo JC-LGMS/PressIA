@@ -239,6 +239,12 @@ l'application release avec `adb install -r` **sans perdre les données** (même 
 databases/pressia.db > copie.db` puis lecture en Python ; pas de `sqlite3` sur l'image de
 l'émulateur). Une app **release** installée, elle, ne l'est pas (`run-as: package not debuggable`).
 
+**R8 élague le code de l'application** (`proguard-rules.pro` : `-keepnames class com.pressia.**`,
+et non `-keep`, qui annulait tout rétrécissement). Toute modification de ce fichier exige un test
+release **complet** : lancement, synchro Feedly/Inoreader (kotlinx.serialization passe par
+réflexion), « Read later » et import JSON — un sérialiseur manquant ne casse qu'en release.
+L'APK release est passé de 3,09 à 2,92 Mo en 1.27.
+
 ## Flux RSS locaux (pièges)
 
 - **L'identifiant d'un flux local EST son URL.** Un caractère de contrôle collé au clavier (NUL,
@@ -1220,6 +1226,11 @@ articles et favoris du compte compris).
   relâche l'épingle (`readabilityOn = false`). Côté base, `BLOCKED` ne purge une extraction
   vérolée **que si** `a.fullFetched` : purger un contenu de flux (Next) lui faisait perdre son
   corps au profit du petit extrait.
+- **Les seuils « trop court » sont bas et regardent la page** : un corps extrait de moins de
+  `MIN_ARTICLE_CHARS` (120) sur une page de plus de 2 000 caractères est un blocage ; `isBlockedPage`
+  épargne un article court qui a des paragraphes (≥ 4 `<p>` et 500 caractères), sinon un article de
+  2 500 caractères parlant de Cloudflare ou d'un captcha était déclaré « site protégé ». Un extrait
+  court (≥ 120) reste `isUsableFull` : plus de re-téléchargement à chaque ouverture.
 - `Readability.CONTENT_SELECTORS` porte `#next-single-post` : sur Next le corps est là, alors
   que le conteneur `article` embarque les commentaires (37 810 car. extraits contre 4 811 de vrai
   corps).
@@ -1329,7 +1340,14 @@ articles et favoris du compte compris).
   contenu — vers `files/sauvegarde-auto.json`, en
   écriture atomique (temporaire + renommage). Elle est **réécrite au passage en arrière-plan et à la
   fin de chaque synchro** : la sauvegarde Google tourne elle aussi écran éteint, elle trouve donc
-  toujours une copie à jour. `restoreAutoBackupIfEmpty()` la réimporte **au début de
+  toujours une copie à jour. Depuis la 1.27, les lus de `Sections.READ` sont **bornés à la
+  « Durée d'historique hors favoris »** (`historyCutoffMs` ; les favoris ne sont jamais bornés :
+  voir `readStatesWithinHistory`), le JSON est **compact** (`pretty = false`) et la copie n'est
+  **pas réécrite** si les sections `accounts`/`read` n'ont pas changé (empreinte SHA-256 dans
+  `no_backup/sauvegarde-auto.json.somme`, jamais sauvegardé ; hacher le fichier entier ne marchait
+  pas, `generatedAt` changeant à chaque export). Sans ces gardes, un parc de flux locaux faisait
+  grossir la copie vers le quota Google de 25 Mo, dont le dépassement fait échouer la sauvegarde
+  entière. `restoreAutoBackupIfEmpty()` la réimporte **au début de
   `syncOnLaunch`, avant le test de fraîcheur**, et seulement si **la base est vide**
   (`autoBackupWorthRestoring` : aucun abonnement et aucun favori). Le garde précédent — « aucun
   flux local » — laissait passer une bibliothèque d'un seul compte (Feedly) sans favori :
@@ -1550,7 +1568,8 @@ articles et favoris du compte compris).
   Le rangement passe par `moveFeedsToFolder`, jamais par `dao.moveFeeds` direct : un dossier
   **fusionné** s'appelle `merged:…` et n'existe pas dans `categories`, l'écrire tel quel violait
   la clé étrangère et fermait l'application. `moveFeedsToFolder` ne déplace plus vers un
-  identifiant inconnu (dossier supprimé ailleurs) : il ne fait rien.
+  identifiant inconnu (dossier supprimé ailleurs, flux disparu) : il rend `false`, que l'écran
+  signale comme un refus au lieu d'annoncer un déplacement sans effet.
 - **Déplacer un flux part chez le compte** (`FeedProvider.moveSubscription`, appelé par
   `moveFeedsToFolder`) : la synchronisation réécrit `subscriptions.categoryId` avec ce que dit le
   service, donc un déplacement local seul revenait en arrière à la passe suivante. Feedly réécrit
