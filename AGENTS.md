@@ -80,7 +80,7 @@ APK produits (nommage personnalisé dans `build.gradle.kts`) :
 - `app/build/outputs/apk/debug/PressIA-<version>-debug-<date>.apk`
 - `app/build/outputs/apk/release/PressIA-<version>-release-<date>.apk`
 
-Le renommage est effectué par la tâche `renameApks` (hook `finalizedBy assemble*`) qui s'exécute après l'assemblage. Elle porte un `onlyIf` : `finalizedBy` s'exécute **aussi après un échec**, et l'APK de la compilation précédente était alors recopié sous le numéro de la version cassée. Exemple : `PressIA-1.0.49-debug-20261108.apk`.
+Le renommage est effectué par une tâche **par variante** (`renameDebugApk`, `renameReleaseApk` ; hook `finalizedBy assemble*`) qui s'exécute après l'assemblage. Une tâche unique copiant les deux APK nommait l'APK resté d'un build antérieur avec la version courante : après un build release suivi d'un build debug qui incrémente, on obtenait une « release » qui ne contenait pas ce code. Chaque tâche porte un `onlyIf` sur l'échec de son assemblage (`finalizedBy` s'exécute **aussi après un échec**) et ne copie que son propre APK. Exemple : `PressIA-1.0.49-debug-20261108.apk`.
 
 ## Version et journal des modifications
 
@@ -1278,7 +1278,7 @@ articles et favoris du compte compris).
   indispensable au compteur « passés en lu sans ouvrir », déduit de `articles.readAt` (un état
   d'article que la remise à zéro ne touche pas).
 - **Le temps de lecture ne compte que l'application au premier plan** (`ArticleScreen.kt` ;
-  écrit par `logReading` ; `ReadingTimer` reste la classe testée du même calcul). Le chronomètre s'arrête sur `ON_STOP` — ouvrir
+  écrit par `logReading`). Le chronomètre s'arrête sur `ON_STOP` — ouvrir
   Chrome (onglet intégré, partage, lien), éteindre l'écran, passer à une autre application — et
   **reprend** sur `ON_RESUME` ; sans cela le temps d'un article lu avec des allers-retours dans le
   navigateur était compté en entier, y compris les nuits d'écran éteint. Chaque arrêt écrit le
