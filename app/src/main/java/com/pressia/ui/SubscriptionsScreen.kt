@@ -506,7 +506,7 @@ private fun FolderRow(
         )
         if (unread() > 0) {
             Badge(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
-                Text(if (unread() > 999) "999+" else "${unread()}")
+                Text(if (unread() > 9999) "9999+" else "${unread()}")
             }
         }
         Box {
@@ -754,7 +754,7 @@ private fun SubRow(
         )
         if (n > 0) {
             Badge(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
-                Text(if (n > 999) "999+" else "$n")
+                Text(if (n > 9999) "9999+" else "$n")
             }
         }
         Box {

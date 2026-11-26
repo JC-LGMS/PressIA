@@ -46,6 +46,18 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.30",
+        listOf(
+            ChangelogItem(
+                "2026-11-26",
+                "Accueil : le nombre de non-lus s'affiche jusqu'à 9999",
+                "- Les pastilles des dossiers et des flux affichent le compte réel jusqu'à " +
+                    "9 999 (et « 9999+ » au-delà) au lieu de s'arrêter à « 999+ ».",
+                time = "16:44"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.29",
         listOf(
             ChangelogItem(
