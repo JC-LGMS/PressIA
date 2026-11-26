@@ -101,6 +101,9 @@ data class SyncActionEntity(
     val kind: String, // "read" | "unread" | "save" | "unsave" | "markAllRead"
     val feedId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    // Colonne héritée du compteur d'essais supprimé (une ligne définitivement refusée est
+    // maintenant retirée tout de suite). Conservée pour ne pas imposer une migration : plus
+    // personne ne la lit ni ne l'écrit.
     val tries: Int = 0
 )
 
@@ -573,18 +576,14 @@ interface PressDao {
     suspend fun enqueue(a: SyncActionEntity)
     @Insert
     suspend fun enqueueAll(actions: List<SyncActionEntity>)
-    @Query("SELECT * FROM sync_queue ORDER BY createdAt LIMIT 100")
-    suspend fun pendingSync(): List<SyncActionEntity>
     /**
      * Page de tête en **ignorant** les flux d'un compte hors jeu (session morte) : leurs lignes
      * restent dans la file pour la reconnexion, mais 100 lignes mortes en tête ne doivent pas
      * empêcher les autres comptes d'être poussés. [skipEmpty] = 1 quand [skipFeeds] est vide
-     * (`NOT IN ()` est invalide en SQLite). Les lignes ayant déjà échoué [maxTries] fois sont
-     * écartées : une seule ligne définitivement refusée ne doit pas bloquer toute la file
-     * (elle reste en base pour une reconnexion, mais ne repasse plus).
+     * (`NOT IN ()` est invalide en SQLite).
      */
-    @Query("SELECT * FROM sync_queue WHERE (:skipEmpty = 1 OR COALESCE(feedId, '') NOT IN (:skipFeeds)) AND tries < :maxTries ORDER BY createdAt LIMIT 100")
-    suspend fun pendingSyncExcept(skipFeeds: List<String>, skipEmpty: Int, maxTries: Int): List<SyncActionEntity>
+    @Query("SELECT * FROM sync_queue WHERE (:skipEmpty = 1 OR COALESCE(feedId, '') NOT IN (:skipFeeds)) ORDER BY createdAt LIMIT 100")
+    suspend fun pendingSyncExcept(skipFeeds: List<String>, skipEmpty: Int): List<SyncActionEntity>
     /**
      * Articles avec une action lu/non-lu en attente, **toute la file** : la réconciliation
      * doit les protéger en entier. Avec la page de [pendingSync] (100 lignes), un marquage
@@ -600,20 +599,13 @@ interface PressDao {
     @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread') AND createdAt >= :since")
     suspend fun pendingReadUnreadSince(since: Long): List<QueuedAction>
     /** Un marquage de masse attend d'être poussé ? (toute la file, même remarque.) */
-    @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead' AND tries < :maxTries")
-    suspend fun pendingMarkAllCount(maxTries: Int): Int
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead'")
+    suspend fun pendingMarkAllCount(): Int
     /** Étoiles « Read later » en attente, toute la file (même remarque que [pendingReadIds]). */
-    @Query("SELECT articleId FROM sync_queue WHERE kind = 'save' AND tries < :maxTries")
-    suspend fun pendingSavedIds(maxTries: Int): List<String>
-    @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave' AND tries < :maxTries")
-    suspend fun pendingUnsavedIds(maxTries: Int): List<String>
-    /**
-     * Lignes arrivées au plafond d'essais : une ligne **définitivement** refusée ne doit pas
-     * rester à vie dans la file — sinon les compteurs de la réconciliation et du « Read later »
-     * la comptent éternellement (réconciliation figée, tableau retéléchargé à chaque passe).
-     */
-    @Query("DELETE FROM sync_queue WHERE tries >= :maxTries")
-    suspend fun deleteExhausted(maxTries: Int): Int
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'save'")
+    suspend fun pendingSavedIds(): List<String>
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave'")
+    suspend fun pendingUnsavedIds(): List<String>
     /** Retire plusieurs lignes d'un coup (une requête par paquet au lieu d'une par ligne). */
     @Query("DELETE FROM sync_queue WHERE rowId IN (:rowIds)")
     suspend fun dequeueAll(rowIds: List<Long>)
@@ -622,8 +614,6 @@ interface PressDao {
      * liste vide (`IN ()` invalide) — l'appelant garde le cas courant. */
     @Query("DELETE FROM sync_queue WHERE feedId IN (:feedIds)")
     suspend fun deleteQueueOfFeeds(feedIds: List<String>): Int
-    @Query("UPDATE sync_queue SET tries = tries + 1 WHERE rowId = :rowId")
-    suspend fun bumpTry(rowId: Long)
     @Query("DELETE FROM sync_queue")
     suspend fun clearQueue()
 

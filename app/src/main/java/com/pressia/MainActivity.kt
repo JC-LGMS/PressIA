@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -328,7 +329,8 @@ class MainActivity : ComponentActivity() {
                         when {
                             drawer.currentValue != DrawerValue.Closed -> closeDrawer()
                             current in UTILITY_ROUTES -> backToLastContent()
-                            current == "article" -> nav.popBackStack()
+                            // L'écran article pose son propre gestionnaire (même garde-fou que
+                            // sa flèche de retour) : enregistré après celui-ci, il l'emporte.
                             // Accueil intermédiaire (mode hiérarchique) : un cran au-dessus,
                             // c'est-à-dire la racine. En mode « Accueil » classique, l'accueil
                             // est le point d'entrée : retour = fermeture.
@@ -571,13 +573,23 @@ class MainActivity : ComponentActivity() {
                                     // dépilait la liste sous l'article puis la pile entière,
                                     // laissant un écran noir. Une seule sortie par entrée.
                                     var popped by remember(entry.id) { mutableStateOf(false) }
+                                    val leave = {
+                                        if (!popped) { popped = true; nav.popBackStack() }
+                                    }
+                                    // Retour **système** : même chemin que la flèche de la barre
+                                    // (donc même garde-fou), et le tiroir se referme d'abord.
+                                    // Posé ici, avant l'écran : les menus de sélection, la
+                                    // visionneuse et le lecteur, composés plus bas, restent
+                                    // prioritaires (dernier gestionnaire enregistré).
+                                    BackHandler(enabled = id.isNotBlank()) {
+                                        if (drawer.currentValue != DrawerValue.Closed) closeDrawer()
+                                        else leave()
+                                    }
                                     if (id.isBlank()) {
                                         LaunchedEffect(Unit) { nav.popBackStack() }
                                     } else {
                                         ArticleScreen(vm, id,
-                                            onBack = {
-                                                if (!popped) { popped = true; nav.popBackStack() }
-                                            },
+                                            onBack = { leave() },
                                             onMenu = { openDrawer() },
                                             onShowArticle = { handle[ARTICLE_ID] = it },
                                             onSearch = { s -> openSearch(s) })
@@ -677,6 +689,58 @@ class MainActivity : ComponentActivity() {
                             val pending = vm.instapaperPickerFor
                             if (pending != null) {
                                 InstapaperTargetDialog(vm, pending.id, pending.title) { toast(ctx, it) }
+                            }
+                            // Flux suivi par plusieurs comptes (services différents compris) :
+                            // desquels le retirer ? Les comptes cochés seront désabonnés.
+                            vm.unsubPrompt?.let { p ->
+                                var chosen by remember(p) {
+                                    mutableStateOf(p.followers.map { it.accountId }.toSet())
+                                }
+                                AlertDialog(
+                                    onDismissRequest = { vm.cancelUnsubPrompt() },
+                                    title = { Text("Désabonner ce flux") },
+                                    text = {
+                                        Column {
+                                            Text(p.title.ifBlank { p.feedId })
+                                            Spacer(Modifier.height(8.dp))
+                                            Text(
+                                                "Ce flux est suivi par plusieurs comptes. Décochez " +
+                                                    "ceux qui doivent continuer à le suivre.",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                            p.followers.forEach { f ->
+                                                Row(
+                                                    Modifier.fillMaxWidth().clickable {
+                                                        chosen = if (f.accountId in chosen) {
+                                                            chosen - f.accountId
+                                                        } else {
+                                                            chosen + f.accountId
+                                                        }
+                                                    },
+                                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                                ) {
+                                                    Checkbox(
+                                                        checked = f.accountId in chosen,
+                                                        onCheckedChange = { on ->
+                                                            chosen = if (on) chosen + f.accountId
+                                                            else chosen - f.accountId
+                                                        }
+                                                    )
+                                                    Text(com.pressia.data.feedAccountLabel(f.accountId, vm.accounts))
+                                                }
+                                            }
+                                        }
+                                    },
+                                    confirmButton = {
+                                        TextButton(
+                                            enabled = chosen.isNotEmpty(),
+                                            onClick = { vm.confirmDeleteFeed(chosen) }
+                                        ) { Text("Retirer") }
+                                    },
+                                    dismissButton = {
+                                        TextButton({ vm.cancelUnsubPrompt() }) { Text("Annuler") }
+                                    }
+                                )
                             }
                         }
                     }

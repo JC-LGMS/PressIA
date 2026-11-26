@@ -332,20 +332,36 @@ fun markAllReadPush(rows: List<SyncActionEntity>): MarkAllReadPush = MarkAllRead
 private const val PUSH_BAR_MIN = 10
 
 /**
- * Nombre d'essais avant qu'une ligne de file cesse d'être poussée. Une ligne refusée en
- * permanence (identifiant que le serveur ne connaît pas) restait en tête et bloquait toutes
- * les suivantes : `pushQueue` s'arrête quand plus rien ne part. Elle reste en base (aucune
- * action perdue) mais sort du périmètre des envois.
+ * Le serveur refuse-t-il cette ligne **définitivement** ?
+ *
+ * Seul un refus 4xx explicite (identifiant inconnu, argument invalide) ne réussira jamais : la
+ * ligne est alors jetée tout de suite, sans compteur d'essais — la garder la ferait repasser à
+ * chaque synchronisation et bloquerait les suivantes (`pushQueue` s'arrête quand plus rien ne
+ * part). Tout le reste est **transitoire** et la ligne reste en file : réseau (`IOException`),
+ * quota (429), session expirée (401/403) et panne serveur (5xx).
  */
-private const val QUEUE_MAX_TRIES = 3
+internal fun queueRefusalIsPermanent(e: Throwable, rateLimited: Boolean): Boolean {
+    if (rateLimited || e is java.io.IOException || isAuthFailure(e)) return false
+    var c: Throwable? = e
+    while (c != null) {
+        // 408 = délai côté serveur : transitoire, comme un délai réseau.
+        if (c is retrofit2.HttpException) return c.code() in 400..499 && c.code() != 408
+        val next = c.cause
+        if (next == null || next === c) break
+        c = next
+    }
+    // Pas de réponse HTTP : une erreur de décodage ou un invariant cassé ne se répare pas en
+    // réessayant.
+    return true
+}
 
 /**
- * Une erreur compte-t-elle comme un essai définitif ? Seuls les refus **définitifs** doivent
- * user le compteur : réseau, quota et session expirée sont transitoires, et trois coupures
- * suffisaient sinon à sortir une ligne du périmètre des envois **à vie**.
+ * Compte qui **garde** le flux après un désabonnement partiel : le premier des [followers] qui
+ * n'est pas dans [removed], ou null quand tous ont été retirés (la ligne et ses articles partent
+ * alors). Pur : la décision du dépôt s'y ramène, le dialogue de l'écran ne fait que la nourrir.
  */
-internal fun queueTryIsDefinitive(e: Throwable, rateLimited: Boolean): Boolean =
-    !rateLimited && e !is java.io.IOException && !isAuthFailure(e)
+internal fun feedSurvivor(followers: List<PressRepository.FeedFollower>, removed: Set<String>): String? =
+    followers.firstOrNull { it.accountId !in removed }?.accountId
 
 /**
  * Avancement d'un marquage groupé qui part **article par article** vers le compte ([done] sur
@@ -769,7 +785,32 @@ class PressRepository(
         val survivor = cloudAccounts().firstOrNull {
             it.service == providerBase(accountId) && it.id != accountId
         }
-        if (survivor != null) dao.reassignSubscriptions(accountId, survivor.id)
+        if (survivor != null) {
+            dao.reassignSubscriptions(accountId, survivor.id)
+        } else {
+            // Même identifiant de flux chez deux services (`feed/<url>`) : un flux du compte
+            // supprimé peut être suivi par un compte d'un **autre** service. L'effacer
+            // emporterait ses articles et ses étoiles locales alors que l'autre le suit
+            // toujours ; la ligne est confiée à ce compte, dont la passe retirera le flux s'il
+            // ne le suit plus.
+            val rows = dao.subscriptions().filter { it.provider == accountId }
+            if (rows.isNotEmpty()) {
+                // Une lecture des abonnements par autre compte : action rare, autant la faire
+                // une fois pour tous les flux du compte supprimé.
+                val followed = cloudAccounts().filter { it.id != accountId }.map { acc ->
+                    acc.id to runCatching {
+                        providerFor(acc.provider).subscriptions(acc.token)
+                            .mapTo(HashSet()) { feedUrlKey(it.id) }
+                    }.getOrDefault(emptySet())
+                }
+                rows.forEach { row ->
+                    val key = feedUrlKey(row.id)
+                    followed.firstOrNull { key in it.second }?.let { (id, _) ->
+                        dao.upsertSubscriptions(listOf(row.copy(provider = id)))
+                    }
+                }
+            }
+        }
         // Flux du compte avant leur effacement : leur file de sync part avec leurs articles
         // (même motif que le désabonnement en synchro). Leurs traces de lecture, elles, restent
         // (voir plus bas) : les statistiques ne repartent pas de zéro avec un compte supprimé.
@@ -910,6 +951,20 @@ class PressRepository(
         "inoreader" -> inoreader
         "freshrss" -> freshrss
         else -> local
+    }
+
+    /**
+     * Premier **autre** compte (tous services) dont la liste d'abonnements contient ce flux,
+     * ou null. Sert à ne pas supprimer un flux qu'un compte d'un autre service suit encore
+     * sous le même identifiant `feed/<url>`.
+     */
+    private suspend fun otherFollower(feedId: String, accountId: String): CloudAccount? {
+        val key = feedUrlKey(feedId)
+        return cloudAccounts().filter { it.id != accountId }.firstOrNull { acc ->
+            runCatching {
+                providerFor(acc.provider).subscriptions(acc.token).any { feedUrlKey(it.id) == key }
+            }.getOrDefault(false)
+        }
     }
 
     /** Provider du compte actif, ou le fournisseur RSS local quand aucun compte n'est connecté. */
@@ -1426,6 +1481,13 @@ class PressRepository(
         else folderFeeds(catId).ifEmpty { listOf("\u0000") } to 0
 
     suspend fun article(id: String) = dao.article(id)
+    /**
+     * Drapeaux d'un article (étoile, « Read later », provenance) **sans relire son HTML** : une
+     * bascule d'étoile n'a pas à charger jusqu'à 600 Ko de corps pour trois booléens.
+     */
+    suspend fun flags(id: String): ArticleFlags? = withContext(Dispatchers.IO) {
+        dao.flagsOf(listOf(id)).firstOrNull()
+    }
     /**
      * Recherche **uniquement dans la base locale** : ce sont les articles que le lecteur peut
      * ouvrir et marquer, et la recherche du compte est partielle (Feedly ne renvoie que quelques
@@ -2304,7 +2366,7 @@ class PressRepository(
             // flux comptent (la réponse inclut aussi les dossiers, qui doublent les flux) : la
             // première passe après ce changement refait une réconciliation complète, sans danger.
             val t = total ?: p.unreadTotal(account.token)
-            val pending = dao.pendingSync().isNotEmpty()
+            val pending = hasPendingSync()
             val last = reconcileTotals()[account.id]
             // Repère du delta. Il n'existe pas encore au premier passage (ou après une
             // restauration) : cette passe-là énumère les non-lus pour poser l'état de départ.
@@ -2644,20 +2706,24 @@ class PressRepository(
                 // qu'un flux a disparu côté serveur (voir deleteAccount).
                 // Rien à faire dans le cas courant (ensemble vide : une différence en mémoire).
                 if (gone.isNotEmpty()) {
-                    // Flux partagé avec un autre compte du même service : la ligne appartient au
-                    // compte synchronisé, mais le jumeau peut encore le suivre. On la lui
-                    // réaffecte au lieu de détruire ses articles et ses étoiles locales ; sa
+                    // Flux partagé avec un autre compte du même service, ou avec un compte d'un
+                    // **autre** service (même identifiant `feed/<url>`) : la ligne lui est
+                    // réaffectée au lieu de détruire ses articles et ses étoiles locales ; sa
                     // propre passe retirera le flux s'il ne le suit plus non plus.
-                    val survivor = cloudAccounts().firstOrNull {
+                    val twin = cloudAccounts().firstOrNull {
                         it.service == providerBase(account.id) && it.id != account.id
                     }
-                    if (survivor != null) {
-                        gone.forEach { id ->
-                            owners[id]?.let { row -> dao.upsertSubscriptions(listOf(row.copy(provider = survivor.id))) }
+                    // Un GET d'abonnements par flux retiré, et seulement sans jumeau : une passe
+                    // ne retire normalement qu'un flux.
+                    gone.forEach { id ->
+                        val keeper = twin ?: otherFollower(id, account.id)
+                        val row = owners[id]
+                        if (keeper != null && row != null) {
+                            dao.upsertSubscriptions(listOf(row.copy(provider = keeper.id)))
+                        } else {
+                            android.util.Log.i("PressIA", "désabonnement ${account.id} : $id retiré, articles supprimés")
+                            dao.deleteArticlesOfFeed(id)
                         }
-                    } else {
-                        android.util.Log.i("PressIA", "désabonnement ${account.id} : ${gone.size} flux retirés, articles supprimés")
-                        gone.forEach { dao.deleteArticlesOfFeed(it) }
                     }
                     gcThumbs()
                     vacuum()
@@ -2809,7 +2875,7 @@ class PressRepository(
         // plus gros qu'une page n'était protégé qu'en partie et la réconciliation rouvrait
         // les articles dont l'action attendait encore (le serveur ne les avait pas vus).
         val pendingIds = dao.pendingReadIds().toSet()
-        val hasPendingMarkAll = dao.pendingMarkAllCount(QUEUE_MAX_TRIES) > 0
+        val hasPendingMarkAll = dao.pendingMarkAllCount() > 0
         // Une seule passe par paquet (plafond ~999 variables) au lieu de deux requêtes :
         // les paires (id, unread) se répartissent ensuite entre les deux ensembles purs.
         // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
@@ -3277,8 +3343,8 @@ class PressRepository(
         // Une étoile en attente interdit aussi le saut par empreinte : le serveur n'est pas à jour.
         // Toute la file (et non la page de `pendingSync`) : au-delà de 100 poses hors-ligne,
         // les suivantes étaient perdues par la replongée du tableau.
-        val keepSaved = dao.pendingSavedIds(QUEUE_MAX_TRIES)
-        val keepUnsaved = dao.pendingUnsavedIds(QUEUE_MAX_TRIES)
+        val keepSaved = dao.pendingSavedIds()
+        val keepUnsaved = dao.pendingUnsavedIds()
         val added = coroutineScope {
             // Une replongée **par service** : deux comptes du même service partagent les lignes
             // `subscriptions`, si bien que l'effacement de l'un emportait les marques que l'autre
@@ -3505,7 +3571,7 @@ class PressRepository(
  */
     /** File montante non vide ? (pour n'annoncer l'envoi que s'il a vraiment lieu). */
     suspend fun hasPendingSync(): Boolean = withContext(Dispatchers.IO) {
-        dao.pendingSyncExcept(emptyList(), 1, QUEUE_MAX_TRIES).isNotEmpty()
+        dao.pendingSyncExcept(emptyList(), 1).isNotEmpty()
     }
 
     /**
@@ -3550,10 +3616,6 @@ class PressRepository(
         withContext(Dispatchers.IO) {
         // Hors ligne, chaque envoi échouerait : sans cette sortie, dix articles lus tapaient
         // le réseau (et son délai d'échec) une fois par article. Les lignes restent en file.
-        // Lignes définitivement refusées : les purger, sinon elles comptent à vie dans la
-        // réconciliation (« tout marquer lu » en attente) et dans le « Read later ».
-        val purged = dao.deleteExhausted(QUEUE_MAX_TRIES)
-        if (purged > 0) android.util.Log.i("PressIA", "file: $purged ligne(s) au plafond d'essais purgée(s)")
         if (!isOnline()) return@withContext 0
         val accounts = cloudAccounts()
         var done = 0
@@ -3580,7 +3642,7 @@ class PressRepository(
         // lieu de rester aux trois quarts dans la file et d'être rouvert par la synchro suivante.
         while (true) {
             val pending = dao.pendingSyncExcept(
-                skipped.toList(), if (skipped.isEmpty()) 1 else 0, QUEUE_MAX_TRIES
+                skipped.toList(), if (skipped.isEmpty()) 1 else 0
             )
             if (pending.isEmpty()) break
             val before = done
@@ -3668,10 +3730,17 @@ class PressRepository(
                 android.util.Log.w("PressIA", "file: ${rows.size} ${rows.firstOrNull()?.kind} reportée : ${e::class.java.simpleName} ${e.message}")
                 noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
-                // Réseau, quota, session : transitoire, le compteur ne bouge pas. Un refus
-                // définitif use le compteur, et la ligne sera purgée au plafond.
-                if (queueTryIsDefinitive(e, rateLimitOf(e, account.label) != null)) {
-                    rows.forEach { dao.bumpTry(it.rowId) }
+                // Refus définitif (4xx explicite) : aucun nouvel essai ne le changera. La ligne
+                // est jetée tout de suite — la garder la ferait retenter à chaque passe et
+                // bloquerait les suivantes. Une erreur transitoire (réseau, quota, session,
+                // panne serveur 5xx) laisse la ligne en file pour la prochaine synchronisation.
+                if (queueRefusalIsPermanent(e, rateLimitOf(e, account.label) != null)) {
+                    android.util.Log.w(
+                        "PressIA",
+                        "file: ${rows.size} ${rows.firstOrNull()?.kind} refusée(s) définitivement, retirée(s)"
+                    )
+                    rows.map { it.rowId }.chunked(500).forEach { dao.dequeueAll(it) }
+                    onDropped(rows.size)
                 }
             }
             // Un lot en échec retombe à l'unité (ancien comportement) : un seul identifiant
@@ -3814,19 +3883,16 @@ class PressRepository(
     suspend fun feedTitle(feedId: String): String? = dao.feedTitle(feedId)
     suspend fun subscription(feedId: String): SubscriptionEntity? = dao.subscription(feedId)
 
-    /** Taille du cache local (base Room + images Coil + miniatures) en octets. */
-    suspend fun cacheSizeBytes(): Long = withContext(Dispatchers.IO) {        var total = 0L
-        val dbDir = ctx.getDatabasePath("pressia.db")?.parentFile
-        dbDir?.listFiles { f -> f.name.startsWith("pressia.db") }?.forEach { total += it.length() }
-        total += runCatching { coil.Coil.imageLoader(ctx).diskCache?.size ?: 0L }.getOrDefault(0L)
-        total += runCatching { ThumbStore.sizeBytes(ctx) }.getOrDefault(0L)
-        total
+    /**
+     * Détail du cache local, dans le même ordre que le total (base, images, miniatures).
+     * Mesuré en **une** passe : l'écran Réglages demandait autrefois le total puis le détail,
+     * soit deux listings de la base et deux tailles du cache Coil pour un seul affichage.
+     */
+    data class CacheBreakdown(val dbBytes: Long, val coilBytes: Long, val thumbsBytes: Long) {
+        val totalBytes: Long get() = dbBytes + coilBytes + thumbsBytes
     }
 
-    /** Détail du cache local, dans le même ordre que [cacheSizeBytes] (base, images, miniatures). */
-    data class CacheBreakdown(val dbBytes: Long, val coilBytes: Long, val thumbsBytes: Long)
-
-    /** Détail du cache local pour l'affichage (voir l'écran Réglages). */
+    /** Mesure du cache local (voir [CacheBreakdown]). */
     suspend fun cacheBreakdown(): CacheBreakdown = withContext(Dispatchers.IO) {
         var db = 0L
         val dbDir = ctx.getDatabasePath("pressia.db")?.parentFile
@@ -3837,18 +3903,16 @@ class PressRepository(
     }
 
     /** Taille du cache formatée pour l'affichage (« 12,4 Mo »). */
-    suspend fun cacheInfo(): String = formatCacheBytes(cacheSizeBytes())
+    fun cacheInfo(b: CacheBreakdown): String = formatCacheBytes(b.totalBytes)
 
     /** Détail du cache formaté (« articles 17,3 Mo · images 68,0 Ko · miniatures 284,0 Ko »). */
-    suspend fun cacheDetail(): String {
-        val (db, coil, thumbs) = cacheBreakdown()
+    fun cacheDetail(b: CacheBreakdown): String =
         // « images » = cache disque de Coil : les images d'articles (bannière en pleine taille,
         // corps) et les favicons — les images du corps y sont préchargées par syncImages, les
         // miniatures (filesDir/thumbs, un fichier par article au gabarit de l'écran) en sont donc
         // distinctes. Le libellé le dit, la question revenait.
-        return "articles ${formatCacheBytes(db)} · images ${formatCacheBytes(coil)} · " +
-            "miniatures ${formatCacheBytes(thumbs)}"
-    }
+        "articles ${formatCacheBytes(b.dbBytes)} · images ${formatCacheBytes(b.coilBytes)} · " +
+            "miniatures ${formatCacheBytes(b.thumbsBytes)}"
 
     /**
      * Vide le cache : images (miniatures + cache Coil) et HTML extraits via Readability.
@@ -4315,44 +4379,74 @@ class PressRepository(
     }
 
     /**
-     * Désabonne un flux : chez son compte d'abord (sinon la synchronisation suivante le
-     * ramènerait), puis sur l'appareil. Rend false quand le compte refuse — rien n'est alors
-     * supprimé localement.
+     * Abonnement distant d'un flux chez un compte : l'identifiant **exact** à retirer chez ce
+     * service (le `feed/<url>` local peut différer par le schéma ou les barres finales) et le
+     * compte qui le porte.
+     */
+    data class FeedFollower(val accountId: String, val remoteId: String)
+
+    /**
+     * Comptes qui suivent déjà ce flux chez leur service, **tous agrégateurs confondus**.
+     *
+     * L'identifiant d'un abonnement est `feed/<url>` chez Feedly comme chez Inoreader : deux
+     * services suivant le même blog ne donnent qu'une ligne locale, et se fier au seul
+     * propriétaire laissait le flux abonné chez l'autre — il revenait à la synchro suivante.
+     *
+     * Une vérification impossible (réseau) garde le compte : le retrait échouera et le dira,
+     * ce qui vaut mieux que d'oublier un abonnement qu'on croyait retiré.
+     */
+    suspend fun feedFollowers(feedId: String): List<FeedFollower> = withContext(Dispatchers.IO) {
+        val key = feedUrlKey(feedId)
+        cloudAccounts().flatMap { acc ->
+            runCatching {
+                providerFor(acc.provider).subscriptions(acc.token)
+                    .filter { feedUrlKey(it.id) == key }
+                    .map { FeedFollower(acc.id, it.id) }
+            }.getOrDefault(listOf(FeedFollower(acc.id, feedId)))
+        }
+    }
+
+    /**
+     * Désabonne un flux : chez les comptes [from] d'abord (sinon la synchronisation suivante le
+     * ramènerait), puis sur l'appareil — mais seulement si plus aucun compte ne le suit.
+     *
+     * [survivorId] : un autre compte suit encore ce flux. La ligne locale lui est réaffectée et
+     * garde ses articles, ses étoiles et ses lus ; le flux reste affiché avec ce compte. Sans
+     * survivant, la ligne, ses articles et ses images partent. Rend false quand un compte refuse
+     * le retrait — rien n'est alors supprimé localement.
      *
      * [onStep] reçoit les étapes (retrait chez le compte, purge locale) : le bandeau les affiche,
      * un désabonnement chez un agrégateur prenant le temps d'un aller-retour réseau.
      */
-    suspend fun deleteFeed(feedId: String, onStep: ((String) -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteFeed(
+        feedId: String,
+        from: List<FeedFollower> = emptyList(),
+        survivorId: String? = null,
+        onStep: ((String) -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         val sub = dao.subscription(feedId) ?: return@withContext false
-        if (!isLocalProvider(sub.provider)) {
-            // Flux d'un compte disparu entre-temps : plus rien à pousser, la suppression locale suffit.
-            val accounts = cloudAccounts()
-            val account = accounts.firstOrNull { it.id == sub.provider }
-            if (account != null) {
-                // Une seule ligne d'abonnement peut représenter plusieurs comptes du même
-                // service (l'identifiant distant est le même). Le flux est retiré de **tous**
-                // ceux qui le suivent : sinon la passe suivante du second le réinscrit et le
-                // désabonnement ne tient pas, alors que l'application n'a qu'une ligne à montrer.
-                val owners = accounts.filter { it.provider == account.provider }
-                val targets = if (owners.size <= 1) owners else owners.filter { acc ->
-                    // Échec de la vérification (réseau) : garder le compte. L'écarter laissait
-                    // le flux abonné chez lui, et la synchro suivante le réinscrivait.
-                    runCatching {
-                        providerFor(acc.provider).subscriptions(acc.token).any { it.id == feedId }
-                    }.getOrDefault(true)
-                }
-                onStep?.invoke("Retrait du flux chez " + feedAccountLabel(account.id, accounts) + "…")
-                targets.forEach { acc ->
-                    try {
-                        providerFor(acc.provider).removeSubscription(acc.token, feedId)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        android.util.Log.w("PressIA", "désabonnement refusé par ${acc.provider} : ${e.message}")
-                        return@withContext false
-                    }
+        val accounts = cloudAccounts()
+        val targets = from.filter { f -> accounts.any { it.id == f.accountId } }
+        if (targets.isNotEmpty()) {
+            val where = targets.joinToString(", ") { feedAccountLabel(it.accountId, accounts) }
+            onStep?.invoke("Retrait du flux chez $where…")
+            targets.forEach { f ->
+                val account = accounts.first { it.id == f.accountId }
+                try {
+                    providerFor(account.provider).removeSubscription(account.token, f.remoteId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("PressIA", "désabonnement refusé par ${account.provider} : ${e.message}")
+                    return@withContext false
                 }
             }
+        }
+        if (survivorId != null && accounts.any { it.id == survivorId }) {
+            // Un autre compte le suit encore : garder la ligne (et son contenu) en la lui
+            // confiant. Sa propre passe rétablira le dossier si besoin.
+            dao.upsertSubscriptions(listOf(sub.copy(provider = survivorId)))
+            return@withContext true
         }
         purgeFeed(feedId, onStep)
         true

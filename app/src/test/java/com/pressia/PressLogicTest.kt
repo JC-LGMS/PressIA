@@ -47,7 +47,8 @@ import com.pressia.data.remote.cleanTitle
 import com.pressia.data.escapeLike
 import com.pressia.data.searchText
 import com.pressia.data.searchNeedsApostropheNormalization
-import com.pressia.data.queueTryIsDefinitive
+import com.pressia.data.queueRefusalIsPermanent
+import com.pressia.data.feedSurvivor
 import com.pressia.data.autoBackupReadSince
 import com.pressia.data.historyCutoffMs
 import com.pressia.data.remote.movedFeedlyCategoryIds
@@ -2421,12 +2422,33 @@ class PressLogicTest {
         assertFalse(searchNeedsApostropheNormalization("article"))
     }
 
-    @Test fun `file, seuls les refus definitifs usent le compteur`() {
-        // Réseau, quota et session expirée sont transitoires : trois coupures ne doivent pas
-        // sortir la ligne du périmètre des envois à vie.
-        assertFalse(queueTryIsDefinitive(java.io.IOException("offline"), rateLimited = false))
-        assertFalse(queueTryIsDefinitive(RuntimeException("429"), rateLimited = true))
-        assertTrue(queueTryIsDefinitive(IllegalArgumentException("id refusé"), rateLimited = false))
+    @Test fun `file, seul un refus explicite jette la ligne`() {
+        // Panne serveur (5xx), réseau, quota et session expirée : rien ne presse, la ligne reste
+        // en file — la jeter perdrait le marquage, que la réconciliation rouvrirait ensuite.
+        assertFalse(queueRefusalIsPermanent(java.io.IOException("offline"), rateLimited = false))
+        assertFalse(queueRefusalIsPermanent(RuntimeException("429"), rateLimited = true))
+        assertFalse(queueRefusalIsPermanent(httpError(429), rateLimited = true))
+        assertFalse(queueRefusalIsPermanent(httpError(500), rateLimited = false))
+        assertFalse(queueRefusalIsPermanent(RuntimeException("x", httpError(503)), rateLimited = false))
+        assertFalse(queueRefusalIsPermanent(httpError(408), rateLimited = false))
+        assertFalse(queueRefusalIsPermanent(httpError(401), rateLimited = false))
+        assertFalse(queueRefusalIsPermanent(httpError(403), rateLimited = false))
+        // Refus explicite : identifiant inconnu, argument invalide. Aucun essai ne le changera.
+        assertTrue(queueRefusalIsPermanent(httpError(400), rateLimited = false))
+        assertTrue(queueRefusalIsPermanent(httpError(404), rateLimited = false))
+        assertTrue(queueRefusalIsPermanent(IllegalArgumentException("id refusé"), rateLimited = false))
+    }
+
+    @Test fun `desabonnement partiel garde le flux chez le compte restant`() {
+        val feedly = com.pressia.data.PressRepository.FeedFollower("feedly#a", "feed/https://ex.fr/rss")
+        val ino = com.pressia.data.PressRepository.FeedFollower("inoreader#b", "feed/http://ex.fr/rss")
+        // Un seul compte coché : l'autre garde la ligne (articles, étoiles et lus conservés).
+        assertEquals("inoreader#b", feedSurvivor(listOf(feedly, ino), setOf("feedly#a")))
+        // Tous cochés : plus personne ne le suit, la ligne et ses articles partent.
+        assertNull(feedSurvivor(listOf(feedly, ino), setOf("feedly#a", "inoreader#b")))
+        // Choix portant un compte inconnu : le flux reste chez les deux.
+        assertEquals("feedly#a", feedSurvivor(listOf(feedly, ino), setOf("autre#x")))
+        assertNull(feedSurvivor(emptyList(), setOf("feedly#a")))
     }
 
     @Test fun `deplacement feedly garde les autres collections`() {

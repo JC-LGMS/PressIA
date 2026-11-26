@@ -46,6 +46,32 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.31",
+        listOf(
+            ChangelogItem(
+                "2026-11-27",
+                "Audit 2 : file sans compteur d'essais, désabonnement multi-comptes",
+                "- File montante : plus de compteur d'essais ni de purge au plafond. Un refus " +
+                    "explicite (4xx hors 401/403/408) retire la ligne tout de suite ; réseau, " +
+                    "quota, session expirée et panne serveur (5xx) la laissent en file pour la " +
+                    "reprise.\n\n" +
+                "- Désabonnement : le flux est recherché chez **tous** les services ; suivi par " +
+                    "plusieurs comptes, un dialogue demande desquels le retirer, et la ligne " +
+                    "(articles, étoiles, lus) reste au compte survivant. La suppression d'un " +
+                    "compte réaffecte de même les flux qu'un autre service suit encore.\n\n" +
+                "- Réglages : une seule écriture DataStore par changement (35 avant) et un seul " +
+                    "instantané à l'ouverture (35 collectes).\n\n" +
+                "- Retour système sur un article : même garde-fou que la flèche (une sortie par " +
+                    "entrée), tiroir refermé d'abord.\n\n" +
+                "- Étoile : seuls les drapeaux sont relus, plus le HTML (jusqu'à 600 Ko par " +
+                    "appui).\n\n" +
+                "- Doublons : n'affiche plus l'annulation d'un marquage fait ailleurs.\n\n" +
+                "- Cache : une seule mesure pour le total et le détail.",
+                time = "00:01"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.30",
         listOf(
             ChangelogItem(

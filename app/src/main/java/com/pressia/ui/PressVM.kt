@@ -749,26 +749,87 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /**
-     * Désabonne un flux (chez son compte s'il en a un). Les étapes s'affichent dans le bandeau du
-     * bas, comme une synchro : le retrait chez un agrégateur attend le réseau, la purge locale
-     * efface les articles puis les images.
+     * Un flux suivi par plusieurs comptes (dialogue « desquels le retirer ? ») : chaque compte
+     * trouvé chez son service, avec l'identifiant distant à retirer chez lui.
+     */
+    data class UnsubPrompt(
+        val feedId: String,
+        val title: String,
+        val followers: List<PressRepository.FeedFollower>
+    )
+
+    /** Comptes à interroger (dialogue « retirer de quels comptes ? »). */
+    var unsubPrompt by mutableStateOf<UnsubPrompt?>(null)
+        private set
+
+    /**
+     * Désabonnement d'un flux (chez son compte s'il en a un). Un même flux peut être suivi par
+     * **plusieurs comptes, y compris de services différents** (un seul identifiant `feed/<url>`
+     * pour une seule ligne locale) : on demande alors desquels le retirer, au lieu de n'en
+     * nettoyer qu'un et de le voir revenir à la synchronisation suivante. Les étapes s'affichent
+     * dans le bandeau du bas, comme une synchro.
      */
     fun deleteFeed(feedId: String) = viewModelScope.launch {
-        val label = com.pressia.data.feedAccountLabel(
-            subs.firstOrNull { it.id == feedId }?.provider, accounts
+        val sub = subs.firstOrNull { it.id == feedId }
+        // Un flux local n'appartient à aucun compte : rien à demander, rien à pousser (et pas
+        // d'appel réseau, qui, hors ligne, ferait passer chaque compte pour un abonné).
+        val followers = if (sub == null || isLocalProvider(sub.provider)) emptyList()
+        else repo.withSyncLock { repo.feedFollowers(feedId) }
+        if (followers.size > 1) {
+            unsubPrompt = UnsubPrompt(
+                feedId,
+                subs.firstOrNull { it.id == feedId }?.title.orEmpty(),
+                followers
+            )
+            return@launch
+        }
+        performDeleteFeed(feedId, followers, followers)
+    }
+
+    /** Le dialogue a tranché : retirer le flux des seuls comptes cochés. */
+    fun confirmDeleteFeed(chosen: Set<String>) = viewModelScope.launch {
+        val p = unsubPrompt ?: return@launch
+        unsubPrompt = null
+        val from = p.followers.filter { it.accountId in chosen }
+        if (from.isEmpty()) return@launch
+        performDeleteFeed(p.feedId, from, p.followers)
+    }
+
+    fun cancelUnsubPrompt() { unsubPrompt = null }
+
+    /**
+     * Retire le flux des comptes [from]. Si un autre compte de [followers] le suit encore, la
+     * ligne locale lui est confiée et le flux reste affiché ; sinon articles et images partent.
+     */
+    private suspend fun performDeleteFeed(
+        feedId: String,
+        from: List<PressRepository.FeedFollower>,
+        followers: List<PressRepository.FeedFollower>
+    ) {
+        val survivorId = com.pressia.data.feedSurvivor(
+            followers, from.mapTo(HashSet()) { it.accountId }
         )
+        val label = from.joinToString(", ") { com.pressia.data.feedAccountLabel(it.accountId, accounts) }
         lockSync()
         feedOp = true
         val ok = try {
             // Sous le verrou : la synchronisation lit les abonnements puis les réécrit en bloc,
             // un retrait qui se glisse entre les deux serait annulé par la réinsertion.
-            repo.withSyncLock { repo.deleteFeed(feedId) { syncMsg = it } }
+            repo.withSyncLock {
+                repo.deleteFeed(feedId, from, survivorId) { syncMsg = it }
+            }
         } finally {
             feedOp = false
             unlockSync()
         }
         refreshNow()
-        syncMsg = if (ok) "Flux désabonné." else "Désabonnement refusé par $label."
+        syncMsg = when {
+            !ok -> if (label.isBlank()) "Désabonnement refusé." else "Désabonnement refusé par $label."
+            survivorId != null ->
+                "Flux retiré de $label ; il reste suivi par " +
+                    com.pressia.data.feedAccountLabel(survivorId, accounts) + "."
+            else -> "Flux désabonné."
+        }
     }
 
     /**
@@ -1177,11 +1238,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         repo.setStarred(id, star)
         // La liste de recherche ne s'alimente pas du flux principal : sans ce report, l'étoile
         // y restait celle d'avant le tap (et un second appui ne pouvait plus la retirer).
-        // La base dit ce qui a réellement été posé (étoile locale, ou « Read later » du compte).
-        val a = repo.article(id) ?: return@launch
+        // La base dit ce qui a réellement été posé (étoile locale, ou « Read later » du compte) ;
+        // ses seuls drapeaux sont relus, pas le corps HTML de l'article.
+        val f = repo.flags(id) ?: return@launch
         searchResults = searchResults.map {
             if (it.id == id) {
-                it.copy(starred = a.starred, laterSaved = a.laterSaved, laterProvider = a.laterProvider)
+                it.copy(starred = f.starred, laterSaved = f.laterSaved, laterProvider = f.laterProvider)
             } else it
         }
     }
@@ -1474,7 +1536,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         if (ids.isEmpty()) return@launch
         // Même mécanique que « tout marquer lu » : l'annulation est proposée avant l'écriture,
         // sinon le marquage de masse de l'écran Doublons était le seul sans retour possible.
-        offerUndo(ids)
+        // Origine « dedup » : l'écran n'affiche que *son* annulation, pas celle d'un marquage
+        // fait ailleurs (elle resterait sinon proposée au-dessus des doublons).
+        offerUndo(ids, origin = "dedup")
         // Un seul enqueueAll et une seule poussée paginée (repo.setRead, lui, repoussait la file
         // à chaque article : la file était vidée une fois par doublon).
         repo.markArticlesRead(ids)

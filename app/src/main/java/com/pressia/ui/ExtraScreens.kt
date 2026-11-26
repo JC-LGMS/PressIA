@@ -363,7 +363,7 @@ fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
         // l'écran et la pastille du bas s'efface au bout de quelques secondes. Cet écran n'a pas
         // le bouton d'annulation de la barre des listes d'articles : sans ce bouton, l'annulation
         // devenait inatteignable.
-        vm.undoOffer?.let { o ->
+        vm.undoOffer?.takeIf { it.origin == "dedup" }?.let { o ->
             item {
                 TextButton({ vm.undoMarkRead() }, modifier = Modifier.fillMaxWidth()) {
                     Text("Annuler — ${o.label}")
@@ -750,9 +750,6 @@ private fun CurrentLuxText() {
 fun SettingsScreen(vm: PressVM) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    suspend fun <T> get(k: androidx.datastore.preferences.core.Preferences.Key<T>, d: T): T =
-        runCatching { vm.repo.prefs.data.first()[k] ?: d }.getOrDefault(d)
-
     var night by remember { mutableStateOf("dark") }
     var lightThreshold by remember { mutableStateOf(1) }
     var lightDelay by remember { mutableStateOf(Prefs.LIGHT_DELAY_DEFAULT) }
@@ -795,8 +792,10 @@ fun SettingsScreen(vm: PressVM) {
     var showArticleActions by remember { mutableStateOf(false) }
 
     suspend fun refreshCacheInfo() {
-        cacheInfo = vm.repo.cacheInfo()
-        cacheDetail = vm.repo.cacheDetail()
+        // Une seule mesure pour le total et le détail (deux listings de la base avant).
+        val b = vm.repo.cacheBreakdown()
+        cacheInfo = vm.repo.cacheInfo(b)
+        cacheDetail = vm.repo.cacheDetail(b)
     }
 
     /**
@@ -805,6 +804,10 @@ fun SettingsScreen(vm: PressVM) {
      * utilisateur réécrirait par-dessus l'import avec les anciennes valeurs.
      */
     suspend fun reloadFromPrefs() {
+        // Un seul instantané : relire DataStore clé par clé (35 collectes) à chaque ouverture
+        // était du travail perdu, le fichier entier arrive de toute façon d'un bloc.
+        val d = runCatching { vm.repo.prefs.data.first() }.getOrNull()
+        fun <T> get(k: androidx.datastore.preferences.core.Preferences.Key<T>, def: T): T = d?.get(k) ?: def
         night = get(Prefs.NIGHT_THEME, "dark"); accent = get(Prefs.ACCENT, "red"); bg = get(Prefs.BG, "default"); home = get(Prefs.HOME_SCREEN, "subs")
         lightThreshold = get(Prefs.LIGHT_THRESHOLD, 1)
         lightDelay = get(Prefs.LIGHT_DELAY, Prefs.LIGHT_DELAY_DEFAULT)
@@ -856,37 +859,51 @@ fun SettingsScreen(vm: PressVM) {
         vm.repo.prefs.set(Prefs.FAVICON_SOURCE, v)
         vm.refreshFavicons()
     }
+    /**
+     * Enregistre tous les réglages de l'écran en **une seule** écriture DataStore : chaque `set`
+     * réécrivait le fichier et réémettait un instantané, soit 35 écritures pour un seul
+     * changement de réglage.
+     */
     fun save() = scope.launch {
-        vm.repo.prefs.set(Prefs.NIGHT_THEME, night); vm.repo.prefs.set(Prefs.ACCENT, accent); vm.repo.prefs.set(Prefs.BG, bg)
-        vm.repo.prefs.set(Prefs.LIGHT_THRESHOLD, lightThreshold)
-        vm.repo.prefs.set(Prefs.LIGHT_DELAY, lightDelay)
-        vm.repo.prefs.set(Prefs.HOME_SCREEN, home)
-        vm.repo.prefs.set(Prefs.VIEW_MODE, viewMode); vm.repo.prefs.set(Prefs.TRAILING_ACTION, trailing)
-        vm.repo.prefs.set(Prefs.COMPACT_THREE_LINES, compactThreeLines)
-        vm.repo.prefs.set(Prefs.SWIPE_ACTION, swipe)
-        vm.repo.prefs.set(Prefs.SWIPE_RIGHT_ACTION, swipeRight)
-        vm.repo.prefs.set(Prefs.ARTICLE_ACTIONS, articleActions.joinToString(","))
-        vm.repo.prefs.set(Prefs.FONT_SIZE, fontSize); vm.repo.prefs.set(Prefs.ARTICLE_TITLE_SIZE, articleTitle)
-        vm.repo.prefs.set(Prefs.TITLE_FONT_SIZE, titleFont)
-        vm.repo.prefs.set(Prefs.DATE_FONT_SIZE, dateFont)
-        vm.repo.prefs.set(Prefs.WIFI_ONLY, wifiOnly); vm.repo.prefs.set(Prefs.MAX_ITEMS, maxItems)
-        vm.repo.prefs.set(Prefs.HISTORY_MONTHS, historyMonths)
-        vm.repo.prefs.set(Prefs.FAVICON_SOURCE, faviconSource)
-        vm.repo.prefs.set(Prefs.IMAGES_OFFLINE, imagesOffline); vm.repo.prefs.set(Prefs.SYNC_INTERVAL_MIN, interval)
-        vm.repo.prefs.set(Prefs.OPEN_MODE, openMode); vm.repo.prefs.set(Prefs.MERGE_FOLDERS, mergeFolders)
-        vm.repo.prefs.set(Prefs.READABILITY_STICKY, readabilitySticky)
-        vm.repo.prefs.set(Prefs.DOUBLE_TAP_ACTION, doubleTap)
-        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_LEFT, artSwipeLeft)
-        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_RIGHT, artSwipeRight)
-        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_UP, artSwipeUp)
-        vm.repo.prefs.set(Prefs.ARTICLE_SWIPE_DOWN, artSwipeDown)
-        vm.repo.prefs.set(Prefs.DRAWER_TEXT_SCALE, drawerScale)
-        vm.repo.prefs.set(Prefs.HOME_TEXT_SCALE, homeScale)
-        vm.repo.prefs.set(Prefs.SYNC_ON_LAUNCH, syncOnLaunch)
-        vm.repo.prefs.set(Prefs.BACKGROUND_SYNC_HOURS, backgroundSyncHours)
+        vm.repo.prefs.edit {
+            it[Prefs.NIGHT_THEME] = night
+            it[Prefs.ACCENT] = accent
+            it[Prefs.BG] = bg
+            it[Prefs.LIGHT_THRESHOLD] = lightThreshold
+            it[Prefs.LIGHT_DELAY] = lightDelay
+            it[Prefs.HOME_SCREEN] = home
+            it[Prefs.VIEW_MODE] = viewMode
+            it[Prefs.TRAILING_ACTION] = trailing
+            it[Prefs.COMPACT_THREE_LINES] = compactThreeLines
+            it[Prefs.SWIPE_ACTION] = swipe
+            it[Prefs.SWIPE_RIGHT_ACTION] = swipeRight
+            it[Prefs.ARTICLE_ACTIONS] = articleActions.joinToString(",")
+            it[Prefs.FONT_SIZE] = fontSize
+            it[Prefs.ARTICLE_TITLE_SIZE] = articleTitle
+            it[Prefs.TITLE_FONT_SIZE] = titleFont
+            it[Prefs.DATE_FONT_SIZE] = dateFont
+            it[Prefs.WIFI_ONLY] = wifiOnly
+            it[Prefs.MAX_ITEMS] = maxItems
+            it[Prefs.HISTORY_MONTHS] = historyMonths
+            it[Prefs.FAVICON_SOURCE] = faviconSource
+            it[Prefs.IMAGES_OFFLINE] = imagesOffline
+            it[Prefs.SYNC_INTERVAL_MIN] = interval
+            it[Prefs.OPEN_MODE] = openMode
+            it[Prefs.MERGE_FOLDERS] = mergeFolders
+            it[Prefs.READABILITY_STICKY] = readabilitySticky
+            it[Prefs.DOUBLE_TAP_ACTION] = doubleTap
+            it[Prefs.ARTICLE_SWIPE_LEFT] = artSwipeLeft
+            it[Prefs.ARTICLE_SWIPE_RIGHT] = artSwipeRight
+            it[Prefs.ARTICLE_SWIPE_UP] = artSwipeUp
+            it[Prefs.ARTICLE_SWIPE_DOWN] = artSwipeDown
+            it[Prefs.DRAWER_TEXT_SCALE] = drawerScale
+            it[Prefs.HOME_TEXT_SCALE] = homeScale
+            it[Prefs.SYNC_ON_LAUNCH] = syncOnLaunch
+            it[Prefs.BACKGROUND_SYNC_HOURS] = backgroundSyncHours
+            it[Prefs.FEEDLY_KEEP_UNREAD] = feedlyKeepUnread
+        }
         // La planification suit le réglage tout de suite, sans attendre le prochain démarrage.
         com.pressia.data.sync.BackgroundSyncWorker.schedule(ctx, backgroundSyncHours, wifiOnly)
-        vm.repo.prefs.set(Prefs.FEEDLY_KEEP_UNREAD, feedlyKeepUnread)
         vm.refresh()
     }
 

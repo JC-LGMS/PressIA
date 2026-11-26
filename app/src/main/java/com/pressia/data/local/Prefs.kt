@@ -351,6 +351,15 @@ class Prefs(private val ctx: Context) {
     val data get() = ctx.ds.data
     suspend fun <T> set(key: Preferences.Key<T>, v: T) { ctx.ds.updateData { it.toMutablePreferences().apply { set(key, v) }.toPreferences() } }
 
+    /**
+     * Écrit plusieurs réglages en **une seule** mise à jour de DataStore (donc une écriture de
+     * fichier et une émission, au lieu d'une par clé). Les clés sont typées : une faute de nom
+     * ne peut pas passer.
+     */
+    suspend fun edit(block: (MutablePreferences) -> Unit) {
+        ctx.ds.updateData { it.toMutablePreferences().apply(block).toPreferences() }
+    }
+
     fun <T> flow(key: Preferences.Key<T>, def: T): Flow<T> = data.map { it[key] ?: def }
 
     /**
