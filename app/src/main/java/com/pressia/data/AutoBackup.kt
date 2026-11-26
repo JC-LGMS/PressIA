@@ -47,6 +47,10 @@ fun PressRepository.autoBackupMarkFile(): File =
 fun PressRepository.autoBackupHashFile(): File =
     File(appCtx.noBackupFilesDir, AUTO_BACKUP_NAME + ".somme")
 
+/** Fenêtre de la copie automatique : 12 mois quand le réglage « Durée d'historique » est « sans limite » (0). */
+internal fun autoBackupReadSince(nowMs: Long, months: Int): Long =
+    historyCutoffMs(nowMs, if (months <= 0) 12 else months)
+
 /**
  * Réécrit la copie automatique. Appelée quand l'application passe en arrière-plan et à la fin
  * d'une synchronisation : la sauvegarde Google tourne elle aussi écran éteint, une copie à jour
@@ -66,7 +70,8 @@ suspend fun PressRepository.writeAutoBackup() = withContext(Dispatchers.IO) {
             // tous les articles lus, et un dépassement du quota de 25 Mo ferait sauter la
             // sauvegarde Google entière.
             val months = prefs.data.first()[Prefs.HISTORY_MONTHS] ?: Prefs.HISTORY_MONTHS_DEFAULT
-            val readSince = historyCutoffMs(System.currentTimeMillis(), months)
+            // « Sans limite » (0) ne doit pas désarmer la borne de la copie : 12 mois.
+            val readSince = autoBackupReadSince(System.currentTimeMillis(), months)
             val json = exportJson(
                 AUTO_SECTIONS, localFeedsOnly = true, readSinceMs = readSince, pretty = false
             )
@@ -153,11 +158,16 @@ suspend fun PressRepository.restoreAutoBackupIfEmpty(): Boolean = withContext(Di
     val file = autoBackupFile()
     if (!file.exists()) return@withContext false
     val json = runCatching { file.readText() }.getOrNull() ?: return@withContext false
-    if (runCatching { importJson(json, AUTO_SECTIONS) }.isFailure) return@withContext false
+    val imported = runCatching { importJson(json, AUTO_SECTIONS) }
+    imported.onFailure {
+        // Sans trace, un échec laissait l'application vide sans que rien ne l'explique.
+        android.util.Log.w("PressIA", "copie automatique non importée : ${it.message}")
+    }
     // Caches et garde-fous calculés sur la base qui n'est pas revenue : ils mentent, et deux
     // d'entre eux bloqueraient la reprise. La fraîcheur de synchro ferait sauter la première
     // passe (bibliothèque vide à l'écran), et l'empreinte « Read later » ferait sauter l'import
-    // du tableau alors que la base ne le contient plus.
+    // du tableau alors que la base ne le contient plus. Remis à zéro **même si l'import a
+    // échoué** : sinon `LAST_SYNC_AT` revenu de Google fige l'application vide, sans synchro.
     prefs.set(Prefs.LAST_SYNC_AT, 0L)
     prefs.set(Prefs.RECONCILE_TOTALS, "")
     prefs.set(Prefs.RECONCILE_MARKS, "")
@@ -167,5 +177,5 @@ suspend fun PressRepository.restoreAutoBackupIfEmpty(): Boolean = withContext(Di
     // l'écrire maintenant effacerait les lus/favoris en attente. Elle l'est à la fin de la
     // synchro, une fois la file rejouée ; un article jamais revenu (sorti du flux) perd son
     // état, et il faudrait alors fusionner la file dans l'export.
-    true
+    imported.isSuccess
 }

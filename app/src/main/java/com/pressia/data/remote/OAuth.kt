@@ -7,6 +7,16 @@ import kotlinx.coroutines.withContext
 /** OAuth Feedly (code flow) + Inoreader (OAuth2). Les secrets restent configurables en Réglages. */
 object OAuth {
     /**
+     * Client des échanges de jeton : délais bornés, **dont un plafond total**. Une réponse qui
+     * débite par petits paquets ne déclenchait jamais le délai de lecture ; appelé sous
+     * `renewMutex` pendant une synchro, il bloquait la passe et le verrou sans fin.
+     */
+    private val http = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .callTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+    /**
      * Encodage URL compatible JVM pure (testable sans framework Android).
      *
      * Surcharge `(String, Charset)` volontairement écartée : elle exige l'API 33 alors que
@@ -91,7 +101,7 @@ object OAuth {
                     .add("code", code).add("client_id", clientId).add("client_secret", secret)
                     .add("redirect_uri", redirect).add("grant_type", "authorization_code").build()
                 val req = okhttp3.Request.Builder().url("https://feedly.com/v3/auth/token").post(body).build()
-                val resp = okhttp3.OkHttpClient().newCall(req).execute()
+                val resp = http.newCall(req).execute()
                 val txt = resp.body?.string().orEmpty()
                 Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
             } catch (_: Exception) { null }
@@ -121,7 +131,7 @@ object OAuth {
                 .add("code", code).add("client_id", appId).add("client_secret", appKey)
                 .add("redirect_uri", redirect).add("grant_type", "authorization_code").build()
             val req = okhttp3.Request.Builder().url("https://www.inoreader.com/oauth2/token").post(body).build()
-            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+            val resp = http.newCall(req).execute()
             val txt = resp.body?.string().orEmpty()
             parseTokens(txt)
         } catch (_: Exception) { null }
@@ -143,7 +153,7 @@ object OAuth {
                 .add("grant_type", "refresh_token").add("refresh_token", refreshToken)
                 .add("client_id", appId).add("client_secret", appKey).build()
             val req = okhttp3.Request.Builder().url("https://www.inoreader.com/oauth2/token").post(body).build()
-            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+            val resp = http.newCall(req).execute()
             val txt = resp.body?.string().orEmpty()
             parseTokens(txt)?.let { if (it.refresh.isBlank()) it.copy(refresh = refreshToken) else it }
         } catch (_: Exception) { null }
@@ -187,7 +197,7 @@ object OAuth {
                     .add("code_verifier", verifier)
                     .add("redirect_uri", redirect).add("grant_type", "authorization_code").build()
                 val req = okhttp3.Request.Builder().url("https://feedly.com/v3/auth/token").post(body).build()
-                val resp = okhttp3.OkHttpClient().newCall(req).execute()
+                val resp = http.newCall(req).execute()
                 val txt = resp.body?.string().orEmpty()
                 val token = Regex("\"access_token\"\\s*:\\s*\"([^\"]+)\"").find(txt)?.groupValues?.getOrNull(1)
                 if (token.isNullOrBlank()) {

@@ -46,6 +46,11 @@ import com.pressia.data.remote.providerUsesSaved
 import com.pressia.data.remote.cleanTitle
 import com.pressia.data.escapeLike
 import com.pressia.data.searchText
+import com.pressia.data.searchNeedsApostropheNormalization
+import com.pressia.data.queueTryIsDefinitive
+import com.pressia.data.autoBackupReadSince
+import com.pressia.data.historyCutoffMs
+import com.pressia.data.remote.movedFeedlyCategoryIds
 import com.pressia.data.shouldRestorePref
 import com.pressia.data.remote.newFolderId
 import com.pressia.data.remote.renamedFolderId
@@ -204,6 +209,18 @@ class PressLogicTest {
         assertEquals(1, arts.size)
         assertEquals("T1", arts[0].title)
         assertEquals("https://ex.com/i.jpg", arts[0].imageUrl)
+    }
+
+    @Test fun `description et content encoded ne sont pas concaténés`() {
+        // WordPress émet l'extrait (`description`) **et** le corps (`content:encoded`) : les
+        // concaténer affichait l'accroche puis l'article entier, deux fois.
+        val xml = """<rss><channel><item><title>T1</title><link>https://ex.com/1</link>
+            <description><![CDATA[Resume court]]></description>
+            <content:encoded><![CDATA[<p>Corps complet de l'article</p>]]></content:encoded>
+            </item></channel></rss>"""
+        val a = LocalRssFetcher.parse(xml, "feed1").single()
+        assertTrue("le corps complet doit être gardé", a.content.orEmpty().contains("Corps complet"))
+        assertFalse("l'extrait ne doit pas être concaténé", a.content.orEmpty().contains("Resume court"))
     }
     @Test fun `url de flux nettoyee des caracteres de controle`() {
         // Un NUL collé au clavier (invisible à l'écran) devenait `%00` dans la requête :
@@ -584,12 +601,18 @@ class PressLogicTest {
     @Test fun `backup des lus borne a l'historique`() {
         val rows = listOf(
             com.pressia.data.local.LocalReadRow("a", "f", null, 1_000L),
-            com.pressia.data.local.LocalReadRow("b", "f", null, 5_000L)
+            com.pressia.data.local.LocalReadRow("b", "f", null, 5_000L),
+            // Date inconnue : la rétention la garde, la copie doit la garder aussi.
+            com.pressia.data.local.LocalReadRow("c", "f", null, 0L)
         )
         // Fenêtre illimitée : tout part.
-        assertEquals(listOf("a", "b"), com.pressia.data.readStatesWithinHistory(rows, 0L).map { it.id })
-        // Fenêtre à 2 000 : le vieux lu n'est plus sauvegardé.
-        assertEquals(listOf("b"), com.pressia.data.readStatesWithinHistory(rows, 2_000L).map { it.id })
+        assertEquals(listOf("a", "b", "c"), com.pressia.data.readStatesWithinHistory(rows, 0L).map { it.id })
+        // Fenêtre à 2 000 : le vieux lu n'est plus sauvegardé, la date inconnue reste.
+        assertEquals(listOf("b", "c"), com.pressia.data.readStatesWithinHistory(rows, 2_000L).map { it.id })
+        // « Sans limite » (0) : la copie automatique est bornée à 12 mois.
+        val now = 1_700_000_000_000L
+        assertEquals(historyCutoffMs(now, 12), autoBackupReadSince(now, 0))
+        assertEquals(historyCutoffMs(now, 3), autoBackupReadSince(now, 3))
     }
     @Test fun `boilerplate paywall detecte`() {
         val paywall = "La suite est réservée à nos abonnés. Votre carte bancaire a expiré. " +
@@ -613,6 +636,14 @@ class PressLogicTest {
             "Pour plus d'informations, nous vous invitons à lire notre politique de protection des données. ".repeat(2)
         assertTrue(Readability.isConsentWallText(consent))
         assertFalse(Readability.isUsableFull("<div>$consent</div>"))
+    }
+    @Test fun `bannière de consentement courte reste bloquée`() {
+        // 120–199 caractères : `isUsableFull` accepte désormais ce format, donc le détecteur de
+        // consentement doit descendre au même plancher, sinon la bannière devenait le corps.
+        val short = "Nous utilisons des cookies et autres traceurs pour mesurer l'audience. " +
+            "Gérer les options de consentement ou j'accepte tout. Politique de protection des données."
+        assertTrue(Readability.isConsentWallText(short))
+        assertFalse(Readability.isUsableFull("<div>$short</div>"))
     }
     @Test fun `urls oauth bien formees`() {
         val f = OAuth.feedlyAuthUrl("CID", "pressia://oauth/feedly")
@@ -2013,7 +2044,6 @@ class PressLogicTest {
         assertEquals(1_760_000_000_000L, com.pressia.data.remote.publishedMs(1_760_000_000_000L))
         assertEquals(1_760_000_000_000L, com.pressia.data.remote.publishedMs(1_760_000_000L))
         assertEquals(0L, com.pressia.data.remote.publishedMs(0L))
-        assertEquals(30L * 24 * 3600 * 1000, com.pressia.data.remote.RECONCILE_WINDOW_MS)
     }
 
     @Test fun `empreinte du tableau read later`() {
@@ -2386,6 +2416,29 @@ class PressLogicTest {
         assertEquals("d'accord", searchText("d'accord"))
         // L'échappement des jokers s'applique après la normalisation.
         assertEquals("l'\\%article", escapeLike(searchText("l’%article")))
+        assertTrue(searchNeedsApostropheNormalization("l’article"))
+        assertTrue(searchNeedsApostropheNormalization("l'article"))
+        assertFalse(searchNeedsApostropheNormalization("article"))
+    }
+
+    @Test fun `file, seuls les refus definitifs usent le compteur`() {
+        // Réseau, quota et session expirée sont transitoires : trois coupures ne doivent pas
+        // sortir la ligne du périmètre des envois à vie.
+        assertFalse(queueTryIsDefinitive(java.io.IOException("offline"), rateLimited = false))
+        assertFalse(queueTryIsDefinitive(RuntimeException("429"), rateLimited = true))
+        assertTrue(queueTryIsDefinitive(IllegalArgumentException("id refusé"), rateLimited = false))
+    }
+
+    @Test fun `deplacement feedly garde les autres collections`() {
+        // Un flux rangé dans « Tech » et « News » : le déplacer vers « Lu » doit garder « News ».
+        assertEquals(
+            listOf("news", "lu"),
+            movedFeedlyCategoryIds(listOf("news", "tech"), from = "tech", to = "lu")
+        )
+        // Sortie de dossier : seule l'ancienne part, les autres restent.
+        assertEquals(listOf("news"), movedFeedlyCategoryIds(listOf("news", "tech"), from = "tech", to = null))
+        // Cible déjà présente : pas de doublon.
+        assertEquals(listOf("news"), movedFeedlyCategoryIds(listOf("news", "tech"), from = "tech", to = "news"))
     }
 
     @Test fun `restauration des preferences selon jetons et cles locales`() {
@@ -2527,6 +2580,7 @@ class PressLogicTest {
         val arr = org.json.JSONArray()
             .put(org.json.JSONObject().put("id", "u1").put("title", "T"))
             .put(org.json.JSONObject().put("id", "u2").put("title", "T2").put("categoryId", "null"))
+            .put(org.json.JSONObject().put("title", "Sans id"))
             .put(org.json.JSONObject.NULL)
         val subs = arr.toSubscriptionList()
         assertEquals(2, subs.size)

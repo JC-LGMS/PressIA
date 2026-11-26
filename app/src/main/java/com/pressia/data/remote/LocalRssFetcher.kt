@@ -214,7 +214,7 @@ object LocalRssFetcher {
                 // Une seule entrée malformée ne doit pas jeter tout le flux : elle est ignorée,
                 // les autres passent.
                 runCatching {
-                var title = ""; var link = ""; var desc = ""; var author = ""
+                var title = ""; var link = ""; var desc = ""; var full = ""; var author = ""
                 var pub = 0L; var pubKnown = false; var img: String? = null
                 el.children().forEach { c ->
                     when (c.tagName().lowercase()) {
@@ -230,7 +230,11 @@ object LocalRssFetcher {
                                 (rel.isEmpty() || rel == "alternate")
                             ) link = candidate
                         }
-                        "description", "summary", "content", "content:encoded" -> desc += c.text()
+                        "description", "summary" -> desc += c.text()
+                        // `content:encoded` (WordPress) et `content` (Atom) portent le corps
+                        // complet ; les concaténer à la description affichait l'accroche puis
+                        // l'article entier, deux fois.
+                        "content", "content:encoded" -> full += c.text()
                         "author" -> author = c.selectFirst("name")?.text()?.trim() ?: c.text().trim()
                         "dc:creator" -> author = c.text().trim()
                         // La première date trouvée l'emporte : `published` (publication) passe
@@ -258,14 +262,15 @@ object LocalRssFetcher {
                             // lecteur Flash) : seule une vraie image est retenue.
                             if (u.isNotBlank() && looksLikeImage(c.attr("type"), u)) img = u
                         }
-                        "media:description" -> if (desc.isBlank()) desc = c.text().trim()
-                    }
+                        "media:description" -> if (desc.isBlank()) desc = c.text().trim()                    }
                 }
                 // Une entrée sans date reste **sans date** : la dater de maintenant à chaque
                 // synchronisation la faisait passer pour une nouveauté à chaque passe.
                 if (title.isBlank() && link.isBlank()) return@mapNotNull null
+                // Corps : le contenu complet quand il existe, sinon l'extrait du flux.
+                val body = full.ifBlank { desc }
                 val image = img
-                    ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(desc)?.groupValues?.getOrNull(1)
+                    ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(body)?.groupValues?.getOrNull(1)
                     ?: Regex("<img[^>]+src=[\"']([^\"']+)").find(el.html())?.groupValues?.getOrNull(1)
                 // Les titres RSS arrivent avec des entités HTML (« &nbsp; », « &amp; », …).
                 val clean = cleanTitle(title).ifBlank { "(sans titre)" }
@@ -275,8 +280,8 @@ object LocalRssFetcher {
                     title = clean,
                     author = author.ifBlank { null },
                     url = link,
-                    summary = desc.ifBlank { null },
-                    content = desc.ifBlank { null },
+                    summary = body.ifBlank { null },
+                    content = body.ifBlank { null },
                     imageUrl = image,
                     published = pub,
                     titleHash = dedupHash(clean, link)

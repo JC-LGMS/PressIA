@@ -340,6 +340,14 @@ private const val PUSH_BAR_MIN = 10
 private const val QUEUE_MAX_TRIES = 3
 
 /**
+ * Une erreur compte-t-elle comme un essai définitif ? Seuls les refus **définitifs** doivent
+ * user le compteur : réseau, quota et session expirée sont transitoires, et trois coupures
+ * suffisaient sinon à sortir une ligne du périmètre des envois **à vie**.
+ */
+internal fun queueTryIsDefinitive(e: Throwable, rateLimited: Boolean): Boolean =
+    !rateLimited && e !is java.io.IOException && !isAuthFailure(e)
+
+/**
  * Avancement d'un marquage groupé qui part **article par article** vers le compte ([done] sur
  * [total]) : la barre du bas le montre. Voir `PressRepository.bulkProgress`.
  */
@@ -1434,6 +1442,7 @@ class PressRepository(
     ): List<ArticleEntity> {
         val (feedIds, catEmpty) = catScope(catId)
         return dao.search(escapeLike(searchText(q)), feedId, feedIds, catEmpty, if (withBody) 1 else 0,
+            if (searchNeedsApostropheNormalization(q)) 1 else 0,
             if (unreadOnly) 1 else 0, limit, offset)
     }
 
@@ -1443,7 +1452,8 @@ class PressRepository(
     ): List<String> {
         val (feedIds, catEmpty) = catScope(catId)
         return dao.searchUnreadIds(
-            escapeLike(searchText(q)), feedId, feedIds, catEmpty, if (withBody) 1 else 0
+            escapeLike(searchText(q)), feedId, feedIds, catEmpty, if (withBody) 1 else 0,
+            if (searchNeedsApostropheNormalization(q)) 1 else 0
         )
     }
 
@@ -2785,11 +2795,21 @@ class PressRepository(
         // Null = énumération impossible : rien n'a été appliqué, et l'appelant ne doit pas
         // poser de repère (il sauterait les événements que cette passe n'a pas vus).
         val remote = p.unreadIds(account.token, maxIds) ?: return@withContext null
+        if (!remote.complete) {
+            // Plafond atteint : le jeu distant est partiel, donc aucun passage en lu ne sera
+            // appliqué (voir computeReadReconciliation). Le dire, sinon la passe semble avoir
+            // travaillé pour rien.
+            android.util.Log.w(
+                "PressIA",
+                "reconcile ${account.id} : énumération incomplète (${remote.ids.size} non-lus, " +
+                    "plafond $maxIds) — aucun passage en lu"
+            )
+        }
         // Toute la file, pas seulement la page de `pendingSync` : sinon un marquage groupé
         // plus gros qu'une page n'était protégé qu'en partie et la réconciliation rouvrait
         // les articles dont l'action attendait encore (le serveur ne les avait pas vus).
         val pendingIds = dao.pendingReadIds().toSet()
-        val hasPendingMarkAll = dao.pendingMarkAllCount() > 0
+        val hasPendingMarkAll = dao.pendingMarkAllCount(QUEUE_MAX_TRIES) > 0
         // Une seule passe par paquet (plafond ~999 variables) au lieu de deux requêtes :
         // les paires (id, unread) se répartissent ensuite entre les deux ensembles purs.
         // Sans ID distant, `IN ()` serait invalide : on retombe sur les seuls non-lus locaux
@@ -3257,8 +3277,8 @@ class PressRepository(
         // Une étoile en attente interdit aussi le saut par empreinte : le serveur n'est pas à jour.
         // Toute la file (et non la page de `pendingSync`) : au-delà de 100 poses hors-ligne,
         // les suivantes étaient perdues par la replongée du tableau.
-        val keepSaved = dao.pendingSavedIds()
-        val keepUnsaved = dao.pendingUnsavedIds()
+        val keepSaved = dao.pendingSavedIds(QUEUE_MAX_TRIES)
+        val keepUnsaved = dao.pendingUnsavedIds(QUEUE_MAX_TRIES)
         val added = coroutineScope {
             // Une replongée **par service** : deux comptes du même service partagent les lignes
             // `subscriptions`, si bien que l'effacement de l'un emportait les marques que l'autre
@@ -3530,6 +3550,10 @@ class PressRepository(
         withContext(Dispatchers.IO) {
         // Hors ligne, chaque envoi échouerait : sans cette sortie, dix articles lus tapaient
         // le réseau (et son délai d'échec) une fois par article. Les lignes restent en file.
+        // Lignes définitivement refusées : les purger, sinon elles comptent à vie dans la
+        // réconciliation (« tout marquer lu » en attente) et dans le « Read later ».
+        val purged = dao.deleteExhausted(QUEUE_MAX_TRIES)
+        if (purged > 0) android.util.Log.i("PressIA", "file: $purged ligne(s) au plafond d'essais purgée(s)")
         if (!isOnline()) return@withContext 0
         val accounts = cloudAccounts()
         var done = 0
@@ -3644,7 +3668,11 @@ class PressRepository(
                 android.util.Log.w("PressIA", "file: ${rows.size} ${rows.firstOrNull()?.kind} reportée : ${e::class.java.simpleName} ${e.message}")
                 noteRateLimit(e, account.label)
                 if (isAuthFailure(e)) markAccountExpired(account.id)
-                rows.forEach { dao.bumpTry(it.rowId) }
+                // Réseau, quota, session : transitoire, le compteur ne bouge pas. Un refus
+                // définitif use le compteur, et la ligne sera purgée au plafond.
+                if (queueTryIsDefinitive(e, rateLimitOf(e, account.label) != null)) {
+                    rows.forEach { dao.bumpTry(it.rowId) }
+                }
             }
             // Un lot en échec retombe à l'unité (ancien comportement) : un seul identifiant
             // rejeté ne bloque pas le lot. Sauf session morte ou quota : réessayer à l'unité
@@ -4666,6 +4694,12 @@ fun fmtDuration(sec: Int): String {
  * normalisées de la même façon dans les requêtes (`REPLACE(col, '’', '''')`).
  */
 fun searchText(q: String): String = q.replace('’', '\'')
+
+/**
+ * La normalisation SQL des colonnes (`REPLACE(col, '’', '''')`) ne sert que si la saisie contient
+ * une apostrophe ; sinon elle recopiait tout le `content` à chaque recherche « inclure le texte ».
+ */
+fun searchNeedsApostropheNormalization(q: String): Boolean = q.contains('\'') || q.contains('’')
 
 fun escapeLike(q: String): String =
     q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

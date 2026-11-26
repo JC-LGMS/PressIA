@@ -79,6 +79,9 @@ object FreshRss {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        // Plafond total : un serveur qui débite par petits paquets ne déclenche jamais le délai
+        // de lecture, et la connexion restait en attente sans fin.
+        .callTimeout(30, TimeUnit.SECONDS)
         .build()
 
     /**

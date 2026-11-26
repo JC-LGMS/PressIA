@@ -875,10 +875,16 @@ class PressVM(val repo: PressRepository) : ViewModel() {
      * Le déplacement part chez le compte : s'il est refusé, le flux reste en place et le
      * bandeau le dit (un déplacement local seul serait défait à la synchronisation suivante).
      */
-    fun moveFeed(feedId: String, folder: PressRepository.Folder?) = viewModelScope.launch {
-        if (!repo.moveFeedsToFolder(listOf(feedId), folder?.id)) {
+    fun moveFeed(
+        feedId: String,
+        folder: PressRepository.Folder?,
+        onDone: (Boolean) -> Unit = {}
+    ) = viewModelScope.launch {
+        val ok = repo.moveFeedsToFolder(listOf(feedId), folder?.id)
+        if (!ok) {
             syncMsg = "Déplacement refusé par le compte : le flux n'a pas changé de dossier."
         }
+        onDone(ok)
         refreshNow()
     }
 
@@ -1163,6 +1169,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         // La liste de recherche ne s'alimente pas du flux principal : sans ce report, son rond
         // lu/non-lu y resterait celui d'avant le tap.
         searchResults = searchResults.map { if (it.id == id) it.copy(unread = unread) else it }
+        // Écran Doublons visible : le groupe doit suivre (l'article lu sort du groupe), sinon la
+        // ligne et le compteur restent affichés comme si l'appui avait échoué.
+        if (dupsActive && !unread) dups = repo.duplicateGroups()
     }
     fun setStar(id: String, star: Boolean) = viewModelScope.launch {
         repo.setStarred(id, star)
@@ -1299,7 +1308,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
 
     /** Lance la recherche (base locale) et repart du haut de la liste. */
-    fun runSearch() = viewModelScope.launch { runSearchNow() }
+    fun runSearch() {
+        // Vraie nouvelle recherche : l'annulation du marquage précédent ne porte plus sur ces
+        // résultats (la bascule de l'œil, elle, la conserve : voir `showOnlyUnread`).
+        if (undoOffer?.origin == "search") dismissUndo()
+        viewModelScope.launch { runSearchNow() }
+    }
 
     private suspend fun runSearchNow(bumpEpoch: Boolean = true) {
         val q = searchQuery.trim()
@@ -1309,13 +1323,7 @@ class PressVM(val repo: PressRepository) : ViewModel() {
         try {
             // Nouvelle recherche : on repart de la première page ; une relecture (marquage groupé)
             // garde les pages déjà chargées et les relit toutes.
-            // Nouvelle recherche : l'annulation proposée portait sur les résultats précédents ;
-            // la laisser affichée remplaçait « Tout marquer lu » par « Annuler » et rendait le
-            // marquage de la nouvelle recherche inatteignable.
-            if (bumpEpoch) {
-                searchPage = 0
-                if (undoOffer?.origin == "search") dismissUndo()
-            }
+            if (bumpEpoch) searchPage = 0
             searchResults = loadSearch(q)
             searchRan = true
             // Nouvelle recherche : la liste repart en haut. Une relecture (marquage groupé) garde
@@ -1341,7 +1349,9 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     fun showOnlyUnread(on: Boolean) {
         if (searchUnreadOnly == on) return
         searchUnreadOnly = on
-        if (searchRan) runSearch()
+        // Même recherche, autre filtre : l'annulation d'un marquage sur ces résultats reste
+        // visible (les articles marqués lus sortent de la liste, c'est elle qui les ramène).
+        if (searchRan) viewModelScope.launch { runSearchNow(bumpEpoch = true) }
     }
 
     /** Croix du champ de recherche : vide la requête (et les résultats qui allaient avec). */
@@ -1441,6 +1451,12 @@ class PressVM(val repo: PressRepository) : ViewModel() {
     }
     /** Aucune analyse au démarrage de l'écran : le scan ne part que sur demande explicite. */
     var dupScanned by mutableStateOf(false)
+    /**
+     * L'écran Doublons est-il affiché ? Seul lui a besoin de recalculer `dups` quand un article
+     * est marqué lu ; le faire à chaque lecture de liste coûterait une requête sur tous les
+     * non-lus à chaque ligne.
+     */
+    var dupsActive by mutableStateOf(false)
     /** Version attendable : l'écran n'annonce « terminé » qu'une fois la liste posée. */
     suspend fun loadDupsNow() {
         dups = repo.duplicateGroups()

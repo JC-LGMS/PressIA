@@ -970,7 +970,10 @@ L'APK release est passé de 3,09 à 2,92 Mo en 1.27.
     est restée vide en direct ; la doc la réserve aux exceptions d'un marqueur de flux). D'où un
     **contrôle complet toutes les six heures** (`Prefs.RECONCILE_FULL_AT`, `fullReconcileDue`), qui
     énumère les non-lus et corrige les états décalés. Le provisionnement rattrape souvent le cas
-    avant (un article réécrit depuis le flux reprend l'état du serveur).
+    avant (un article réécrit depuis le flux reprend l'état du serveur). L'énumération prend les
+    **IDs seuls** (`stream/items/ids` chez Inoreader/FreshRSS, 200 par page ; `streams/ids` borné à
+    la fenêtre d'auto-lecture chez Feedly) : au-delà de 5 000, elle est **partielle** et rien n'est
+    passé en lu (le journal le signale) — seules les réouvertures restent possibles.
   - **Un marqueur peut être accepté sans effet** (HTTP 200, aucun événement) : un `markAsRead`
     d'entrée a été ignoré une fois puis appliqué au second essai, en direct. Ne pas conclure d'un
     200 que l'état a changé — c'est aussi pourquoi le contrôle complet reste.

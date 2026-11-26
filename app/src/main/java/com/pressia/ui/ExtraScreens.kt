@@ -59,6 +59,7 @@ import com.pressia.data.readCapped
 import com.pressia.data.sortFeeds
 import com.pressia.ui.theme.toHex
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -205,10 +206,12 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
         }
         if (vm.searchRan) {
             // Une seule action à cet endroit, en icône : marquer tous les résultats lus, puis —
-            // comme le bouton de la barre des listes — annuler ce marquage. L'annulation ne
-            // s'affiche que si elle vient de cet écran (`origin = "search"`) : un marquage fait
-            // ailleurs ne doit pas se confondre avec celui-ci, même avec l'œil « non-lus » actif.
-            val offer = vm.undoOffer?.takeIf { it.origin == "search" }
+            // comme le bouton de la barre des listes — annuler ce marquage. L'annulation
+            // s'affiche si elle vient de cet écran (`origin = "search"`) ou si tous ses
+            // identifiants sont des résultats affichés (menu d'appui long) : un marquage fait
+            // ailleurs ne se confond pas avec celui-ci, même avec l'œil « non-lus » actif.
+            val shown = remember(vm.searchResults) { vm.searchResults.mapTo(HashSet()) { it.id } }
+            val offer = vm.undoOffer?.takeIf { o -> o.origin == "search" || o.ids.all { it in shown } }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 // Résultats paginés (200 par page, la suite au défilement) : tant que la dernière
                 // page n'est pas atteinte, le compteur le dit au lieu de laisser croire que la
@@ -279,6 +282,10 @@ fun SearchScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onSearch: (Articl
  */
 @Composable
 fun DedupScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit) {
+    DisposableEffect(Unit) {
+        vm.dupsActive = true
+        onDispose { vm.dupsActive = false }
+    }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val feeds = remember(vm.subs) { vm.subs.associateBy { it.id } }
@@ -586,7 +593,9 @@ fun StatsScreen(vm: PressVM) {
                 TextButton({
                     confirmReset = false
                     scope.launch {
-                        vm.repo.resetStats()
+                        // Non annulable : quitter l'écran pendant l'opération laissait les
+                        // évènements effacés sans la borne `STATS_SINCE` (compteurs incohérents).
+                        withContext(NonCancellable) { vm.repo.resetStats() }
                         vm.loadStats(period, year)
                     }
                 }) { Text("Remettre à zéro", color = MaterialTheme.colorScheme.error) }
@@ -1444,6 +1453,9 @@ fun BackupScreen(vm: PressVM) {
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var backupMsg by remember { mutableStateOf("") }
+    // Import/export en cours : les boutons sont désactivés (un second import concurrent écrasait
+    // les mêmes sections).
+    var backupBusy by remember { mutableStateOf(false) }
     var exportSel by remember { mutableStateOf(Sections.ALL) }
     var exportTokens by remember { mutableStateOf(false) }
     var importSel by remember { mutableStateOf(Sections.ALL) }
@@ -1460,6 +1472,7 @@ fun BackupScreen(vm: PressVM) {
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) scope.launch {
+            backupBusy = true
             try {
                 val json = vm.repo.exportJson(exportSel, exportTokens)
                 // Écriture vérifiée (voir writeBackupFile) : sans elle, un flux de sortie nul ou
@@ -1501,6 +1514,8 @@ fun BackupScreen(vm: PressVM) {
                 // (le message du bas est le compte rendu, le toast n'est que la confirmation).
                 backupMsg = "Export impossible : ${e.message ?: e.javaClass.simpleName}"
                 toast(ctx, "Sauvegarde non écrite")
+            } finally {
+                backupBusy = false
             }
         }
     }
@@ -1508,6 +1523,7 @@ fun BackupScreen(vm: PressVM) {
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) scope.launch {
+            backupBusy = true
             try {
                 // Fichier choisi par l'utilisateur : lecture plafonnée (un mauvais fichier ne
                 // doit ni remplir la mémoire ni bloquer le fil principal), comme l'OPML.
@@ -1515,10 +1531,12 @@ fun BackupScreen(vm: PressVM) {
                     ctx.contentResolver.openInputStream(uri)?.use { readCapped(it, MAX_BACKUP_BYTES) }
                 }?.toString(Charsets.UTF_8)
                     ?: throw Exception("fichier illisible ou plus de 20 Mo")
-                val r = vm.repo.importJson(json, importSel, importReplace)
-                // Une restauration vaut sauvegarde : les réglages d'ici sont ceux du fichier, et
-                // le rappel ne doit pas les signaler comme « changés depuis ».
-                vm.repo.markBackupPoint()
+                // Import **non annulable** : quitter l'écran au milieu laissait une restauration
+                // à moitié appliquée (réglages posés, comptes non). Le point de comparaison du
+                // rappel est pris dans le même bloc.
+                val r = withContext(NonCancellable) {
+                    vm.repo.importJson(json, importSel, importReplace).also { vm.repo.markBackupPoint() }
+                }
                 backupMsg = "Restauration terminée : ${r.prefs} option(s), ${r.accounts} élément(s) de compte, " +
                     "${r.stats} statistique(s), ${r.read} favori(s)."
                 // L'écran Réglages se recharge à sa prochaine ouverture (son LaunchedEffect) ;
@@ -1535,6 +1553,8 @@ fun BackupScreen(vm: PressVM) {
                 toast(ctx, "Restauration effectuée")
             } catch (e: Exception) {
                 backupMsg = "Import impossible : ${e.message}"
+            } finally {
+                backupBusy = false
             }
         }
     }
@@ -1542,6 +1562,7 @@ fun BackupScreen(vm: PressVM) {
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/x-opml")
     ) { uri ->
         if (uri != null) scope.launch {
+            backupBusy = true
             try {
                 val written = withContext(Dispatchers.IO) {
                     writeBackupFile(ctx, uri, vm.repo.exportOpml().toByteArray())
@@ -1550,6 +1571,8 @@ fun BackupScreen(vm: PressVM) {
                 toast(ctx, "OPML exporté")
             } catch (e: Exception) {
                 backupMsg = "Export OPML impossible : ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                backupBusy = false
             }
         }
     }
@@ -1557,6 +1580,7 @@ fun BackupScreen(vm: PressVM) {
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) scope.launch {
+            backupBusy = true
             try {
                 // Fichier choisi : lecture plafonnée **hors du fil principal** (un document SAF
                 // adossé au cloud peut mettre des secondes à s'ouvrir).
@@ -1569,7 +1593,9 @@ fun BackupScreen(vm: PressVM) {
                 val xml = withContext(Dispatchers.IO) {
                     com.pressia.data.remote.LocalRssFetcher.decodeFeed(bytes, null)
                 }
-                val r = vm.repo.importOpml(xml)
+                // Comme l'import JSON : une annulation au milieu ne doit pas laisser la moitié
+                // des flux et dossiers écrits.
+                val r = withContext(NonCancellable) { vm.repo.importOpml(xml) }
                 backupMsg = "OPML : ${r.added} flux ajouté(s), ${r.folders} dossier(s) créé(s)" +
                     (if (r.existing > 0) ", ${r.existing} déjà abonné(s)" else "") +
                     (if (r.invalid > 0) ", ${r.invalid} refusé(s)" else "") + "."
@@ -1579,6 +1605,8 @@ fun BackupScreen(vm: PressVM) {
                 toast(ctx, "OPML importé")
             } catch (e: Exception) {
                 backupMsg = "Import OPML impossible : ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                backupBusy = false
             }
         }
     }
@@ -1636,8 +1664,8 @@ fun BackupScreen(vm: PressVM) {
             Text("Aucune sauvegarde pour l'instant", style = MaterialTheme.typography.bodyMedium)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ showExportDialog = true }) { Text("Sauvegarder…") }
-            OutlinedButton({ showImportDialog = true }) { Text("Restaurer…") }
+            Button({ showExportDialog = true }, enabled = !backupBusy) { Text("Sauvegarder…") }
+            OutlinedButton({ showImportDialog = true }, enabled = !backupBusy) { Text("Restaurer…") }
         }
         Text(
             "OPML : la liste des flux RSS locaux, dossiers compris, au format des autres lecteurs " +
@@ -1647,10 +1675,12 @@ fun BackupScreen(vm: PressVM) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ opmlImportLauncher.launch(arrayOf("text/x-opml", "text/xml", "application/xml", "*/*")) }) {
+            Button({
+                opmlImportLauncher.launch(arrayOf("text/x-opml", "text/xml", "application/xml", "*/*"))
+            }, enabled = !backupBusy) {
                 Text("Importer un OPML…")
             }
-            OutlinedButton({
+            OutlinedButton(enabled = !backupBusy, onClick = {
                 opmlExportLauncher.launch("pressia-flux-${stampNow()}.opml")
             }) { Text("Exporter en OPML…") }
         }

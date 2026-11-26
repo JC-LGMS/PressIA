@@ -138,7 +138,9 @@ interface FeedlyService {
         @Query("streamId") streamId: String,
         @Query("count") count: Int = 250,
         @Query("unreadOnly") unreadOnly: Boolean = false,
-        @Query("continuation") cont: String? = null
+        @Query("continuation") cont: String? = null,
+        /** Borne basse (ms) : sans elle, la réconciliation énumère tout le backlog. */
+        @Query("newerThan") newerThan: Long? = null
     ): FeedlyIdList
     /** Total des non-lus du compte, en un appel. */
     @GET("markers/counts")

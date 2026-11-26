@@ -363,14 +363,31 @@ class Prefs(private val ctx: Context) {
      * [PrefEntry.LongPref] et réciproquement, l'ordre de grandeur n'ayant pas d'importance pour
      * un compteur.
      */
-    suspend fun setByName(name: String, value: Any): Boolean {
-        val e = ENTRIES.firstOrNull { it.name == name } ?: return false
-        val write = when (e) {
-            is PrefEntry.Bool -> (value as? Boolean)?.let { set(e.key, it) }
-            is PrefEntry.IntPref -> (value as? Number)?.toInt()?.let { set(e.key, it) }
-            is PrefEntry.LongPref -> (value as? Number)?.toLong()?.let { set(e.key, it) }
-            is PrefEntry.Str -> (value as? String)?.let { set(e.key, it) }
+    /** Écrit une préférence à partir de son nom (une seule écriture) — voir [setAll]. */
+    suspend fun setByName(name: String, value: Any): Boolean = setAll(mapOf(name to value)) == 1
+
+    /**
+     * Écrit plusieurs préférences en **une seule** mise à jour de DataStore : un import de
+     * réglages (~50 clés) réécrivait sinon le fichier et émettait un nouvel instantané par clé.
+     */
+    suspend fun setAll(values: Map<String, Any>): Int {
+        var n = 0
+        ctx.ds.updateData { prefs ->
+            val m = prefs.toMutablePreferences()
+            n = 0
+            values.forEach { (name, value) ->
+                val e = ENTRIES.firstOrNull { it.name == name } ?: return@forEach
+                if (putPref(m, e, value)) n++
+            }
+            m.toPreferences()
         }
-        return write != null
+        return n
+    }
+
+    private fun putPref(m: MutablePreferences, e: PrefEntry, value: Any): Boolean = when (e) {
+        is PrefEntry.Bool -> (value as? Boolean)?.let { m[e.key] = it; true } ?: false
+        is PrefEntry.IntPref -> (value as? Number)?.toInt()?.let { m[e.key] = it; true } ?: false
+        is PrefEntry.LongPref -> (value as? Number)?.toLong()?.let { m[e.key] = it; true } ?: false
+        is PrefEntry.Str -> (value as? String)?.let { m[e.key] = it; true } ?: false
     }
 }

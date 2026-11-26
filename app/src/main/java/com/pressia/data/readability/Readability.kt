@@ -103,9 +103,10 @@ object Readability {
                 if (isPaywalledText(text)) return@withContext FullResult.Blocked
                 if (isConsentWallText(text)) return@withContext FullResult.Blocked
                 // Extraction vide alors que la page est consistante = contenu inaccessible (JS/paywall).
-                // Le seuil est bas (120) : une brève réelle fait parfois 150 caractères, et un
-                // corps vide vient d'une page **longue** (menus, commentaires), pas d'une page courte.
-                if (text.length < MIN_ARTICLE_CHARS && doc.text().length > 2_000) {
+                // Le seuil est bas (120) : une brève réelle fait parfois 150 caractères. On garde les
+                // deux bornes de page (octets **et** texte) : une coquille JS lourde en balisage mais
+                // pauvre en texte doit rester un blocage, pas un corps vide mis en cache.
+                if (text.length < MIN_ARTICLE_CHARS && (bytes.size > 20_000 || doc.text().length > 2_000)) {
                     return@withContext FullResult.Blocked
                 }
                 FullResult.Ok(extracted)
@@ -131,14 +132,16 @@ object Readability {
 
     /** Vrai si un texte extrait n'est que du boilerplate paywall (pas de vrai corps d'article). */
     fun isPaywalledText(text: String): Boolean {
-        if (text.length < 300) return false // trop court pour juger (extraits RSS légitimes)
+        // Même plancher que `isUsableFull` : une bannière courte (120–199 car.) doit être
+        // détectée, sinon elle était acceptée comme corps d'article et mise en cache.
+        if (text.length < MIN_ARTICLE_CHARS) return false // trop court pour juger
         val low = norm(text)
         return PAYWALL_MARKERS.count { low.contains(it) } >= 3
     }
 
     /** Vrai si le texte extrait est surtout une bannière de consentement (cookies / RGPD). */
     fun isConsentWallText(text: String): Boolean {
-        if (text.length < 200) return false
+        if (text.length < MIN_ARTICLE_CHARS) return false
         val low = norm(text)
         return CONSENT_MARKERS.count { low.contains(it) } >= 3
     }

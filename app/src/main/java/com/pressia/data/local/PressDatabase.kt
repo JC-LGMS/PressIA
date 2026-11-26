@@ -553,18 +553,19 @@ interface PressDao {
      * **Paginée** (`limit`/`offset`) : l'écran charge 200 résultats puis la tranche suivante au
      * défilement ; un `LIMIT 200` fixe laissait les résultats plus anciens inatteignables.
      */
-    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (REPLACE(title, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(author, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (REPLACE(summary, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(content, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT $ARTICLE_LIST_COLUMNS FROM articles WHERE (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (:onlyUnread = 0 OR unread = 1) AND (CASE WHEN :apostrophe = 1 THEN REPLACE(title, '’', '''') ELSE title END LIKE '%' || :q || '%' ESCAPE '\\' OR CASE WHEN :apostrophe = 1 THEN REPLACE(author, '’', '''') ELSE author END LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (CASE WHEN :apostrophe = 1 THEN REPLACE(summary, '’', '''') ELSE summary END LIKE '%' || :q || '%' ESCAPE '\\' OR CASE WHEN :apostrophe = 1 THEN REPLACE(content, '’', '''') ELSE content END LIKE '%' || :q || '%' ESCAPE '\\'))) ORDER BY published DESC LIMIT :limit OFFSET :offset")
     suspend fun search(
         q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
-        onlyUnread: Int, limit: Int, offset: Int
+        apostrophe: Int, onlyUnread: Int, limit: Int, offset: Int
     ): List<ArticleEntity>
     /**
      * Tous les identifiants non lus correspondant à la recherche, **sans pagination** : « tout
      * marquer lu » sur les résultats ne doit pas s'arrêter aux pages déjà chargées à l'écran.
      */
-    @Query("SELECT id FROM articles WHERE unread = 1 AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (REPLACE(title, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(author, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (REPLACE(summary, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\' OR REPLACE(content, '’', '''') LIKE '%' || :q || '%' ESCAPE '\\')))")
+    @Query("SELECT id FROM articles WHERE unread = 1 AND (:feedId IS NULL OR feedId = :feedId) AND (:catEmpty = 1 OR feedId IN (:feedIds)) AND (CASE WHEN :apostrophe = 1 THEN REPLACE(title, '’', '''') ELSE title END LIKE '%' || :q || '%' ESCAPE '\\' OR CASE WHEN :apostrophe = 1 THEN REPLACE(author, '’', '''') ELSE author END LIKE '%' || :q || '%' ESCAPE '\\' OR (:withBody = 1 AND (CASE WHEN :apostrophe = 1 THEN REPLACE(summary, '’', '''') ELSE summary END LIKE '%' || :q || '%' ESCAPE '\\' OR CASE WHEN :apostrophe = 1 THEN REPLACE(content, '’', '''') ELSE content END LIKE '%' || :q || '%' ESCAPE '\\')))")
     suspend fun searchUnreadIds(
-        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int
+        q: String, feedId: String?, feedIds: List<String>, catEmpty: Int, withBody: Int,
+        apostrophe: Int
     ): List<String>
 
     // --- Sync queue ---
@@ -599,13 +600,20 @@ interface PressDao {
     @Query("SELECT rowId, articleId, kind, createdAt FROM sync_queue WHERE kind IN ('read', 'unread') AND createdAt >= :since")
     suspend fun pendingReadUnreadSince(since: Long): List<QueuedAction>
     /** Un marquage de masse attend d'être poussé ? (toute la file, même remarque.) */
-    @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead'")
-    suspend fun pendingMarkAllCount(): Int
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE kind = 'markAllRead' AND tries < :maxTries")
+    suspend fun pendingMarkAllCount(maxTries: Int): Int
     /** Étoiles « Read later » en attente, toute la file (même remarque que [pendingReadIds]). */
-    @Query("SELECT articleId FROM sync_queue WHERE kind = 'save'")
-    suspend fun pendingSavedIds(): List<String>
-    @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave'")
-    suspend fun pendingUnsavedIds(): List<String>
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'save' AND tries < :maxTries")
+    suspend fun pendingSavedIds(maxTries: Int): List<String>
+    @Query("SELECT articleId FROM sync_queue WHERE kind = 'unsave' AND tries < :maxTries")
+    suspend fun pendingUnsavedIds(maxTries: Int): List<String>
+    /**
+     * Lignes arrivées au plafond d'essais : une ligne **définitivement** refusée ne doit pas
+     * rester à vie dans la file — sinon les compteurs de la réconciliation et du « Read later »
+     * la comptent éternellement (réconciliation figée, tableau retéléchargé à chaque passe).
+     */
+    @Query("DELETE FROM sync_queue WHERE tries >= :maxTries")
+    suspend fun deleteExhausted(maxTries: Int): Int
     /** Retire plusieurs lignes d'un coup (une requête par paquet au lieu d'une par ligne). */
     @Query("DELETE FROM sync_queue WHERE rowId IN (:rowIds)")
     suspend fun dequeueAll(rowIds: List<Long>)

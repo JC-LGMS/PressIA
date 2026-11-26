@@ -82,6 +82,10 @@ fun feedlyGlobalStream(userId: String): String? =
  * les favoris de PressIA dans le filtre « Read later », et inversement. En revanche l'étoile
  * posée sur un article Feedly part vers ce tableau (`markSaved`) au lieu d'un favori local.
  */
+/** Catégories d'un flux Feedly après un déplacement : la cible ajoutée, l'ancienne retirée, les autres gardées. */
+internal fun movedFeedlyCategoryIds(current: List<String>, from: String?, to: String?): List<String> =
+    (current.filter { it != from } + listOfNotNull(to)).distinct()
+
 class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : FeedProvider {
     override val id = "feedly"
     private fun auth(t: String?) = "OAuth ${t.orEmpty()}"
@@ -125,7 +129,15 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
      * renvoyé tel quel, sinon Feedly le réinitialise au titre du flux.
      */
     override suspend fun moveSubscription(token: String?, feedId: String, title: String?, fromCategoryId: String?, to: CategoryEntity?) {
-        val cats = to?.let { listOf(FeedlyCategory(id = it.id, label = it.label)) }.orEmpty()
+        // Feedly accepte plusieurs collections et `POST /v3/subscriptions` **remplace** la liste :
+        // n'envoyer que la cible effaçait les autres collections du même flux. On relit
+        // l'abonnement courant (action rare, un GET) pour les conserver.
+        val current = api.subscriptions(auth(token)).firstOrNull { it.id == feedId }?.categories
+            ?: throw IllegalStateException("feedly : abonnement introuvable")
+        val keepIds = movedFeedlyCategoryIds(current.map { it.id }, fromCategoryId, to?.id)
+        val cats = keepIds.map { id ->
+            current.firstOrNull { it.id == id } ?: FeedlyCategory(id, to?.label ?: id)
+        }
         api.updateSubscription(auth(token), FeedlySubscriptionUpdate(id = feedId, title = title, categories = cats))
     }
 
@@ -357,15 +369,26 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
         var cont: String? = null
         var complete = false
         var stagnant = 0
+        // Borne basse = fenêtre d'auto-lecture du service (31 j), **pas** 30 : un non-lu local
+        // de 30 à 31 jours reste « fermable » (voir `closableUnread`) et doit donc figurer dans
+        // l'ensemble distant, sinon il serait passé en lu à tort. Un serveur qui ignore le
+        // paramètre garde l'ancien comportement.
+        val newerThan = System.currentTimeMillis() - FEEDLY_AUTO_READ_AGE_MS
         while (ids.size < maxIds) {
             val before = ids.size
-            val page = api.streamIds(auth(token), streamId, count = FEEDLY_PAGE_MAX, unreadOnly = true, cont = cont)
+            val page = api.streamIds(
+                auth(token), streamId, count = FEEDLY_PAGE_MAX,
+                unreadOnly = true, cont = cont, newerThan = newerThan
+            )
             if (page.ids.isEmpty()) { complete = true; break }
             ids += page.ids
             // Pages qui n'apportent rien de neuf : on sort au lieu de boucler.
             stagnant = if (ids.size == before) stagnant + 1 else 0
             val next = page.continuation
-            if (next.isNullOrBlank() || next == cont || stagnant >= 2) { complete = stagnant < 2; break }
+            if (next.isNullOrBlank()) { complete = true; break }
+            // Continuation cyclique ou stagnation : l'énumération n'est pas complète, il ne
+            // faut pas s'en servir pour fermer des articles.
+            if (next == cont || stagnant >= 2) { complete = false; break }
             cont = next
         }
         return UnreadSet(ids, complete)
@@ -373,10 +396,11 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
 
     /**
      * Repli : on ne retient que les articles que le serveur dit non-lus, au cas où le filtre
-     * serait ignoré ; on s'arrête dès qu'une page est entièrement plus vieille que la fenêtre.
+     * serait ignoré ; on s'arrête dès qu'une page est entièrement plus vieille que la fenêtre
+     * d'auto-lecture (31 j, même raison que ci-dessus).
      */
     private suspend fun unreadIdsViaContents(token: String?, streamId: String, maxIds: Int): UnreadSet {
-        val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
+        val cutoff = System.currentTimeMillis() - FEEDLY_AUTO_READ_AGE_MS
         val ids = HashSet<String>()
         val seen = HashSet<String>()
         var cont: String? = null
@@ -387,9 +411,13 @@ class FeedlyProvider(private val api: FeedlyService = FeedlyService.create()) : 
             s.items.filter { it.unread && publishedMs(it.published) >= cutoff }.forEach { ids += it.id }
             val oldest = s.items.minOf { publishedMs(it.published) }
             val next = s.continuation
-            // Page entièrement hors fenêtre (dates renseignées) : les suivantes sont plus vieilles.
-            // Une continuation déjà vue (serveur cyclique) ferait boucler : on s'arrête.
-            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || !seen.add(next)) { complete = true; break }
+            // Page entièrement hors fenêtre (dates renseignées) : les suivantes sont plus
+            // vieilles, la fenêtre est couverte.
+            if (oldest in 1 until cutoff) { complete = true; break }
+            if (next.isNullOrBlank()) { complete = true; break }
+            // Continuation déjà vue (serveur cyclique) : on s'arrête, mais l'énumération n'est
+            // pas complète — s'en servir pour fermer des articles serait hasardeux.
+            if (!seen.add(next)) { complete = false; break }
             cont = next
         }
         return UnreadSet(ids, complete)
@@ -606,9 +634,13 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         val s = call(token) { h -> apiFor(token).stream(h, streamPath(stream), n = max.coerceIn(1, 200), cont = continuation) }
         return StreamPage(s.items.map { it.toEntity() }, s.continuation)
     }
-    /** Jeton CSRF de la session, cherché avec le même en-tête que l'appel qu'il protège. */
+    /**
+     * Jeton CSRF de la session, cherché avec le même en-tête que l'appel qu'il protège.
+     * Un échec **remonte** : partir sans jeton ferait refuser l'écriture (401) et, pour une
+     * session OAuth, la ferait déclarer expirée alors qu'elle est valide.
+     */
     private suspend fun csrf(token: String?, h: Map<String, String>): String =
-        try { apiFor(token).token(h).string().trim() } catch (_: Exception) { "" }
+        apiFor(token).token(h).string().trim()
 
     private suspend fun tag(token: String?, ids: List<String>, add: String?, remove: String?) {
         if (ids.isEmpty()) return
@@ -768,28 +800,42 @@ open class InoreaderProvider(private val api: InoreaderService = InoreaderServic
         IdSet(ids, complete)
     }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     /**
-     * Non-lus du compte sur 30 jours (`reading-list` sans l'état « lu », du plus récent au plus
-     * ancien) : même usage que côté Feedly. Le filtre se fait aussi sur les catégories de chaque
-     * article, au cas où `xt` serait ignoré ; arrêt dès qu'une page est entièrement hors fenêtre.
+     * Non-lus du compte (`reading-list` sans l'état « lu ») : **IDs seuls**
+     * (`stream/items/ids`, 200 par page). La version « contenus » téléchargeait les articles
+     * entiers, HTML compris, pour n'en garder que les identifiants — 913 non-lus coûtaient
+     * 20 s et plusieurs mégaoctets. Pagination suivie jusqu'à épuisement ou [maxIds].
+     *
+     * La fenêtre de 30 jours n'est plus appliquée ici : elle bornait la pagination, pas la
+     * décision (le passage en lu est déjà limité aux non-lus locaux de la fenêtre
+     * d'auto-lecture, voir `closableUnread`).
      */
     override suspend fun unreadIds(token: String?, maxIds: Int): UnreadSet? {
-        val cutoff = System.currentTimeMillis() - RECONCILE_WINDOW_MS
         val ids = HashSet<String>()
         val seen = HashSet<String>()
         var cont: String? = null
         var complete = false
+        var stagnant = 0
         while (ids.size < maxIds) {
-            val s = call(token) { h -> apiFor(token).stream(h, streamPath("user/-/state/com.google/reading-list"), n = 1000, cont = cont, xt = READ_STATE) }
-            if (s.items.isEmpty()) { complete = true; break }
-            s.items
-                .filter { !it.categories.contains(READ_STATE) && publishedMs(it.published) >= cutoff }
-                .forEach { ids += it.id }
-            val oldest = s.items.minOf { publishedMs(it.published) }
-            val next = s.continuation
-            // Continuation déjà vue (serveur cyclique) : on s'arrête au lieu de boucler.
-            if ((oldest in 1 until cutoff) || next.isNullOrBlank() || !seen.add(next)) { complete = true; break }
+            val before = ids.size
+            val page = call(token) { h ->
+                apiFor(token).itemsIds(
+                    h, "user/-/state/com.google/reading-list",
+                    n = MARK_ALL_PAGE, cont = cont, xt = READ_STATE
+                )
+            }
+            if (page.itemRefs.isEmpty()) { complete = true; break }
+            page.itemRefs.mapTo(ids) { it.id }
+            // Pages sans rien de neuf (recouvrement, serveur cyclique) : on sort au lieu de
+            // boucler, en laissant `complete` faux.
+            stagnant = if (ids.size == before) stagnant + 1 else 0
+            val next = page.continuation
+            if (next.isNullOrBlank()) { complete = true; break }
+            // Recouvrement ou continuation cyclique : partiel, jamais « complet » — on ne
+            // ferme pas d'articles sur une énumération douteuse.
+            if (!seen.add(next) || stagnant >= 2) { complete = false; break }
             cont = next
         }
+        android.util.Log.d("PressIA", "inoreader unreadIds via ids (${ids.size})")
         return UnreadSet(ids, complete)
     }
 

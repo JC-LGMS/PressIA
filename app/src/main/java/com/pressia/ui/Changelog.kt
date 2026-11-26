@@ -46,6 +46,54 @@ data class ChangelogEntry(val version: String, val items: List<ChangelogItem>)
  */
 fun changelog(): List<ChangelogEntry> = listOf(
     ChangelogEntry(
+        "1.29",
+        listOf(
+            ChangelogItem(
+                "2026-11-26",
+                "Réconciliation : non-lus Inoreader en IDs seuls, énumération Feedly bornée",
+                "- Inoreader et FreshRSS : le contrôle complet des non-lus utilise `stream/items/ids` " +
+                    "(200 identifiants par page) au lieu de `stream/contents` — la version précédente " +
+                    "téléchargeait les articles entiers, HTML compris, pour n'en garder que les " +
+                    "identifiants (913 non-lus : ~20 s et plusieurs mégaoctets).\n\n" +
+                "- Feedly : l'énumération des non-lus est bornée à la fenêtre d'auto-lecture du " +
+                    "service (31 jours), ce qui réduit le nombre de pages sans risquer de fermer " +
+                    "un non-lu de 30 à 31 jours. Quand le plafond de 5 000 identifiants est " +
+                    "atteint, l'énumération reste partielle et aucun article n'est passé en lu " +
+                    "(le journal le signale) — le delta garde son rôle.",
+                time = "00:01"
+            ),
+            ChangelogItem(
+                "2026-11-26",
+                "Audit : file de synchro, Readability, recherche et sauvegarde",
+                "- File montante : seuls les refus définitifs usent le compteur d'essais ; les " +
+                    "lignes au plafond sont purgées et les compteurs de réconciliation et de " +
+                    "« Read later » les ignorent. Trois coupures réseau ne gèlent plus la " +
+                    "réconciliation à vie.\n\n" +
+                "- Readability : une bannière courte (120–199 caractères) redevient un blocage ; " +
+                    "la règle de page garde les deux bornes (octets et texte), plus de corps vide " +
+                    "mis en cache.\n\n" +
+                "- Recherche : l'annulation revient pour le menu d'appui long et la bascule de " +
+                    "l'œil ; la normalisation des apostrophes n'est appliquée que si la saisie en " +
+                    "contient une (plus de copie de tout le HTML en recherche plein texte).\n\n" +
+                "- Sauvegarde : l'import n'est plus annulable et les boutons se désactivent ; la " +
+                    "copie automatique garde les lus sans date, borne « sans limite » à 12 mois et " +
+                    "remet les garde-fous à zéro même quand l'import échoue (journalisé) ; les " +
+                    "réglages sont restaurés en une seule écriture ; une entrée sans identifiant " +
+                    "est ignorée.\n\n" +
+                "- Comptes : déplacer un flux Feedly conserve ses autres collections ; Feedly, " +
+                    "Inoreader, FreshRSS et Instapaper ont un délai total ; un échec du GET du " +
+                    "jeton CSRF n'est plus une écriture sans jeton.\n\n" +
+                "- Flux locaux : `description` et `content:encoded` ne sont plus concaténés. " +
+                    "Interface : Doublons se met à jour au marquage lu, Favoris valide aussi le " +
+                    "dossier, le toast de déplacement ne ment plus, le tiroir ne lit plus cinq " +
+                    "états inutilisés.\n\n" +
+                "- Tests : file d'essais, bannière courte, description + contenu, collections " +
+                    "Feedly, apostrophes, borne 12 mois.",
+                time = "01:30"
+            )
+        )
+    ),
+    ChangelogEntry(
         "1.28",
         listOf(
             ChangelogItem(

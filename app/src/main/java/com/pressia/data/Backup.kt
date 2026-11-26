@@ -218,7 +218,10 @@ suspend fun PressRepository.exportJson(
  * la copie automatique de grossir sans fin avec les lus des flux locaux.
  */
 fun readStatesWithinHistory(rows: List<LocalReadRow>, readSinceMs: Long): List<LocalReadRow> =
-    if (readSinceMs <= 0L) rows else rows.filter { it.published >= readSinceMs }
+    if (readSinceMs <= 0L) rows
+    // Une date inconnue (0) n'est pas « hors historique » : la rétention les garde aussi
+    // (`beyondHistory`), sinon leur état lu ne serait jamais sauvegardé.
+    else rows.filter { it.published <= 0L || it.published >= readSinceMs }
 
 suspend fun PressRepository.sauvegardeJson(
     sections: List<String>,
@@ -357,11 +360,8 @@ suspend fun PressRepository.restaurationJson(
         // statistiques (section non cochée) masquait les lectures locales sans rien remplacer.
         val values = restorablePrefs(root.optJSONObject(Sections.PREFS), hasTokens)
             .filterKeys { it != Prefs.STATS_SINCE.name || Sections.STATS in sections }
-        var n = 0
-        // `setByName` renvoie faux pour une clé inconnue ou un type incohérent : elle n'est
-        // alors pas comptée, et le rapport ne surestime pas la restauration.
-        values.forEach { (key, v) -> if (prefs.setByName(key, v)) n++ }
-        report = report.copy(prefs = n)
+        // Une seule écriture DataStore : `setAll` applique toutes les clés d'un coup.
+        report = report.copy(prefs = prefs.setAll(values))
     }
 
     root.optJSONObject(Sections.ACCOUNTS)?.let { o ->
@@ -541,14 +541,18 @@ private fun jsonValue(v: Any?): Any = when (v) {
 }
 
 private fun JSONArray.toCategoryList(): List<CategoryEntity> = (0 until length()).mapNotNull { i ->
-    optJSONObject(i)?.let {
+    optJSONObject(i)?.let { o ->
+        // Sans identifiant, la ligne ne désigne aucun dossier : l'insérer créait un dossier
+        // fantôme (et un flux fantôme pour les abonnements).
+        val id = o.optString("id").trim()
+        if (id.isBlank()) return@let null
         CategoryEntity(
-            id = it.optString("id"),
-            label = it.optString("label"),
-            provider = it.optString("provider", "local"),
+            id = id,
+            label = o.optString("label"),
+            provider = o.optString("provider", "local"),
             // Absent des sauvegardes antérieures à l'ordre des dossiers : repli sur 0, le tri
             // secondaire par libellé prend alors le relais.
-            sortOrder = it.optInt("sortOrder")
+            sortOrder = o.optInt("sortOrder")
         )
     }
 }
@@ -556,18 +560,20 @@ private fun JSONArray.toCategoryList(): List<CategoryEntity> = (0 until length()
 /** Convertit la section « abonnements » d'un fichier de sauvegarde. Interne pour être testée
  *  en JVM (tolérance aux champs absents, renommés ou mal typés). */
 internal fun JSONArray.toSubscriptionList(): List<SubscriptionEntity> = (0 until length()).mapNotNull { i ->
-    optJSONObject(i)?.let {
+    optJSONObject(i)?.let { o ->
+        val id = o.optString("id").trim()
+        if (id.isBlank()) return@let null
         SubscriptionEntity(
-            id = it.optString("id"),
-            title = it.optString("title"),
-            url = it.optString("url"),
-            siteUrl = it.optString("siteUrl"),
-            categoryId = it.optString("categoryId").takeIf { s -> s.isNotBlank() && s != "null" },
-            iconUrl = it.optString("iconUrl").takeIf { s -> s.isNotBlank() && s != "null" },
-            provider = it.optString("provider", "local"),
-            sortOrder = it.optInt("sortOrder"),
+            id = id,
+            title = o.optString("title"),
+            url = o.optString("url"),
+            siteUrl = o.optString("siteUrl"),
+            categoryId = o.optString("categoryId").takeIf { s -> s.isNotBlank() && s != "null" },
+            iconUrl = o.optString("iconUrl").takeIf { s -> s.isNotBlank() && s != "null" },
+            provider = o.optString("provider", "local"),
+            sortOrder = o.optInt("sortOrder"),
             // Absent des sauvegardes antérieures : repli sur 0, la prochaine synchro recalcule.
-            unreadCount = it.optInt("unreadCount")
+            unreadCount = o.optInt("unreadCount")
         )
     }
 }

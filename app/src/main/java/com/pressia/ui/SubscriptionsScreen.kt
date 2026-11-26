@@ -416,8 +416,9 @@ fun SubscriptionsScreen(
                         enabled = s.categoryId != null
                     ) {
                         moving = null
-                        vm.moveFeed(s.id, null)
-                        toast(ctx, "Déplacé hors de tout dossier")
+                        vm.moveFeed(s.id, null) { ok ->
+                            if (ok) toast(ctx, "Déplacé hors de tout dossier")
+                        }
                     }
                     vm.folders.forEach { f ->
                         val current = s.categoryId != null && s.categoryId in f.ids
@@ -432,8 +433,9 @@ fun SubscriptionsScreen(
                             enabled = !current
                         ) {
                             moving = null
-                            vm.moveFeed(s.id, f)
-                            toast(ctx, "Déplacé dans « ${f.label} »")
+                            vm.moveFeed(s.id, f) { ok ->
+                                if (ok) toast(ctx, "Déplacé dans « ${f.label} »")
+                            }
                         }
                     }
                 }

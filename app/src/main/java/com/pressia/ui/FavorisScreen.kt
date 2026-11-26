@@ -69,12 +69,15 @@ fun FavorisScreen(vm: PressVM, onOpen: (ArticleEntity) -> Unit, onMenu: () -> Un
         // liste resterait vide sans explication.
         if (!vm.favSetAvailable(vm.favSet.value)) vm.setFavSet("all")
     }
-    LaunchedEffect(vm.subs) {
-        // Le flux choisi peut disparaître (désabonnement, déconnexion d'un compte) : on revient à
-        // « tous les flux » au lieu de laisser une liste vide sous une puce qui nomme encore ce
-        // flux. Même garde que le périmètre principal dans MainActivity.
+    LaunchedEffect(vm.subs, vm.folders) {
+        // Le flux ou le dossier choisi peut disparaître (désabonnement, déconnexion d'un compte) :
+        // on revient à « tous les flux » au lieu de laisser une liste vide sous une puce qui
+        // nomme encore ce périmètre. Même garde que le périmètre principal dans MainActivity.
         val id = feedScope.feedId
-        if (id != null && vm.subs.none { it.id == id }) {
+        val cat = feedScope.categoryId
+        if ((id != null && vm.subs.none { it.id == id }) ||
+            (cat != null && vm.folders.none { it.id == cat })
+        ) {
             feedScope = Scope(label = "Tous les articles")
         }
     }

@@ -28,32 +28,22 @@ import androidx.compose.ui.unit.sp
 /**
  * Drawer de PressIA.
  *
- * Trois principes retenus pour cette refonte :
+ * Deux principes retenus pour cette refonte :
  *  - **tout est scrollable**, y compris l'en-tête et les actions : un élément fixe en bas rendait
  *    le reste inaccessible sur un écran court ;
- *  - **la taille du texte des flux est réglable** ([com.pressia.data.local.Prefs.DRAWER_TEXT_SCALE]),
- *    100 % par défaut, donc aucun changement pour qui ne touche à rien ;
- *  - **un dossier replié garde son espace** : sans ligne d'air, les éléments voisins remontent et
- *    l'utilisateur a l'impression qu'un élément a disparu de la liste.
+ *  - **la taille des libellés est réglable** ([com.pressia.data.local.Prefs.DRAWER_TEXT_SCALE]),
+ *    100 % par défaut, donc aucun changement pour qui ne touche à rien.
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun PressDrawer(vm: PressVM, currentRoute: String, onNavigate: (String) -> Unit, onClose: () -> Unit) {
-    // [PressVM.folders], [PressVM.subs] et les compteurs sont des états Compose : les lire
-    // directement suffit à redessiner le drawer quand une synchronisation les modifie.
-    val folders = vm.folders
-    val subs = vm.subs
-    val collapsed = vm.collapsedFolders
-    val unreads = vm.unreads
-    val folderUnreads = vm.folderUnreads
     val textScale by vm.drawerScale.collectAsState()
 
     // Un seul menu contextuel pour toute la colonne : chaque élément est désigné par une clé
     // composite, ce qui évite d'empiler un état par dossier et par flux.
 
-    // 100 % = l'ancien 125 % : bases relevées d'un quart (flux 17,5 sp, dossier 18,75 sp).
+    // 100 % = l'ancien 125 % : base relevée d'un quart (17,5 sp).
     val feedSp = (17.5f * textScale / 100f).coerceIn(11f, 25f)
-    val folderSp = (18.75f * textScale / 100f).coerceIn(12f, 27f)
     // Numéro de version affiché en bas du drawer, en petit.
     val ctx = LocalContext.current
     val version = remember { appVersionName(ctx) }

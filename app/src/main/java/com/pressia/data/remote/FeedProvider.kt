@@ -54,9 +54,10 @@ interface FeedProvider {
      */
     suspend fun userId(token: String?): String = ""
     /**
-     * IDs des articles non-lus côté compte sur les 30 derniers jours ([RECONCILE_WINDOW_MS]),
-     * pour réconcilier le lu/non-lu distant à la synchronisation (lus ailleurs → passés en
-     * lus ; non lus ailleurs → rouverts). Null = non supporté (flux locaux).
+     * IDs des articles non-lus côté compte, pour réconcilier le lu/non-lu distant à la
+     * synchronisation (lus ailleurs → passés en lus ; non lus ailleurs → rouverts). Chaque
+     * service borne ce qu'il peut : Feedly à sa fenêtre d'auto-lecture (31 jours), Inoreader
+     * sans borne (IDs seuls). Null = non supporté (flux locaux).
      * `complete` = faux si l'énumération a été plafonnée : dans ce cas on ne passe rien en lu
      * (des non-lus inconnus resteraient), on ne fait que rouvrir. Même prudence si le compte
      * est injoignable (ensemble vide + `complete = false`) : jamais de passage en lu massif
@@ -285,12 +286,6 @@ fun readLaterHash(ids: Set<String>): String {
     ids.sorted().forEach { sha.update(it.toByteArray(Charsets.UTF_8)); sha.update(0) }
     return sha.digest().joinToString("") { "%02x".format(it) }
 }
-
-/**
- * Fenêtre de réconciliation : 30 derniers jours, comme le marquage lu automatique de
- * Feedly au-delà de 31 jours.
- */
-const val RECONCILE_WINDOW_MS = 30L * 24 * 3600 * 1000
 
 /**
  * Marquage lu automatique de Feedly : tout non-lu de plus de 31 jours passe en lu côté
