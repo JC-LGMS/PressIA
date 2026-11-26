@@ -1719,3 +1719,12 @@ articles et favoris du compte compris).
 `ENABLED = false` en tête du fichier, et `setup()` rend la main sans rien écouter. Repasser la
 constante à `true` (puis redémarrer OpenCode) pour le réactiver. Un commit manuel avec un vrai
 message reste préférable quand l'utilisateur le demande.
+
+## Publication d'une release
+
+**Chaque push s'accompagne d'une release GitHub** (`v<versionName>`) : `assembleRelease` (R8),
+puis `gh release create v1.30 app/build/outputs/apk/release/PressIA-1.30-release-<date>.apk
+--title "PressIA 1.30" --notes-file <notes>` avec un résumé en français des changements de la
+version. L'APK est signé avec la clé debug du projet : le dire dans les notes. Vérifier avant
+`git push` que `version.properties` est bien celui des sources poussées (un `assembleRelease`
+le réécrit sans changer le numéro).
